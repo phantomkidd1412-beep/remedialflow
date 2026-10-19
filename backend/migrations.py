@@ -27,8 +27,20 @@ async def m002_project_lifecycle():
         await recompute_project(pid)
 
 
+async def m003_rates_and_policies():
+    s = await db.settings.find_one({"_id": "global"}) or {}
+    rate = s.get("default_job_rate", 150.0)
+    await db.users.update_many({"pay_type": {"$exists": False}}, {"$set": {"pay_type": "per_job"}})
+    await db.users.update_many({"role": "installer", "default_rate": {"$exists": False}}, {"$set": {"default_rate": rate}})
+    await db.settings.update_one({"_id": "global"}, {"$set": {"gallery_policy": "accept", "auto_approve_low_risk": True}}, upsert=True)
+    async for p in db.projects.find({"rates": {"$exists": False}}, {"installer_id": 1, "rate": 1}):
+        ids = set(await db.ncs.distinct("assigned_installer_id", {"project_id": str(p["_id"])})) - {None}
+        await db.projects.update_one({"_id": p["_id"]}, {"$set": {"rates": {i: p.get("rate", rate) for i in ids}}})
+
+
 MIGRATIONS = [("001_status_model_and_nc_assignment", m001_status_model_and_nc_assignment),
-              ("002_project_lifecycle", m002_project_lifecycle)]
+              ("002_project_lifecycle", m002_project_lifecycle),
+              ("003_rates_and_policies", m003_rates_and_policies)]
 
 
 async def run_migrations():

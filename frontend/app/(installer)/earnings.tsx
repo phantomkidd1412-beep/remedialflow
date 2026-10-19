@@ -8,7 +8,8 @@ import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space } from "@/src/theme";
 
 type Earn = { id: string; ref: string; address: string; amount: number; currency: string; status: string; earned_at: string; paid_at?: string | null };
-type Resp = { currency: string; payment_terms: string; items: Earn[]; earned: number; paid: number; in_progress: number; jobs_in_progress: number };
+type Week = { week: string; earned: number; paid: number; jobs: number };
+type Resp = { currency: string; payment_terms: string; items: (Earn & { week: string })[]; weeks: Week[]; pending: { project_id: string; ref: string; address: string; amount: number }[]; pay_type: string; default_rate?: number | null; earned: number; paid: number; in_progress: number; jobs_in_progress: number };
 
 export default function Earnings() {
   const s = useStyles();
@@ -32,16 +33,28 @@ export default function Earnings() {
               <View style={[s.tile, s.tileBrand]}><Text style={s.tLabel}>Unpaid</Text><Text style={s.tVal} testID="earnings-unpaid">{money(d.earned, d.currency)}</Text></View>
               <View style={s.tile}><Text style={s.tLabel}>Paid</Text><Text style={s.tVal} testID="earnings-paid">{money(d.paid, d.currency)}</Text></View>
               <View style={[s.tile, { flexBasis: "100%" }]}>
-                <Text style={s.tLabel}>In progress · {d.jobs_in_progress} job(s)</Text>
-                <Text style={s.tValSm} testID="earnings-in-progress">{money(d.in_progress, d.currency)} on completion</Text>
+                <Text style={s.tLabel}>{d.pay_type === "daily" ? "Daily wage · paid separately" : `Pending · ${d.jobs_in_progress} job(s)${d.default_rate ? ` · your rate ${money(d.default_rate, d.currency)}/job` : ""}`}</Text>
+                <Text style={s.tValSm} testID="earnings-in-progress">{d.pay_type === "daily" ? "No per-job earnings" : `${money(d.in_progress, d.currency)} when your NCs are approved`}</Text>
               </View>
+              {d.weeks.map((w) => (
+                <View key={w.week} style={[s.tile, { flexBasis: "100%" }]} testID={`earnings-week-${w.week}`}>
+                  <Text style={s.tLabel}>Week of {w.week.split("-").reverse().join("/")} · {w.jobs} job(s)</Text>
+                  <Text style={s.tValSm}>Earned {money(w.earned, d.currency)} · Paid {money(w.paid, d.currency)}</Text>
+                </View>
+              ))}
+              {d.pending.map((p) => (
+                <View key={p.project_id} style={[s.tile, { flexBasis: "100%" }]} testID={`earning-pending-${p.ref}`}>
+                  <Text style={s.tLabel}>Pending · {p.ref}</Text>
+                  <Text style={s.tValSm}>{p.address} · {money(p.amount, d.currency)}</Text>
+                </View>
+              ))}
             </View>
           }
           renderItem={({ item }) => (
             <View style={s.row} testID={`earning-row-${item.ref}`}>
               <View style={{ flex: 1 }}>
                 <Text style={s.ref}>{item.ref} · {fmtDate(item.earned_at).slice(0, 10)}</Text>
-                <Text style={s.addr} numberOfLines={1}>{item.address}</Text>
+                <Text style={s.addr}>{item.address}</Text>
               </View>
               <View style={{ alignItems: "flex-end", gap: 4 }}>
                 <Text style={s.amt}>{money(item.amount, item.currency)}</Text>

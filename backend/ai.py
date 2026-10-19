@@ -24,6 +24,7 @@ class AssessmentInput:
     safety_critical: bool
     reference_images: List[bytes] = field(default_factory=list)  # TrustMark inspection photos
     evidence_images: List[bytes] = field(default_factory=list)   # photos + video frames
+    original_text: str = ""
 
 
 @dataclass
@@ -33,18 +34,19 @@ class AssessmentResult:
     feedback: str
     concerns: List[str]
     model: str
+    risk: str = "standard"
 
-
-SYSTEM = """You assess photographic evidence of remedial building work for TrustMark non-compliances (NCs).
-You receive: the NC description, the required remedial work, ORIGINAL inspection photos (labelled REFERENCE) and
-installer EVIDENCE photos/video frames. Compare evidence against the NC and reference photos.
-Strict rules:
-- Judge only what is clearly visible. NEVER infer concealed work, measurements, fixings, ratings or technical/regulatory compliance from appearance.
-- If the required work cannot be fully confirmed visually (concealed, needs measurement, needs testing), outcome = manual_review_required.
-- If photos are blurry, unrelated, missing the area, or do not show completion, outcome = more_evidence_required.
-- If anything is ambiguous or safety-critical (electrical, gas, structural, fire, ventilation of combustion appliances), outcome = manual_review_required.
-- Only use ai_verified when the completed remedial work is unambiguously and fully visible.
-Respond with ONLY JSON: {"outcome": "ai_verified|more_evidence_required|manual_review_required",
+SYSTEM = """You are a practical remediation evidence assessor for TrustMark non-compliances (NCs) — efficient, not an over-strict inspector.
+You receive: the NC description (and original TrustMark wording), the required remedial work, ORIGINAL inspection photos
+(labelled REFERENCE, may be absent) and installer EVIDENCE photos/video frames. Compare the evidence with the NC and required work.
+Rules:
+- If the photos convincingly show the required remedial work completed (e.g. a vent perimeter visibly sealed, pipes visibly lagged, holes visibly filled), outcome = ai_verified.
+- Reasonable visual judgement and approximate measurements are allowed when supported by the evidence; say "estimated" for estimates. Do not demand a measuring tape unless an exact measurement is essential to the NC.
+- Never claim concealed work, ratings, testing or regulatory compliance is verified. If completion genuinely depends on something not visible, outcome = manual_review_required.
+- If photos are blurry, unrelated, or do not show the area/completion, outcome = more_evidence_required (say exactly what photo is missing).
+- If genuinely uncertain or technically complex, outcome = manual_review_required.
+- risk: "safety" for gas, electrical, fire, structural, combustion ventilation / flues / CO; "low" for simple visually verifiable work (sealing, filling, lagging, vents, trims, draught strips, making good, cleaning, insulation top-up); otherwise "standard".
+Respond with ONLY JSON: {"outcome": "ai_verified|more_evidence_required|manual_review_required", "risk": "low|standard|safety",
 "confidence": 0.0-1.0, "feedback": "<= 2 short plain-English sentences for the installer", "concerns": ["short items"]}"""
 
 
@@ -63,7 +65,8 @@ class LlmAssessor(Assessor):
         chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"assess-{uuid.uuid4()}",
                        system_message=SYSTEM).with_model(self.provider, self.model_name)
         imgs = [ImageContent(image_base64=base64.b64encode(b).decode()) for b in data.reference_images + data.evidence_images]
-        text = (f"NC {data.nc_number}: {data.description}\nRequired remedial work: {data.required_work}\n"
+        text = (f"NC {data.nc_number}: {data.description}\nOriginal TrustMark wording: {data.original_text or data.description}\n"
+                f"Required remedial work: {data.required_work}\n"
                 f"Safety-critical flag: {data.safety_critical}\n"
                 f"The first {len(data.reference_images)} image(s) are REFERENCE inspection photos; "
                 f"the remaining {len(data.evidence_images)} are EVIDENCE.")
@@ -80,8 +83,9 @@ class LlmAssessor(Assessor):
             m = re.search(r"\{.*\}", raw, re.S)
             j = json.loads(m.group(0))
             outcome = j.get("outcome") if j.get("outcome") in OUTCOMES else "manual_review_required"
+            risk = j.get("risk") if j.get("risk") in ("low", "standard", "safety") else "standard"
             return AssessmentResult(outcome, float(j.get("confidence", 0)), str(j.get("feedback", ""))[:300],
-                                    [str(c)[:120] for c in j.get("concerns", [])][:5], self.model_name)
+                                    [str(c)[:120] for c in j.get("concerns", [])][:5], self.model_name, risk)
         except Exception:
             log.warning("Unparseable AI output: %s", raw[:300])
             return AssessmentResult("manual_review_required", 0, "Sent to an employee for review.",

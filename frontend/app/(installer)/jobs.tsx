@@ -5,6 +5,7 @@ import { useQueue } from "@/src/queue";
 import { ProjectRow, useProjects } from "@/src/projects";
 import { Badge, Btn, Empty, ErrorBlock, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
+import { Bell } from "@/src/components/Bell";
 import { SyncBar } from "@/src/components/SyncBar";
 import { BORDER, fonts, makeStyles, space } from "@/src/theme";
 
@@ -37,7 +38,7 @@ export default function Jobs() {
 
   return (
     <View style={s.root}>
-      <ScreenHeader title="JOBS" sub={q.data ? `${q.data.pages[0].total} assigned` : " "} />
+      <ScreenHeader title="JOBS" sub={q.data ? `${q.data.pages[0].total} assigned` : " "} right={<Bell />} />
       {q.isLoading ? (
         <Loading />
       ) : q.isError ? (

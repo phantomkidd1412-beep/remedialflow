@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="2" tests="36" time="81.252" timestamp="2026-10-19T22:32:47.067848+00:00" hostname="agent-env-fe9a2416-e077-4660-909c-e5a630b53f52"><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_01_create_project_with_installer_a_and_3_ncs" time="1.206" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_02_installer_a_got_project_assigned_notification" time="0.125" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_03_reassign_nc3_to_installer_b" time="0.126" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_04_installer_b_got_assigned_notification_with_details" time="0.132" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_05_installer_a_sees_only_nc1_nc2" time="0.127" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_06_installer_b_sees_only_nc3" time="0.156" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_07_installer_a_cannot_upload_to_nc3" time="0.182" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_08_installer_a_cannot_submit_nc3" time="0.158" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_09_staff_sees_all_3" time="0.147" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_10_audit_contains_nc_reassigned" time="0.125" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_11_repeated_reassign_no_dup_notification" time="0.575" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP2Assignment" name="test_12_installer_cannot_call_staff_endpoints" time="0.544" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_01_setup_escalation_nc_via_safety_project" time="0.298" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_02_submit_photo_runs_ai_routes_to_employee_review" time="7.510"><skipped type="pytest.skip" message="AI returned more_evidence for safety NC; safety routing bypassed per code L667-668 (report as discrepancy)">/app/backend/tests/test_p2_p3_p4_earnings.py:276: AI returned more_evidence for safety NC; safety routing bypassed per code L667-668 (report as discrepancy)</skipped></testcase><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_03_installer_cannot_escalate" time="0.157" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_04_admin_cannot_escalate" time="0.158" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_05_employee_escalates_to_admin_review" time="0.124" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_06_admin_received_escalated_notification" time="0.117" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_07_employee_cannot_approve_admin_review_nc" time="0.132" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_08_admin_returns_to_employee" time="0.134" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3Escalation" name="test_09_employee_cannot_return" time="0.235" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP3AIAutoApproval" name="test_01_low_risk_nc_submission" time="34.914"><failure message="requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/projects/6ad69a9bda4afc6be0edc7bc (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xfd6819bdd1d0&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=15)'))">/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:239: in _new_conn
+    sock = connection.create_connection(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:793: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:494: in _make_request
+    raise new_e
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:470: in _make_request
+    self._validate_conn(conn)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:1125: in _validate_conn
+    conn.connect()
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:827: in connect
+    self.sock = sock = self._new_conn()
+                       ^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:248: in _new_conn
+    raise ConnectTimeoutError(
+E   urllib3.exceptions.ConnectTimeoutError: (&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xfd6819bdd1d0&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=15)')
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:847: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:555: in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/projects/6ad69a9bda4afc6be0edc7bc (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xfd6819bdd1d0&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=15)'))
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_p2_p3_p4_earnings.py:354: in test_01_low_risk_nc_submission
+    d = requests.get(f"{API}/projects/{pid}", headers=_hdr(tokens["admin"]), timeout=15).json()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:87: in get
+    return request("get", url, params=params, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:71: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:717: in send
+    raise ConnectTimeout(e, request=request)
+E   requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/projects/6ad69a9bda4afc6be0edc7bc (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xfd6819bdd1d0&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=15)'))</failure></testcase><testcase classname="tests.test_p2_p3_p4_earnings.TestP4ReviewGroups" name="test_01_employee_review_groups_lists_test_project" time="0.000" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP4ReviewGroups" name="test_02_employee_queue_groups_by_project" time="15.410" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP4ReviewGroups" name="test_03_admin_queue_includes_escalated" time="0.171" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP4ReviewGroups" name="test_04_search_by_ref" time="15.485" /><testcase classname="tests.test_p2_p3_p4_earnings.TestP4ReviewGroups" name="test_05_group_detail_returns_nc_ids" time="0.221" /><testcase classname="tests.test_p2_p3_p4_earnings.TestReviewNotifications" name="test_01_reject_by_employee_sets_source_and_notifies" time="0.126"><skipped type="pytest.skip" message="low-risk NC status more_evidence not in employee_review">/app/backend/tests/test_p2_p3_p4_earnings.py:427: low-risk NC status more_evidence not in employee_review</skipped></testcase><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_01_set_installer_a_rate_500" time="0.144" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_02_set_installer_b_daily" time="0.116" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_03_create_shared_project_A2_B1" time="0.483" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_04_approve_as_only_creates_earning_for_a" time="0.450" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_05_approve_bs_nc_creates_no_earning_for_daily_b" time="0.329" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_06_reopen_and_reapprove_no_duplicate" time="0.485" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_07_earnings_has_weeks_and_pending_shape" time="0.125" /><testcase classname="tests.test_p2_p3_p4_earnings.TestEarnings" name="test_99_restore_b_to_per_job" time="0.119" /></testsuite></testsuites>

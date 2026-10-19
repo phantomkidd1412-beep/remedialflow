@@ -46,7 +46,7 @@ async def get_project(pid: str, u: User) -> Project:
     p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
     if not p:
         raise HTTPException(404, "Project not found")
-    if u.role == "installer" and p.installer_id != u.id:
+    if u.role == "installer" and not await db.ncs.find_one({"project_id": pid, "assigned_installer_id": u.id}, {"_id": 1}):
         raise HTTPException(403, "Not assigned to this project")
     return p
 
@@ -55,6 +55,8 @@ async def get_nc(nc_id: str, u: User):
     nc = NC.from_mongo(await db.ncs.find_one({"_id": oid(nc_id)}))
     if not nc:
         raise HTTPException(404, "NC not found")
+    if u.role == "installer" and nc.assigned_installer_id != u.id:
+        raise HTTPException(403, "This NC is not assigned to you")
     return nc, await get_project(nc.project_id, u)
 
 
@@ -86,14 +88,60 @@ async def recompute_project(pid: str):
         status = "in_progress" if any(n.get("assigned_installer_id") for n in ncs) else "unassigned"
     upd["status"] = status
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
-    if status == "completed":
-        p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
-        if p.installer_id and not await db.earnings.find_one({"project_id": pid}):
-            s = await get_settings()
-            await db.earnings.insert_one({"installer_id": p.installer_id, "project_id": pid, "ref": p.ref,
-                                          "address": p.address, "amount": p.rate, "currency": s.currency,
-                                          "status": "earned", "earned_at": now_iso(), "paid_at": None})
-            await audit("earning.created", None, f"project:{pid}", {"amount": p.rate})
+    await settle_earnings(pid)
+
+
+async def notify(user_id: Optional[str], kind: str, title: str, body: str, project_id: str, nc_id: Optional[str] = None):
+    """In-app notification; an unread one with the same key is refreshed instead of duplicated."""
+    if not user_id:
+        return
+    key = f"{kind}:{project_id}:{nc_id or ''}"
+    await db.notifications.update_one(
+        {"user_id": user_id, "key": key, "read": False},
+        {"$set": {"kind": kind, "title": title, "body": body, "project_id": project_id, "nc_id": nc_id, "created_at": now_iso()},
+         "$setOnInsert": {"user_id": user_id, "key": key, "read": False}}, upsert=True)
+
+
+async def nc_notify(nc: dict, user_id: Optional[str], kind: str, title: str, extra: str = ""):
+    p = await db.projects.find_one({"_id": oid(nc["project_id"])}, {"ref": 1, "address": 1})
+    body = f"{p['ref']} · {p['address']}\n{nc['number']}: {nc['description']}" + (f"\nWork: {nc['required_work']}" if kind == "assigned" else "") + (f"\n{extra}" if extra else "")
+    await notify(user_id, kind, title, body, nc["project_id"], str(nc["_id"]))
+
+
+async def agreed_rate(pid: str, installer_id: str) -> float:
+    """Freeze the per-job rate for an installer on first assignment to a project."""
+    p = await db.projects.find_one({"_id": oid(pid)}, {"rates": 1, "rate": 1, "rate_override": 1})
+    if installer_id in (p.get("rates") or {}):
+        return p["rates"][installer_id]
+    u = await db.users.find_one({"_id": oid(installer_id)}, {"default_rate": 1})
+    s = await get_settings()
+    rate = p["rate"] if p.get("rate_override") else ((u or {}).get("default_rate") or s.default_job_rate)
+    await db.projects.update_one({"_id": oid(pid)}, {"$set": {f"rates.{installer_id}": rate}})
+    return rate
+
+
+async def settle_earnings(pid: str):
+    """Per-job installers earn once when all NCs assigned to them on this project are internally approved.
+    Daily-wage users never get job earnings. Existing earned/paid records are never removed."""
+    ncs = await db.ncs.find({"project_id": pid}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
+    scope: dict = {}
+    for n in ncs:
+        if n.get("assigned_installer_id"):
+            scope.setdefault(n["assigned_installer_id"], []).append(n["status"])
+    p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1})
+    s = await get_settings()
+    for iid, sts in scope.items():
+        if not all(x in DONE for x in sts):
+            continue
+        u = await db.users.find_one({"_id": oid(iid)}, {"pay_type": 1})
+        if not u or u.get("pay_type", "per_job") != "per_job":
+            continue
+        if await db.earnings.find_one({"project_id": pid, "installer_id": iid}):
+            continue
+        amount = await agreed_rate(pid, iid)
+        await db.earnings.insert_one({"installer_id": iid, "project_id": pid, "ref": p["ref"], "address": p["address"],
+                                      "amount": amount, "currency": s.currency, "status": "earned", "earned_at": now_iso(), "paid_at": None})
+        await audit("earning.created", None, f"project:{pid}", {"installer_id": iid, "amount": amount})
 
 
 # ---------------- admin: users ----------------
@@ -108,6 +156,8 @@ class UserPatch(BaseModel):
     name: Optional[str] = None
     role: Optional[str] = Field(default=None, pattern="^(admin|employee|installer)$")
     active: Optional[bool] = None
+    pay_type: Optional[str] = Field(default=None, pattern="^(per_job|daily)$")
+    default_rate: Optional[float] = Field(default=None, ge=0)
 
 
 @api.get("/admin/users")
@@ -201,7 +251,7 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
                         u: User = Depends(current_user)):
     q: dict = {}
     if u.role == "installer":
-        q["installer_id"] = u.id
+        q["_id"] = {"$in": [ObjectId(x) for x in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id})]}
     if status == "awaiting_review":
         q["needs_review"] = True
     elif status:
@@ -221,6 +271,12 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
         per.setdefault(n["project_id"], set()).add(n["assigned_installer_id"])
     all_ids = set(ids) | {x for s in per.values() for x in s}
     names = {str(d["_id"]): d["name"] for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in all_ids]}}, {"name": 1}).to_list(500)}
+    if u.role == "installer":
+        mine = await db.ncs.find({"project_id": {"$in": pids}, "assigned_installer_id": u.id}, {"project_id": 1, "status": 1}).to_list(5000)
+        for i in items:
+            sts = [n["status"] for n in mine if n["project_id"] == i["id"]]
+            i["nc_total"], i["nc_done"] = len(sts), sum(1 for x in sts if x in DONE)
+            i["my_statuses"] = sts
     for i in items:
         i["installer_name"] = names.get(i["installer_id"] or "", None)
         i["installer_names"] = sorted(names[x] for x in per.get(i["id"], set()) if x in names)
@@ -332,6 +388,10 @@ async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: Us
     if not installer_id:
         return
     ncs = await db.ncs.find({"project_id": pid, "assigned_installer_id": None}, {"_id": 1}).to_list(500)
+    if ncs:
+        await agreed_rate(pid, installer_id)
+        p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1})
+        await notify(installer_id, "project_assigned", f"New job: {p['ref']}", f"{p['ref']} · {p['address']}\n{len(ncs)} NC(s) assigned to you", pid)
     for n in ncs:
         await db.ncs.update_one({"_id": n["_id"]}, {"$set": {"assigned_installer_id": installer_id},
                                 "$push": {"assignment_history": {"to": installer_id, "from": None, "by": actor.id, "at": now_iso()}}})
@@ -344,7 +404,7 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
         raise HTTPException(409, "Project reference already exists")
     s = await get_settings()
     p = Project(ref=body.ref, address=body.address, postcode=body.postcode.upper(), installer_id=body.installer_id or None,
-                rate=body.rate if body.rate is not None else s.default_job_rate)
+                rate=body.rate if body.rate is not None else s.default_job_rate, rate_override=body.rate is not None)
     doc = p.to_mongo()
     if body.import_id:
         imp = await db.imports.find_one({"_id": oid(body.import_id)}, {"path": 1, "sha256": 1, "filename": 1})
@@ -357,6 +417,9 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
         nid = await add_nc(pid, n, i, p.installer_id)
         if n.pages:
             nc_pages.append((nid, n.pages))
+    if p.installer_id:
+        await agreed_rate(pid, p.installer_id)
+        await notify(p.installer_id, "project_assigned", f"New job: {p.ref}", f"{p.ref} · {p.address}\n{len(body.ncs)} NC(s) assigned to you", pid)
     await recompute_project(pid)
     if body.import_id:
         await db.imports.update_one({"_id": oid(body.import_id)}, {"$set": {"project_id": pid}})
@@ -393,9 +456,10 @@ async def create_nc(pid: str, body: NCIn, u: User = Depends(staff)):
 @api.get("/projects/{pid}")
 async def project_detail(pid: str, u: User = Depends(current_user)):
     p = await get_project(pid, u)
-    ncs = [NC.from_mongo(d) for d in await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)]
+    nq = {"project_id": pid, **({"assigned_installer_id": u.id} if u.role == "installer" else {})}
+    ncs = [NC.from_mongo(d) for d in await db.ncs.find(nq).sort("number", 1).to_list(500)]
     files = [EvidenceFile.from_mongo(d) for d in await db.files.find(
-        {"project_id": pid, "status": {"$in": ["draft", "submitted", "superseded"]}}).sort("server_received_at", 1).to_list(5000)]
+        {"project_id": pid, "nc_id": {"$in": [n.id for n in ncs]}, "status": {"$in": ["draft", "submitted", "superseded"]}}).sort("server_received_at", 1).to_list(5000)]
     by_nc: dict = {}
     for f in files:
         by_nc.setdefault(f.nc_id, []).append(f)
@@ -579,7 +643,7 @@ async def run_assessment(nc_id: str, sub_id: str):
         reasons: List[str] = []
         try:
             res = await get_assessor().assess(AssessmentInput(nc.number, nc.description, nc.required_work,
-                                                             nc.safety_critical, refs, evid))
+                                                             nc.safety_critical, refs, evid, nc.original_text))
         except Exception as e:
             log.exception("AI failed")
             res = None
@@ -587,25 +651,37 @@ async def run_assessment(nc_id: str, sub_id: str):
         if res is None:
             ai = AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.", concerns=reasons)
         else:
-            ai = AIResult(outcome=res.outcome, confidence=res.confidence, feedback=res.feedback, concerns=res.concerns, model=res.model)
+            ai = AIResult(outcome=res.outcome, confidence=res.confidence, feedback=res.feedback, concerns=res.concerns,
+                          model=res.model, risk=res.risk)
+        media = photos + ([video] if video else [])
+        # Flags are recorded but do not escalate on their own.
+        flags = []
+        if any(not f.location_verified for f in photos):
+            flags.append("Some photos have no verified GPS")
+        if any(f.source == "gallery" for f in media):
+            flags.append("Includes gallery uploads")
+        if not refs:
+            flags.append("No TrustMark reference photo")
         status = {"ai_verified": "approved", "more_evidence_required": "more_evidence"}.get(ai.outcome, "employee_review")
+        safety = nc.safety_critical or ai.risk == "safety"
+        if safety:
+            # Safety-critical work always needs a competent human decision (incl. AI "more evidence" opinions).
+            status = "employee_review"
+            reasons.append("Safety-critical: competent human review required")
         if status == "approved":
-            media = photos + ([video] if video else [])
-            if not s.auto_verify:
-                reasons.append("Auto-verification disabled")
+            if not (s.auto_verify and s.auto_approve_low_risk):
+                reasons.append("Automatic internal approval disabled")
+            if ai.risk != "low":
+                reasons.append("Not a low-risk category")
             if ai.confidence < s.confidence_threshold:
                 reasons.append(f"Confidence {ai.confidence:.2f} below {s.confidence_threshold:.2f}")
-            if nc.safety_critical:
-                reasons.append("Safety-critical NC")
-            if not refs:
-                reasons.append("No TrustMark reference photo to compare")
-            if s.location_policy == "accept_flag" and any(not f.location_verified for f in photos):
-                reasons.append("Location not verified on some photos")
+            if s.location_policy == "reject" and any(not f.location_verified for f in photos):
+                reasons.append("Location not verified")
             if s.gallery_policy == "manual_review" and any(f.source == "gallery" for f in media):
-                reasons.append("Includes gallery uploads")
+                reasons.append("Gallery uploads need review")
             if reasons:
                 status = "employee_review"
-                ai.concerns = ai.concerns + reasons
+        ai.concerns = ai.concerns + reasons + flags
         extra = {"approved_by": "ai", "approved_at": now_iso()} if status == "approved" else {}
         await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso(), **extra}})
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
@@ -637,23 +713,109 @@ async def submit(nc_id: str, bg: BackgroundTasks, u: User = Depends(current_user
 
 
 class ReviewIn(BaseModel):
-    action: str = Field(pattern="^(approve|reject|more_evidence)$")
+    action: str = Field(pattern="^(approve|reject|more_evidence|escalate|return)$")
     note: str = ""
 
 
 @api.post("/ncs/{nc_id}/review")
 async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
     nc, p = await get_nc(nc_id, u)
-    status = {"approve": "approved", "reject": "rejected", "more_evidence": "more_evidence"}[body.action]
+    if body.action == "escalate" and u.role != "employee":
+        raise HTTPException(403, "Only employees can escalate to Admin")
+    if body.action == "return" and (u.role != "admin" or nc.status != "admin_review"):
+        raise HTTPException(403, "Only Admin can return an escalated NC")
+    if nc.status == "admin_review" and u.role != "admin":
+        raise HTTPException(403, "This NC is awaiting Admin review")
+    status = {"approve": "approved", "reject": "rejected", "more_evidence": "more_evidence",
+              "escalate": "admin_review", "return": "employee_review"}[body.action]
     st = {"status": status, "review_note": body.note, "reviewed_by": u.id, "updated_at": now_iso()}
     if status == "approved":
         st.update(approved_by=u.id, approved_at=now_iso())
     elif status == "rejected":
         st["rejection_source"] = u.role
     await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": st})
+    raw = await db.ncs.find_one({"_id": oid(nc_id)})
+    if status == "rejected":
+        await nc_notify(raw, nc.assigned_installer_id, "rejected", f"Action required: {nc.number} rejected", body.note)
+    elif status == "more_evidence":
+        await nc_notify(raw, nc.assigned_installer_id, "more_evidence", f"More evidence needed: {nc.number}", body.note)
+    elif status == "approved":
+        await nc_notify(raw, nc.assigned_installer_id, "approved", f"{nc.number} internally approved")
+    elif status == "admin_review":
+        for a in await db.users.find({"role": "admin", "active": True}, {"_id": 1}).to_list(50):
+            await nc_notify(raw, str(a["_id"]), "escalated", f"Escalated by {u.name}: {nc.number}", body.note)
     await recompute_project(p.id)
-    await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note})
+    await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note, "role": u.role})
     return {"ok": True, "status": status}
+
+
+class AssignIn(BaseModel):
+    installer_id: Optional[str] = None
+
+
+@api.post("/ncs/{nc_id}/assign")
+async def assign_nc(nc_id: str, body: AssignIn, u: User = Depends(staff)):
+    nc, p = await get_nc(nc_id, u)
+    to = body.installer_id or None
+    if to and not await db.users.find_one({"_id": oid(to), "role": "installer", "active": True}):
+        raise HTTPException(400, "Installer not found")
+    if to == nc.assigned_installer_id:
+        return {"ok": True}
+    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"assigned_installer_id": to, "updated_at": now_iso()},
+                            "$push": {"assignment_history": {"from": nc.assigned_installer_id, "to": to, "by": u.id, "at": now_iso()}}})
+    if to:
+        await agreed_rate(p.id, to)
+        await nc_notify(await db.ncs.find_one({"_id": oid(nc_id)}), to, "assigned", f"New NC assigned: {nc.number}")
+    await recompute_project(p.id)
+    await audit("nc.reassigned", u.id, f"nc:{nc_id}", {"from": nc.assigned_installer_id, "to": to})
+    return {"ok": True}
+
+
+# ---------------- notifications ----------------
+@api.get("/notifications")
+async def notifications(u: User = Depends(current_user)):
+    items = clean(await db.notifications.find({"user_id": u.id}).sort("created_at", -1).to_list(100))
+    return {"items": items, "unread": sum(1 for i in items if not i["read"])}
+
+
+@api.post("/notifications/{nid}/read")
+async def read_notification(nid: str, u: User = Depends(current_user)):
+    await db.notifications.update_one({"_id": oid(nid), "user_id": u.id}, {"$set": {"read": True, "read_at": now_iso()}})
+    return {"ok": True}
+
+
+@api.post("/notifications/read-all")
+async def read_all(u: User = Depends(current_user)):
+    await db.notifications.update_many({"user_id": u.id, "read": False}, {"$set": {"read": True, "read_at": now_iso()}})
+    return {"ok": True}
+
+
+def _review_statuses(u: User) -> List[str]:
+    return ["admin_review"] if u.role == "admin" else ["employee_review"]
+
+
+@api.get("/review-groups")
+async def review_groups(search: str = "", u: User = Depends(staff)):
+    """Pending reviews grouped by project (admin: Admin Review queue; employee: Employee Review)."""
+    pipe = [{"$match": {"status": {"$in": _review_statuses(u)}}},
+            {"$group": {"_id": "$project_id", "pending": {"$sum": 1}, "safety": {"$max": "$safety_critical"}, "oldest": {"$min": "$updated_at"}}}]
+    groups = await db.ncs.aggregate(pipe).to_list(2000)
+    projs = {str(d["_id"]): d for d in await db.projects.find({"_id": {"$in": [ObjectId(g["_id"]) for g in groups]}}, {"ref": 1, "address": 1, "postcode": 1}).to_list(2000)}
+    s = search.lower().strip()
+    out = []
+    for g in groups:
+        p = projs.get(g["_id"])
+        if not p or (s and s not in f"{p['ref']} {p['address']} {p.get('postcode', '')}".lower()):
+            continue
+        out.append({"project_id": g["_id"], "ref": p["ref"], "address": p["address"], "postcode": p.get("postcode"),
+                    "pending": g["pending"], "safety": bool(g["safety"]), "oldest": g["oldest"]})
+    return sorted(out, key=lambda x: x["oldest"] or "")
+
+
+@api.get("/review-groups/{pid}")
+async def review_group(pid: str, u: User = Depends(staff)):
+    ids = [str(d["_id"]) for d in await db.ncs.find({"project_id": pid, "status": {"$in": _review_statuses(u)}}, {"_id": 1}).sort("number", 1).to_list(500)]
+    return {"nc_ids": ids}
 
 
 @api.get("/review-queue")
@@ -668,18 +830,40 @@ async def review_queue(u: User = Depends(staff)):
 # ---------------- earnings ----------------
 @api.get("/earnings")
 async def earnings(u: User = Depends(current_user)):
+    from datetime import datetime, timedelta
     q = {} if u.role == "admin" else {"installer_id": u.id}
-    items = clean(await db.earnings.find(q).sort("earned_at", -1).to_list(500))
+    items = clean(await db.earnings.find(q).sort("earned_at", -1).to_list(2000))
     s = await get_settings()
-    pending = await db.projects.find({"installer_id": u.id, "status": {"$ne": "completed"}}, {"rate": 1}).to_list(500) if u.role == "installer" else []
+    me = await db.users.find_one({"_id": oid(u.id)}, {"pay_type": 1, "default_rate": 1})
+    pending = []
+    if u.role == "installer":
+        paid_pids = {i["project_id"] for i in items}
+        for pid in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id}):
+            if pid in paid_pids:
+                continue
+            p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1, "rates": 1})
+            if p:
+                pending.append({"project_id": pid, "ref": p["ref"], "address": p["address"], "status": "pending",
+                                "amount": (p.get("rates") or {}).get(u.id, (me or {}).get("default_rate") or s.default_job_rate)})
+    names = {}
     if u.role == "admin":
         names = {str(d["_id"]): d["name"] for d in await db.users.find({"role": "installer"}, {"name": 1}).to_list(1000)}
-        for i in items:
-            i["installer_name"] = names.get(i["installer_id"])
-    return {"currency": s.currency, "payment_terms": s.payment_terms, "items": items,
+    weeks: dict = {}
+    for i in items:
+        i["installer_name"] = names.get(i["installer_id"])
+        d = datetime.fromisoformat(i["earned_at"]).date()
+        wk = (d - timedelta(days=d.weekday())).isoformat()
+        i["week"] = wk
+        w = weeks.setdefault(wk, {"week": wk, "earned": 0, "paid": 0, "jobs": 0})
+        w["jobs"] += 1
+        w["earned" if i["status"] == "earned" else "paid"] += i["amount"]
+    daily = (me or {}).get("pay_type") == "daily"
+    return {"currency": s.currency, "payment_terms": s.payment_terms, "items": items, "pending": [] if daily else pending,
+            "weeks": sorted(weeks.values(), key=lambda w: w["week"], reverse=True),
+            "pay_type": (me or {}).get("pay_type", "per_job"), "default_rate": (me or {}).get("default_rate"),
             "earned": sum(i["amount"] for i in items if i["status"] == "earned"),
             "paid": sum(i["amount"] for i in items if i["status"] == "paid"),
-            "in_progress": sum(p.get("rate", 0) for p in pending), "jobs_in_progress": len(pending)}
+            "in_progress": 0 if daily else sum(p["amount"] for p in pending), "jobs_in_progress": 0 if daily else len(pending)}
 
 
 @api.post("/earnings/{eid}/paid")

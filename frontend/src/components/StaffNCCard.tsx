@@ -1,7 +1,8 @@
 import { memo, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/src/auth";
 import { api, authed, BASE, readError } from "@/src/api";
 import { uploadForm } from "@/src/utils/upload";
 import { EvidenceFile, NCItem } from "@/src/projects";
@@ -9,7 +10,9 @@ import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, onToggle }: { nc: NCItem; projectId: string; expanded: boolean; onToggle: (id: string) => void }) {
+export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, onToggle, onDone }: { nc: NCItem; projectId: string; expanded: boolean; onToggle: (id: string) => void; onDone?: () => void }) {
+  const { user } = useAuth();
+  const installers = useQuery({ queryKey: ["installers"], queryFn: () => api<{ id: string; name: string }[]>("/installers"), staleTime: 300000, enabled: expanded });
   const s = useStyles();
   const { colors } = useTheme();
   const qc = useQueryClient();
@@ -21,6 +24,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["review-queue"] });
+    qc.invalidateQueries({ queryKey: ["review-groups"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
@@ -31,13 +35,25 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
       await api(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note } });
       setNote("");
       refresh();
-      toast(`${nc.number}: ${action === "approve" ? "approved" : action === "reject" ? "rejected" : "more evidence requested"}`);
+      toast(`${nc.number}: ${({ approve: "approved", reject: "rejected", more_evidence: "more evidence requested", escalate: "escalated to Admin", return: "returned to Employee review" } as Record<string, string>)[action]}`);
+      onDone?.();
     } catch (e: any) {
       toast(e.message);
     } finally {
       setBusy(null);
     }
   };
+
+  const reassign = async (iid: string) => {
+    try {
+      await api(`/ncs/${nc.id}/assign`, { method: "POST", body: { installer_id: iid } });
+      refresh();
+      toast(`${nc.number} assigned · installer notified`);
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
+  const lockedForEmployee = nc.status === "admin_review" && user?.role !== "admin";
 
   const upload = async (kind: "trustmark" | "evidence") => {
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, allowsMultipleSelection: true, selectionLimit: 6 });
@@ -120,12 +136,33 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           </ScrollView>
           {nc.video_versions > 1 ? <Text style={s.muted}>{nc.video_versions - 1} superseded video version(s) retained</Text> : null}
 
-          <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
-          <Btn title="Approve" icon="check" variant="success" onPress={() => act("approve")} loading={busy === "approve"} testID={`approve-${nc.number}`} />
-          <View style={s.actions}>
-            <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
-            <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
-          </View>
+          <Label>Assigned installer</Label>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
+            {(installers.data ?? []).map((i) => (
+              <Pressable key={i.id} onPress={() => reassign(i.id)} style={[s.chip, nc.assigned_installer_id === i.id && { backgroundColor: colors.brandSecondary }]} testID={`reassign-${nc.number}-${i.id}`}>
+                <Text style={[s.chipText, nc.assigned_installer_id === i.id && { color: colors.onBrandSecondary }]}>{i.name}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          {lockedForEmployee ? (
+            <Text style={s.body1} testID={`admin-locked-${nc.number}`}>Escalated · awaiting Admin decision.</Text>
+          ) : (
+            <>
+              <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
+              <Btn title="Approve" icon="check" variant="success" onPress={() => act("approve")} loading={busy === "approve"} testID={`approve-${nc.number}`} />
+              <View style={s.actions}>
+                <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
+                <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
+              </View>
+              {user?.role === "employee" && nc.status === "employee_review" ? (
+                <Btn title="Escalate to Admin" icon="arrow-up-circle" variant="dark" small onPress={() => act("escalate")} loading={busy === "escalate"} testID={`escalate-${nc.number}`} />
+              ) : null}
+              {user?.role === "admin" && nc.status === "admin_review" ? (
+                <Btn title="Return to Employee" icon="corner-up-left" variant="outline" small onPress={() => act("return")} loading={busy === "return"} testID={`return-${nc.number}`} />
+              ) : null}
+            </>
+          )}
         </View>
       ) : null}
       <MediaViewer f={view} onClose={() => setView(null)} />
@@ -151,4 +188,6 @@ const useStyles = makeStyles((c) => ({
   add: { width: 72, height: 72, borderWidth: BORDER, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
   tag: { fontFamily: fonts.mono, fontSize: 9, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm },
+  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
+  chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
 }));

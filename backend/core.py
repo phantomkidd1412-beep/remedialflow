@@ -58,10 +58,13 @@ class User(BaseDocument):
     password_hash: str = ""
     active: bool = True
     token_version: int = 0
+    pay_type: str = "per_job"  # per_job | daily
+    default_rate: Optional[float] = None
     created_at: str = Field(default_factory=now_iso)
 
     def public(self) -> dict:
         return {"id": self.id, "email": self.email, "name": self.name, "role": self.role,
+                "pay_type": self.pay_type, "default_rate": self.default_rate,
                 "active": self.active, "created_at": self.created_at}
 
 
@@ -81,6 +84,8 @@ class Project(BaseDocument):
     resolved: Optional[dict] = None  # current TrustMark resolution {at, by, by_name}
     resolution_history: List[dict] = []
     source_report: Optional[dict] = None
+    rates: dict = {}  # installer_id -> agreed per-job rate (frozen at assignment)
+    rate_override: bool = False
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -91,6 +96,7 @@ class AIResult(BaseModel):
     feedback: str = ""
     concerns: List[str] = []
     model: str = ""
+    risk: str = "standard"  # low | standard | safety
     at: str = Field(default_factory=now_iso)
 
 
@@ -158,7 +164,8 @@ class Settings(BaseModel):
     auto_verify: bool = True
     confidence_threshold: float = 0.8
     location_policy: str = "accept_flag"  # accept_flag | reject | accept
-    gallery_policy: str = "manual_review"  # manual_review | accept
+    gallery_policy: str = "accept"  # manual_review | accept
+    auto_approve_low_risk: bool = True  # AI may internally approve low-risk NCs
     default_job_rate: float = 150.0
     currency: str = "GBP"
     payment_terms: str = "Paid monthly for completed jobs"

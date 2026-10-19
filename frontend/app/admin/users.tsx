@@ -8,7 +8,7 @@ import { Badge, Btn, ErrorBlock, Field, Label, Loading, Sheet, useToast } from "
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type U = { id: string; email: string; name: string; role: string; active: boolean };
+type U = { id: string; email: string; name: string; role: string; active: boolean; pay_type?: string; default_rate?: number | null };
 const ROLES = ["installer", "employee", "admin"];
 
 export default function Users() {
@@ -25,7 +25,25 @@ export default function Users() {
   const [role, setRole] = useState("installer");
   const [err, setErr] = useState("");
   const [code, setCode] = useState<{ title: string; code: string } | null>(null);
-  const [sel, setSel] = useState<U | null>(null);
+  const [sel, setSelRaw] = useState<U | null>(null);
+  const [payType, setPayType] = useState("per_job");
+  const [rateText, setRateText] = useState("");
+  const setSel = (u: U | null) => {
+    setSelRaw(u);
+    setPayType(u?.pay_type ?? "per_job");
+    setRateText(u?.default_rate != null ? String(u.default_rate) : "");
+  };
+  const savePay = async () => {
+    if (!sel) return;
+    try {
+      await api(`/admin/users/${sel.id}`, { method: "PATCH", body: { pay_type: payType, ...(rateText ? { default_rate: Number(rateText) } : {}) } });
+      toast("Payment settings saved (applies to new job assignments)");
+      setSel(null);
+      refresh();
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["users"] });
 
@@ -75,7 +93,7 @@ export default function Users() {
             <Pressable style={s.row} onPress={() => setSel(item)} testID={`user-row-${item.email}`}>
               <View style={{ flex: 1 }}>
                 <Text style={s.name}>{item.name}</Text>
-                <Text style={s.mono}>{item.email}</Text>
+                <Text style={s.mono}>{item.email}{item.role === "installer" ? ` · ${item.pay_type === "daily" ? "Daily wage" : `£${item.default_rate ?? "—"}/job`}` : ""}</Text>
               </View>
               <Badge status={item.active ? "active" : "rejected"} label={item.active ? item.role : "Deactivated"} testID={`user-status-${item.email}`} />
             </Pressable>
@@ -100,6 +118,20 @@ export default function Users() {
 
       <Sheet visible={!!sel} onClose={() => setSel(null)} title={sel?.name ?? ""} testID="user-actions-sheet">
         <Text style={s.mono}>{sel?.email} · {sel?.role}</Text>
+        {sel?.role === "installer" ? (
+          <>
+            <Label>Payment type</Label>
+            <View style={{ flexDirection: "row", gap: space.sm }}>
+              {[["per_job", "Per job"], ["daily", "Daily wage"]].map(([v, l]) => (
+                <Pressable key={v} onPress={() => setPayType(v)} style={[s.chip, payType === v && { backgroundColor: colors.brandSecondary }]} testID={`pay-type-${v}`}>
+                  <Text style={[s.chipText, payType === v && { color: colors.onBrandSecondary }]}>{l}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {payType === "per_job" ? <Field label="Default job rate" value={rateText} onChangeText={setRateText} keyboardType="decimal-pad" testID="user-rate-input" /> : null}
+            <Btn title="Save payment settings" small onPress={savePay} testID="user-pay-save" />
+          </>
+        ) : null}
         <Btn title="Issue password reset code" icon="key" variant="outline" onPress={() => sel && reset(sel)} testID="user-reset-button" />
         {sel && sel.id !== me?.id ? (
           <Btn title={sel.active ? "Deactivate & revoke access" : "Reactivate"} icon={sel.active ? "slash" : "check"} variant={sel.active ? "danger" : "success"} onPress={() => toggleActive(sel)} testID="user-toggle-active-button" />

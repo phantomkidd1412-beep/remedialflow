@@ -1,0 +1,41 @@
+{
+  "summary": "RemedialFlow P2 (NC-level assignment + notifications), P3 (escalation + AI auto-approval), P4 (review groups) and Weekly Earnings end-to-end verified. Backend pytest: 33 passed + 2 skipped (justified) + 0 failed out of 35 effective tests (36 collected including 1 placeholder). Mobile frontend (390x844) verified for employee review grouped queue + progress text, installer bell with unread badge + notifications list + earnings weekly rows + pending jobs + rate, admin review (titled 'Admin review', 2 escalated TEST groups), admin Users -> installer sheet shows pay_type per_job/daily chips, user-rate-input and user-pay-save button. One borderline AI behaviour flagged (safety-critical NC fell into more_evidence instead of employee_review when AI outcome was more_evidence_required) — review server.py:667-668.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/ncs/{id}/submit (AI assessment)", "issue": "When AI returns outcome='more_evidence_required' AND nc.safety_critical=true, server.py L667 (`if safety and status != 'more_evidence'`) skips the safety reroute, so the NC lands in `more_evidence` rather than `employee_review`. Spec says 'safety-critical ... always go to employee review'. Low priority — the NC still cannot be auto-approved and the installer has to resubmit, but a competent human never sees it unless they manually open it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p2_p3_p4_earnings.py",
+    "/app/test_reports/pytest/pytest_p2_p3_p4.xml"
+  ],
+  "action_items": [
+    "(Optional) In server.py run_assessment (around L667), decide whether safety-critical NC should always force employee_review even when AI outcome is more_evidence_required. Current behaviour leaves safety flagged NCs on the installer side.",
+    "(Doc only) Low-risk AI auto-approval observed working: with current settings a realistic photo on 'Missing pipe lagging in loft' was auto-approved by 'ai' (status='approved', approved_by='ai'). Running this test twice may cause the TestReviewNotifications.test_01_reject skip to be expected — it's intentional."
+  ],
+  "critical_code_review_comments": [
+    "server.py review endpoint correctly gates escalate to employee role and return to admin+admin_review NC. Confirmed via 403 responses from installer/admin on escalate and employee on return.",
+    "notify() uses an idempotent upsert on (user_id, key, read=False) — repeated reassign to same installer does not duplicate the unread 'assigned' notification. Verified end-to-end.",
+    "/api/review-groups aggregates by project_id and respects role (admin: admin_review; employee: employee_review). Search is case-insensitive across ref/address/postcode. Verified.",
+    "/api/earnings builds `weeks[]` with ISO Monday-start and includes `pay_type`, `default_rate`, `pending`. Daily-wage users correctly get empty pending[] and no earnings row created on approval.",
+    "settle_earnings skips existing earning docs on reopen -> no duplicate on reject+re-approve. Verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p2_p3_p4_earnings.py (new)",
+    "/app/test_reports/pytest/pytest_p2_p3_p4.xml (new)",
+    "/app/test_reports/iteration_5.json (new)"
+  ],
+  "success_rate": {"backend": "100% (33/33 executed, 2 skipped by design)", "frontend": "100% on tested flows (employee review grouped queue + progress + reassign chips, installer bell/notifications/earnings/jobs, admin Users pay-type sheet + Admin review queue)"},
+  "seed_data_creation": "Created TEST- prefixed projects only (TEST-P2-*, TEST-P3-*, TEST-AI-*, TEST-EARN-*). Restored Installer B pay_type to per_job at the end of the earnings test. Installer A default_rate was already 500 per the project note and remains 500 (per_job) after tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "P2/P3/P4/Earnings regression lives in /app/backend/tests/test_p2_p3_p4_earnings.py. Reuse it with `pytest backend/tests/test_p2_p3_p4_earnings.py -o addopts=''` to bypass the xdist/-n auto from pytest.ini. The ReviewNotifications.test_01 may skip when the AI auto-approves a low-risk NC — that is expected (not a failure). Admin review queue at the end of this run holds 2 TEST-P3 safety projects in admin_review state and 1 in employee_review state (left intentionally for next agent); clean up by setting their status manually in Mongo or ignore (TEST-* prefix). P419977 was not modified.",
+  "rca_of_issue": "server.py:665-669 derives NC final status in two steps: (a) AI outcome -> candidate status (approved/more_evidence/employee_review), (b) if safety and candidate != 'more_evidence' then force employee_review. Step (b) explicitly excludes 'more_evidence', so a safety-critical NC where AI picks 'more_evidence_required' never reaches employee_review. For the test case 'Flue termination within 300mm of boundary' the AI consistently judges insufficient evidence and returns more_evidence_required with risk='standard', so the safety override does not trigger. Mitigation (if desired): change the guard to `if safety: status = 'employee_review'`, OR gate on `status == 'approved'` only, OR let the AI classify risk='safety' which does trigger the override."
+}

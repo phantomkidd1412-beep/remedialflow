@@ -8,7 +8,7 @@ import { Badge, Btn, Field, Label, Loading, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type S = { auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
+type S = { auto_approve_low_risk: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
 function Choice({ value, options, onChange, testID }: { value: string; options: [string, string][]; onChange: (v: string) => void; testID: string }) {
   const s = useStyles();
@@ -62,8 +62,9 @@ export default function SettingsScreen() {
       <ScreenHeader title="RULES & PAYMENTS" back />
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={[s.content, { paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <Text style={s.section}>AI ASSESSMENT</Text>
-        <Label>Auto-verify clear, eligible evidence</Label>
-        <Choice value={f.auto_verify ? "on" : "off"} options={[["on", "On"], ["off", "Off (all to employee)"]]} onChange={(v) => set({ auto_verify: v === "on" })} testID="setting-auto-verify" />
+        <Label>AI internal approval of low-risk NCs</Label>
+        <Choice value={f.auto_verify && f.auto_approve_low_risk ? "on" : "off"} options={[["on", "On"], ["off", "Off (all to employee)"]]} onChange={(v) => set({ auto_verify: v === "on", auto_approve_low_risk: v === "on" })} testID="setting-auto-verify" />
+        <Text style={s.mono}>Safety-critical NCs (gas, electrical, fire, structural, flues) always go to Employee Review.</Text>
         <Field label="Min AI confidence to auto-verify (0–1)" value={String(f.confidence_threshold)} onChangeText={(v) => set({ confidence_threshold: v as any })} keyboardType="decimal-pad" testID="setting-confidence" />
 
         <Text style={s.section}>EVIDENCE ACCEPTANCE</Text>

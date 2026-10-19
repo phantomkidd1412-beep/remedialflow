@@ -8,6 +8,7 @@ import { ProjectRow, useProjects } from "@/src/projects";
 import { usesNativeTabs } from "@/src/navigation";
 import { Badge, Empty, ErrorBlock, Feather, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
+import { Bell } from "@/src/components/Bell";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Counts = { unassigned: number; in_progress: number; awaiting_review: number; completed: number; trustmark_resolved: number };
@@ -92,10 +93,13 @@ export default function Dashboard() {
       <ScreenHeader
         title="Projects"
         right={
+          <View style={{ flexDirection: "row", gap: space.sm }}>
+          <Bell />
           <Pressable style={s.newBtn} onPress={() => router.push("/project/new")} testID="new-project-button">
             <Feather name="plus" size={20} color={colors.onBrandPrimary} />
             <Text style={s.newText}>NEW</Text>
           </Pressable>
+          </View>
         }
       >
         <View style={s.search}>
