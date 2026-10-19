@@ -29,7 +29,7 @@ export async function openExport(projectId?: string) {
   await openSigned(r.url, projectId ? "project-evidence.zip" : "remedialflow-metadata.json");
 }
 
-export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; source_report?: { filename?: string } | null };
+export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 
 export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
@@ -38,14 +38,15 @@ export type EvidenceFile = {
 };
 
 export type NCItem = {
-  id: string; number: string; description: string; required_work: string; safety_critical: boolean; status: string;
+  id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
+  assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null;
   ai?: { outcome: string; confidence: number; feedback: string; concerns: string[]; model: string; at: string } | null;
   review_note: string; trustmark: EvidenceFile[]; photos: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
 };
 
 export type ProjectDetail = { project: ProjectRow; ncs: NCItem[] };
 
-export const DONE = ["approved", "ai_verified"];
+export const DONE = ["approved"];
 
 export function useProjects(search = "", status = "") {
   return useInfiniteQuery({

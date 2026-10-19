@@ -58,7 +58,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             <Badge status={submitQueued ? "uploading" : nc.status} label={submitQueued ? "Submitting" : undefined} testID={`nc-status-${nc.number}`} />
             {nc.safety_critical ? <Badge status="rejected" label="Safety" /> : null}
           </View>
-          <Text style={s.desc} numberOfLines={expanded ? undefined : 2}>{nc.description}</Text>
+          <Text style={s.desc}>{nc.description}</Text>
         </View>
         <Feather name={expanded ? "chevron-up" : "chevron-down"} size={22} color={colors.onSurface} />
       </Pressable>
@@ -76,6 +76,12 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             {nc.trustmark.length ? nc.trustmark.map((f) => <Thumb key={f.id} f={f} size={96} onPress={() => setView(f)} testID={`trustmark-thumb-${f.id}`} />) : <Text style={s.muted}>None provided</Text>}
           </ScrollView>
 
+          {nc.original_text && nc.original_text !== nc.description ? (
+            <>
+              <Label>Original TrustMark wording</Label>
+              <Text style={s.work} selectable>{nc.original_text}</Text>
+            </>
+          ) : null}
           <Label>Required remedial work</Label>
           <Text style={s.work}>{nc.required_work}</Text>
 
@@ -143,7 +149,7 @@ const useStyles = makeStyles((c) => ({
   feedback: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderColor: c.border, padding: space.md, marginBottom: space.sm },
   fbText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
   row: { gap: space.sm, paddingBottom: space.sm },
-  work: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface, marginBottom: space.sm },
+  work: { fontSize: 15, lineHeight: 21, color: c.onSurface, marginBottom: space.sm },
   muted: { fontFamily: fonts.mono, fontSize: 12, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.sm },
   local: { width: 72, height: 72, borderWidth: BORDER, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },

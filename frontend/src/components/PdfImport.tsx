@@ -6,7 +6,7 @@ import { uploadForm } from "@/src/utils/upload";
 import { Btn, Feather } from "@/src/ui";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-export type PdfNc = { description: string; required_work: string; safety_critical: boolean; pages: number[]; photo_count?: number };
+export type PdfNc = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages: number[]; photo_count?: number };
 export type PdfDraft = { ref: string | null; address: string | null; postcode: string | null; nc_count_stated: number | null; ncs: PdfNc[]; confidence: number; notes: string };
 
 /** Pick an inspection PDF, upload it, and poll the background AI extraction. */

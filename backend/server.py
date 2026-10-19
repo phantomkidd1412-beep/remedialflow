@@ -29,7 +29,9 @@ app = FastAPI(title="RemedialFlow")
 api = APIRouter(prefix="/api")
 staff = require("admin", "employee")
 admin = require("admin")
-DONE = {"approved", "ai_verified"}
+DONE = {"approved"}
+REVIEW = {"employee_review", "admin_review"}
+LIFECYCLE = {"unassigned", "in_progress", "completed", "trustmark_resolved"}
 MAX_UPLOAD = 300 * 1024 * 1024
 
 
@@ -63,13 +65,27 @@ def file_public(f: EvidenceFile) -> dict:
 
 
 async def recompute_project(pid: str):
-    ncs = await db.ncs.find({"project_id": pid}, {"status": 1}).to_list(500)
+    """Lifecycle: unassigned | in_progress | completed | trustmark_resolved, plus needs_review flag."""
+    ncs = await db.ncs.find({"project_id": pid}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
+    proj = await db.projects.find_one({"_id": oid(pid)}, {"completed_at": 1, "completion_history": 1, "resolved": 1,
+                                                          "resolution_history": 1, "status": 1})
     total = len(ncs)
     done = sum(1 for n in ncs if n["status"] in DONE)
-    review = sum(1 for n in ncs if n["status"] in ("manual_review", "assessing"))
-    status = "completed" if total and done == total else ("awaiting_review" if review else "active")
-    await db.projects.update_one({"_id": oid(pid)}, {"$set": {"nc_total": total, "nc_done": done, "nc_review": review,
-                                                             "status": status, "updated_at": now_iso()}})
+    review = sum(1 for n in ncs if n["status"] in REVIEW)
+    upd: dict = {"nc_total": total, "nc_done": done, "nc_review": review, "needs_review": review > 0, "updated_at": now_iso()}
+    if total and done == total:
+        status = "trustmark_resolved" if proj.get("resolved") else "completed"
+        if not proj.get("completed_at"):
+            upd["completed_at"] = now_iso()
+        if proj.get("status") not in ("completed", "trustmark_resolved"):
+            upd["completion_history"] = (proj.get("completion_history") or []) + [now_iso()]
+    else:
+        if proj.get("resolved"):  # reopened after resolution: keep history, clear current resolution
+            upd["resolved"] = None
+            await audit("project.reopened", None, f"project:{pid}", {"previous_resolution": proj["resolved"]})
+        status = "in_progress" if any(n.get("assigned_installer_id") for n in ncs) else "unassigned"
+    upd["status"] = status
+    await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
     if status == "completed":
         p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
         if p.installer_id and not await db.earnings.find_one({"project_id": pid}):
@@ -146,7 +162,7 @@ async def installers(u: User = Depends(staff)):
 
 # ---------------- settings ----------------
 @api.get("/settings")
-async def read_settings(u: User = Depends(current_user)):
+async def read_settings(u: User = Depends(staff)):
     return (await get_settings()).model_dump()
 
 
@@ -160,12 +176,24 @@ async def write_settings(body: Settings, u: User = Depends(admin)):
 # ---------------- dashboard / projects ----------------
 @api.get("/dashboard")
 async def dashboard(u: User = Depends(staff)):
-    return {
-        "active_projects": await db.projects.count_documents({"status": {"$ne": "completed"}}),
-        "outstanding_ncs": await db.ncs.count_documents({"status": {"$nin": list(DONE)}}),
-        "awaiting_review": await db.ncs.count_documents({"status": "manual_review"}),
-        "completed_projects": await db.projects.count_documents({"status": "completed"}),
-    }
+    # Lifecycle counters are mutually exclusive; awaiting_review is the attention flag (projects, not NCs).
+    out = {k: await db.projects.count_documents({"status": k}) for k in LIFECYCLE}
+    out["awaiting_review"] = await db.projects.count_documents({"needs_review": True})
+    return out
+
+
+@api.post("/projects/{pid}/resolve")
+async def resolve_project(pid: str, u: User = Depends(staff)):
+    p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
+    if not p:
+        raise HTTPException(404, "Project not found")
+    if p.status != "completed":
+        raise HTTPException(400, "Only internally completed projects can be marked TrustMark Resolved")
+    res = {"at": now_iso(), "by": u.id, "by_name": u.name}
+    await db.projects.update_one({"_id": oid(pid)}, {"$set": {"resolved": res, "status": "trustmark_resolved"},
+                                                    "$push": {"resolution_history": res}})
+    await audit("project.trustmark_resolved", u.id, f"project:{pid}", res)
+    return {"ok": True, "resolved": res}
 
 
 @api.get("/projects")
@@ -174,7 +202,9 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
     q: dict = {}
     if u.role == "installer":
         q["installer_id"] = u.id
-    if status:
+    if status == "awaiting_review":
+        q["needs_review"] = True
+    elif status:
         q["status"] = status
     if search:
         rx = {"$regex": re.escape(search), "$options": "i"}
@@ -184,8 +214,16 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
     items = [Project.from_mongo(d).model_dump() for d in docs]
     ids = list({i["installer_id"] for i in items if i["installer_id"]})
     names = {str(d["_id"]): d["name"] for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in ids]}}, {"name": 1}).to_list(500)}
+    # Installer names per project = union of NC-level assignees.
+    pids = [i["id"] for i in items]
+    per: dict = {}
+    for n in await db.ncs.find({"project_id": {"$in": pids}, "assigned_installer_id": {"$ne": None}}, {"project_id": 1, "assigned_installer_id": 1}).to_list(5000):
+        per.setdefault(n["project_id"], set()).add(n["assigned_installer_id"])
+    all_ids = set(ids) | {x for s in per.values() for x in s}
+    names = {str(d["_id"]): d["name"] for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in all_ids]}}, {"name": 1}).to_list(500)}
     for i in items:
         i["installer_name"] = names.get(i["installer_id"] or "", None)
+        i["installer_names"] = sorted(names[x] for x in per.get(i["id"], set()) if x in names)
     return {"items": items, "total": total, "page": page, "has_more": page * limit < total}
 
 
@@ -193,6 +231,7 @@ class NCIn(BaseModel):
     description: str = Field(min_length=1)
     required_work: str = Field(min_length=1)
     safety_critical: bool = False
+    original_text: str = ""  # verbatim TrustMark wording (defaults to description)
     pages: List[int] = []  # PDF pages whose photos become TrustMark references
 
 
@@ -280,10 +319,23 @@ class ProjectPatch(BaseModel):
     rate: Optional[float] = None
 
 
-async def add_nc(pid: str, body: NCIn, idx: int) -> str:
-    nc = NC(project_id=pid, number=f"NC-{idx:02d}", **body.model_dump(exclude={"pages"}))
+async def add_nc(pid: str, body: NCIn, idx: int, installer_id: Optional[str] = None) -> str:
+    d = body.model_dump(exclude={"pages"})
+    d["original_text"] = d.get("original_text") or d["description"]
+    nc = NC(project_id=pid, number=f"NC-{idx:02d}", assigned_installer_id=installer_id, **d)
     r = await db.ncs.insert_one(nc.to_mongo())
     return str(r.inserted_id)
+
+
+async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: User):
+    """Project-level assignment defaults every unassigned NC to that installer."""
+    if not installer_id:
+        return
+    ncs = await db.ncs.find({"project_id": pid, "assigned_installer_id": None}, {"_id": 1}).to_list(500)
+    for n in ncs:
+        await db.ncs.update_one({"_id": n["_id"]}, {"$set": {"assigned_installer_id": installer_id},
+                                "$push": {"assignment_history": {"to": installer_id, "from": None, "by": actor.id, "at": now_iso()}}})
+        await audit("nc.assigned", actor.id, f"nc:{n['_id']}", {"to": installer_id})
 
 
 @api.post("/projects")
@@ -302,7 +354,7 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
     pid = str(r.inserted_id)
     nc_pages = []
     for i, n in enumerate(body.ncs, 1):
-        nid = await add_nc(pid, n, i)
+        nid = await add_nc(pid, n, i, p.installer_id)
         if n.pages:
             nc_pages.append((nid, n.pages))
     await recompute_project(pid)
@@ -320,6 +372,9 @@ async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
     if "installer_id" in upd and upd["installer_id"] == "":
         upd["installer_id"] = None
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
+    if upd.get("installer_id"):
+        await assign_unassigned_ncs(pid, upd["installer_id"], u)
+        await recompute_project(pid)
     await audit("project.updated", u.id, f"project:{pid}", upd)
     return {"ok": True}
 
@@ -328,7 +383,8 @@ async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
 async def create_nc(pid: str, body: NCIn, u: User = Depends(staff)):
     await get_project(pid, u)
     n = await db.ncs.count_documents({"project_id": pid})
-    nid = await add_nc(pid, body, n + 1)
+    proj = await db.projects.find_one({"_id": oid(pid)}, {"installer_id": 1})
+    nid = await add_nc(pid, body, n + 1, proj.get("installer_id"))
     await recompute_project(pid)
     await audit("nc.created", u.id, f"nc:{nid}")
     return {"id": nid}
@@ -355,9 +411,12 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
         out.append(d)
     pd = p.model_dump()
-    if p.installer_id:
-        iu = await db.users.find_one({"_id": oid(p.installer_id)}, {"name": 1})
-        pd["installer_name"] = iu["name"] if iu else None
+    uids = {n.assigned_installer_id for n in ncs if n.assigned_installer_id} | ({p.installer_id} if p.installer_id else set())
+    names = {str(d["_id"]): d["name"] for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in uids]}}, {"name": 1}).to_list(100)}
+    for d in out:
+        d["assigned_installer_name"] = names.get(d.get("assigned_installer_id") or "")
+    pd["installer_name"] = names.get(p.installer_id or "")
+    pd["installer_names"] = sorted({names[n.assigned_installer_id] for n in ncs if n.assigned_installer_id in names})
     return {"project": pd, "ncs": out}
 
 
@@ -443,6 +502,7 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
     nc, p = await get_nc(nc_id, u)
     m = json.loads(meta or "{}")
     if m.get("client_id"):
+        m["client_id"] = str(m["client_id"])[:64]
         dup = await db.files.find_one({"client_id": m["client_id"], "nc_id": nc_id})
         if dup:  # idempotent retry from the device queue
             return file_public(EvidenceFile.from_mongo(dup))
@@ -528,8 +588,8 @@ async def run_assessment(nc_id: str, sub_id: str):
             ai = AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.", concerns=reasons)
         else:
             ai = AIResult(outcome=res.outcome, confidence=res.confidence, feedback=res.feedback, concerns=res.concerns, model=res.model)
-        status = {"ai_verified": "ai_verified", "more_evidence_required": "more_evidence"}.get(ai.outcome, "manual_review")
-        if status == "ai_verified":
+        status = {"ai_verified": "approved", "more_evidence_required": "more_evidence"}.get(ai.outcome, "employee_review")
+        if status == "approved":
             media = photos + ([video] if video else [])
             if not s.auto_verify:
                 reasons.append("Auto-verification disabled")
@@ -544,14 +604,15 @@ async def run_assessment(nc_id: str, sub_id: str):
             if s.gallery_policy == "manual_review" and any(f.source == "gallery" for f in media):
                 reasons.append("Includes gallery uploads")
             if reasons:
-                status = "manual_review"
+                status = "employee_review"
                 ai.concerns = ai.concerns + reasons
-        await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso()}})
+        extra = {"approved_by": "ai", "approved_at": now_iso()} if status == "approved" else {}
+        await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso(), **extra}})
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
         await recompute_project(nc.project_id)
     except Exception:
         log.exception("assessment crashed")
-        await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": "manual_review",
+        await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": "employee_review",
                                 "ai": AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.").model_dump()}})
 
 
@@ -584,8 +645,12 @@ class ReviewIn(BaseModel):
 async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
     nc, p = await get_nc(nc_id, u)
     status = {"approve": "approved", "reject": "rejected", "more_evidence": "more_evidence"}[body.action]
-    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"status": status, "review_note": body.note,
-                            "reviewed_by": u.id, "updated_at": now_iso()}})
+    st = {"status": status, "review_note": body.note, "reviewed_by": u.id, "updated_at": now_iso()}
+    if status == "approved":
+        st.update(approved_by=u.id, approved_at=now_iso())
+    elif status == "rejected":
+        st["rejection_source"] = u.role
+    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": st})
     await recompute_project(p.id)
     await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note})
     return {"ok": True, "status": status}
@@ -593,7 +658,7 @@ async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
 
 @api.get("/review-queue")
 async def review_queue(u: User = Depends(staff)):
-    ncs = await db.ncs.find({"status": {"$in": ["manual_review", "assessing"]}}).sort("updated_at", 1).to_list(200)
+    ncs = await db.ncs.find({"status": {"$in": ["employee_review", "admin_review", "assessing"]}}).sort("updated_at", 1).to_list(200)
     pids = list({n["project_id"] for n in ncs})
     projs = {str(d["_id"]): d for d in await db.projects.find({"_id": {"$in": [ObjectId(i) for i in pids]}}).to_list(500)}
     return [{**NC.from_mongo(n).model_dump(), "project_ref": projs.get(n["project_id"], {}).get("ref"),
@@ -716,8 +781,7 @@ async def seed():
             r = await db.users.insert_one(User(email=email, name=name, role=role, password_hash=ph.hash(pw)).to_mongo())
             ids[email] = str(r.inserted_id)
         else:
-            if not ph.verify(pw, d["password_hash"] or ph.hash("x")):
-                await db.users.update_one({"_id": d["_id"]}, {"$set": {"password_hash": ph.hash(pw)}})
+            # Never overwrite a password that was changed after seeding (security audit SEC-002).
             ids[email] = str(d["_id"])
     users = [u[0] for u in DEMO_USERS]
     for ref, addr, pc, ui, ncs in DEMO_PROJECTS:
@@ -726,7 +790,7 @@ async def seed():
         r = await db.projects.insert_one(Project(ref=ref, address=addr, postcode=pc, installer_id=ids[users[ui]], rate=150).to_mongo())
         pid = str(r.inserted_id)
         for i, (desc, work, sc) in enumerate(ncs, 1):
-            await add_nc(pid, NCIn(description=desc, required_work=work, safety_critical=sc), i)
+            await add_nc(pid, NCIn(description=desc, required_work=work, safety_critical=sc), i, ids[users[ui]])
         await recompute_project(pid)
     # TrustMark reference photos for demo NCs (once).
     sys_user = User(id=ids[users[1]], email=users[1], name="seed", role="employee")
@@ -751,8 +815,12 @@ async def startup():
     await db.files.create_index([("project_id", 1), ("status", 1)])
     await db.files.create_index("submission_id")
     await db.ncs.create_index("project_id")
+    await db.ncs.create_index("assigned_installer_id")
+    await db.projects.create_index("status")
     await db.audit.create_index("seq", unique=True)
     await db.audit.create_index("target")
+    from migrations import run_migrations
+    await run_migrations()
     if os.environ.get("DEMO_SEED") == "true":
         asyncio.create_task(_seed_safe())
 
@@ -773,5 +841,5 @@ async def shutdown():
 app.include_router(auth_router)
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
-                   allow_origin_regex=os.environ.get("CORS_ORIGIN_REGEX", r"https://.*"),
+                   allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
                    allow_methods=["*"], allow_headers=["*"])

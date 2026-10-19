@@ -75,6 +75,11 @@ class Project(BaseDocument):
     nc_total: int = 0
     nc_done: int = 0
     nc_review: int = 0
+    needs_review: bool = False  # attention flag, independent of lifecycle status
+    completed_at: Optional[str] = None  # first internal completion (never overwritten)
+    completion_history: List[str] = []
+    resolved: Optional[dict] = None  # current TrustMark resolution {at, by, by_name}
+    resolution_history: List[dict] = []
     source_report: Optional[dict] = None
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
@@ -95,7 +100,14 @@ class NC(BaseDocument):
     description: str
     required_work: str
     safety_critical: bool = False
-    status: str = "open"  # open|assessing|ai_verified|more_evidence|manual_review|approved|rejected
+    original_text: str = ""  # exact TrustMark wording, never altered
+    assigned_installer_id: Optional[str] = None
+    assignment_history: List[dict] = []
+    # open|assessing|more_evidence|employee_review|admin_review|approved|rejected
+    status: str = "open"
+    approved_by: Optional[str] = None  # "ai" or user id
+    approved_at: Optional[str] = None
+    rejection_source: Optional[str] = None  # employee | admin | trustmark
     trustmark_ids: List[str] = []
     draft_submission_id: Optional[str] = None
     active_video_id: Optional[str] = None

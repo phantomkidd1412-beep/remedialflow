@@ -1,0 +1,88 @@
+{
+  "summary": "RemedialFlow P0 (security) + P1 (dashboards + project details) upgrade verified end-to-end. 19/19 new P0+P1 pytest cases pass against the public preview URL. Mobile (390x844) and desktop (1280x900) web preview verified. Installer regression (jobs list + job detail) still works; AI assessment regression test still passes. No code changes to source files were required.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p0_p1_upgrade.py",
+    "/app/test_reports/pytest/pytest_p0_p1.xml",
+    "/app/backend/tests/test_backend.py"
+  ],
+  "action_items": [
+    "Legacy pytest file /app/backend/tests/test_backend.py still contains out-of-date assertions for the pre-upgrade status model (e.g. TestAuth.test_forgot_demo_mode asserts dev_reset_code is present; TestLocationPolicyReject hard-codes gallery_policy='manual_review' which is no longer accepted by Pydantic Settings after M6; TestEarnings.test_approve_all_ncs_creates_earning uses status='ai_verified' in filter). Not blocking P0/P1 but should be refreshed when the main agent next touches regressions.",
+    "Optional: expose a `projects-search-input` -> `project-search-input` alias OR document the canonical testID in UPGRADE_PLAN.md so future tests use the right id."
+  ],
+  "critical_code_review_comments": [
+    "server.py recompute_project correctly derives lifecycle unassigned|in_progress|completed|trustmark_resolved from NC statuses + resolved flag and sets needs_review from employee_review/admin_review NCs. The reopen path (NC becomes not-approved) clears `resolved` while preserving resolution_history and recomputes to in_progress — matches spec and is covered by test_reject_nc_reopens_project.",
+    "migrations.py m001 maps ai_verified->approved(approved_by='ai') and manual_review->employee_review, inherits assigned_installer_id and backfills original_text. Verified against live data: 0 legacy statuses, all NCs on EF-1024 inherit project installer_id, every NC has original_text.",
+    "auth.py /forgot gates dev_reset_code behind EXPOSE_RESET_CODES=='true' only (not DEMO_MODE). Current prod .env has neither set, so the field is correctly suppressed in the live preview. test_credentials.md still says 'DEMO_MODE=true makes /api/auth/forgot return dev_reset_code' — update the doc or the gate for consistency.",
+    "server.py CORS allowlist is built from CORS_ORIGINS env; empty allow_origins behavior validated — evil origin receives no ACAO. Allowed preview origin receives ACAO echo.",
+    "/api/settings is now Depends(staff): installer -> 403, employee -> 200. Verified."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p0_p1_upgrade.py (new)",
+    "/app/test_reports/iteration_4.json (new)",
+    "/app/test_reports/pytest/pytest_p0_p1.xml (new)"
+  ],
+  "success_rate": {"backend": "100% (19/19 P0+P1 cases, plus TestSubmitAI regression)", "frontend": "100% (counters, chips, cards, project detail, actions sheet, audit, installer jobs, desktop table)"},
+  "seed_data_creation": "Created one test project (ref TEST-P1-<hex>) via POST /api/projects without installer_id -> unassigned, then PATCH-assigned to Sam Fitter, approved both NCs -> completed, called /resolve -> trustmark_resolved, then rejected NC-01 to validate reopen flow (final state: in_progress). Left in DB for inspection.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "P0+P1 verified. For future P2+ work: use /app/backend/tests/test_p0_p1_upgrade.py as the regression baseline (pytest-xdist loadscope keeps TestP1Lifecycle class on one worker, so class-level _state carries between tests). NC creation payload now requires `category`, `description`, `required_work`. Frontend search input testID is `project-search-input` (not `projects-search`). Resolve button only renders when `project.status == 'completed'`; open-report-button only renders when project.source_report / PDF present (EF-1026 has no PDF so the testID is correctly absent). test_credentials.md still mentions DEMO_MODE/dev_reset_code which has been replaced by EXPOSE_RESET_CODES.",
+  "p0_p1_coverage": {
+    "p0_security": {
+      "forgot_no_dev_reset_code": "PASS",
+      "cors_allowlist_known_origin": "PASS",
+      "cors_blocks_evil_origin": "PASS",
+      "settings_installer_403": "PASS",
+      "settings_employee_200": "PASS",
+      "all_demo_logins_work": "PASS"
+    },
+    "migrations_data_preservation": {
+      "projects_>=12": "PASS (14 projects)",
+      "ncs_>=45_no_legacy_status": "PASS",
+      "assigned_installer_inherited_from_project": "PASS",
+      "original_text_present_on_every_nc": "PASS"
+    },
+    "p1_lifecycle": {
+      "create_without_installer_unassigned": "PASS",
+      "unassigned_dashboard_counter_increments": "PASS",
+      "patch_installer_assigns_all_ncs_in_progress": "PASS",
+      "approve_all_ncs_marks_completed_with_completed_at": "PASS (approved_by + approved_at set)",
+      "installer_resolve_403": "PASS",
+      "resolve_marks_trustmark_resolved_counter_up": "PASS",
+      "resolve_non_completed_returns_400": "PASS",
+      "reject_nc_reopens_resolved_cleared_history_kept": "PASS"
+    },
+    "counters_consistency": {
+      "unassigned+in_progress+completed+trustmark_resolved==total_projects": "PASS",
+      "list_filter_by_each_lifecycle_and_awaiting_review": "PASS",
+      "items_include_installer_names_and_needs_review": "PASS"
+    },
+    "frontend_mobile_390x844": {
+      "5_counter_tiles_clickable_with_correct_testIDs": "PASS",
+      "6_filter_chips_with_correct_testIDs": "PASS",
+      "project_cards_show_full_address_untruncated": "PASS",
+      "single_vertical_scroll_counters_scroll_with_list": "PASS (ListHeaderComponent pattern)",
+      "project_detail_header_back+ref+address+progress+status_badge": "PASS",
+      "actions_sheet_export+audit+add-nc+resolve_visible_on_completed_project": "PASS",
+      "audit_trail_sheet_opens_with_chain_entries": "PASS",
+      "staff_nc_installer_label_shows_assignee": "PASS (Sam Fitter on EF-1026 NC-01)",
+      "approve_more-evidence_reject_labels_readable_on_staff_nc_card": "PASS (visually confirmed, no truncation at 390w)"
+    },
+    "frontend_desktop_1280x900": {
+      "table_rows_render_with_columns": "PASS (Reference, Address, Installer, Progress, Status)",
+      "5_counter_tiles_still_visible": "PASS",
+      "13_rows_rendered_above_fold": "PASS"
+    },
+    "installer_regression": {
+      "jobs_list_loads": "PASS (5 assigned to Ian)",
+      "job_detail_opens_with_nc_cards_showing_original_text_and_required_work": "PASS"
+    },
+    "ai_regression": "PASS (test_backend.py::TestSubmitAI::test_submit_runs_assessment)"
+  }
+}

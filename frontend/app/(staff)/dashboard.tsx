@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { FlatList, Pressable, RefreshControl, ScrollView, Text, TextInput, View } from "react-native";
+import { FlatList, Pressable, RefreshControl, ScrollView, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,23 +10,50 @@ import { Badge, Empty, ErrorBlock, Feather, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type Counts = { active_projects: number; outstanding_ncs: number; awaiting_review: number; completed_projects: number };
-const FILTERS = [["", "All"], ["active", "Active"], ["awaiting_review", "Awaiting review"], ["completed", "Completed"]] as const;
+type Counts = { unassigned: number; in_progress: number; awaiting_review: number; completed: number; trustmark_resolved: number };
+const COUNTERS: [keyof Counts, string][] = [
+  ["unassigned", "Unassigned"], ["in_progress", "In progress"], ["awaiting_review", "Review"], ["completed", "Completed"], ["trustmark_resolved", "Resolved"],
+];
+const FILTERS = [["", "All"], ["unassigned", "Unassigned"], ["in_progress", "Work in progress"], ["awaiting_review", "Awaiting review"], ["completed", "Completed"], ["trustmark_resolved", "TrustMark resolved"]] as const;
+
+const installersOf = (p: ProjectRow) => (p.installer_names?.length ? p.installer_names.join(", ") : "Unassigned");
+
+const Card = memo(function Card({ p, onOpen }: { p: ProjectRow; onOpen: (id: string) => void }) {
+  const s = useStyles();
+  return (
+    <Pressable style={({ pressed }) => [s.card, pressed && s.pressed]} onPress={() => onOpen(p.id)} testID={`project-row-${p.ref}`}>
+      <View style={s.cardTop}>
+        <Text style={s.ref}>{p.ref}</Text>
+        <View style={s.badges}>
+          {p.needs_review ? <Badge status="employee_review" label="Review" /> : null}
+          <Badge status={p.status} />
+        </View>
+      </View>
+      <Text style={s.addr}>{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
+      <Text style={s.meta}>{installersOf(p)}</Text>
+      <View style={s.progRow}>
+        <View style={{ flex: 1 }}><Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} /></View>
+        <Text style={s.progText}>{p.nc_done}/{p.nc_total} NCs</Text>
+      </View>
+    </Pressable>
+  );
+});
 
 const Row = memo(function Row({ p, onOpen }: { p: ProjectRow; onOpen: (id: string) => void }) {
   const s = useStyles();
   return (
-    <Pressable style={({ pressed }) => [s.row, pressed && s.rowPressed]} onPress={() => onOpen(p.id)} testID={`project-row-${p.ref}`}>
-      <Text style={[s.cell, s.cRef]} numberOfLines={1}>{p.ref}</Text>
-      <View style={s.cAddr}>
-        <Text style={s.addr} numberOfLines={1}>{p.address}</Text>
-        <Text style={s.sub} numberOfLines={1}>{p.installer_name ?? "UNASSIGNED"}</Text>
-      </View>
-      <View style={s.cProg}>
+    <Pressable style={({ pressed }) => [s.row, pressed && s.pressed]} onPress={() => onOpen(p.id)} testID={`project-row-${p.ref}`}>
+      <Text style={[s.cell, { width: 110 }]}>{p.ref}</Text>
+      <Text style={[s.cell, { flex: 2 }]}>{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
+      <Text style={[s.cell, { flex: 1 }]}>{installersOf(p)}</Text>
+      <View style={{ width: 120, gap: 2 }}>
         <Text style={s.cell}>{p.nc_done}/{p.nc_total}</Text>
         <Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} />
       </View>
-      <View style={s.cStatus}><Badge status={p.status} /></View>
+      <View style={{ width: 180, flexDirection: "row", gap: 4, justifyContent: "flex-end" }}>
+        {p.needs_review ? <Badge status="employee_review" label="Review" /> : null}
+        <Badge status={p.status} />
+      </View>
     </Pressable>
   );
 });
@@ -36,6 +63,7 @@ export default function Dashboard() {
   const { colors } = useTheme();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const wide = useWindowDimensions().width >= 768;
   const [text, setText] = useState("");
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -47,18 +75,22 @@ export default function Dashboard() {
   const q = useProjects(search, status);
   const data = q.data?.pages.flatMap((p) => p.items) ?? [];
   const open = (id: string) => router.push(`/project/${id}`);
-  const c = counts.data;
-  const tiles: [string, number | undefined, () => void, string][] = [
-    ["Active projects", c?.active_projects, () => setStatus("active"), "tile-active-projects"],
-    ["Outstanding NCs", c?.outstanding_ncs, () => setStatus(""), "tile-outstanding-ncs"],
-    ["Awaiting review", c?.awaiting_review, () => router.push("/(staff)/review"), "tile-awaiting-review"],
-    ["Completed", c?.completed_projects, () => setStatus("completed"), "tile-completed-projects"],
-  ];
+
+  const header = (
+    <View style={s.counters}>
+      {COUNTERS.map(([k, label]) => (
+        <Pressable key={k} style={[s.counter, status === k && { backgroundColor: colors.brandPrimary }]} onPress={() => setStatus(status === k ? "" : k)} testID={`tile-${k}`}>
+          <Text style={s.cVal}>{counts.data?.[k] ?? "–"}</Text>
+          <Text style={s.cLabel} numberOfLines={1} adjustsFontSizeToFit>{label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
 
   return (
     <View style={s.root}>
       <ScreenHeader
-        title="REMEDIALFLOW"
+        title="Projects"
         right={
           <Pressable style={s.newBtn} onPress={() => router.push("/project/new")} testID="new-project-button">
             <Feather name="plus" size={20} color={colors.onBrandPrimary} />
@@ -66,17 +98,9 @@ export default function Dashboard() {
           </Pressable>
         }
       >
-        <View style={s.grid}>
-          {tiles.map(([label, val, onPress, id]) => (
-            <Pressable key={id} style={s.tile} onPress={onPress} testID={id}>
-              <Text style={s.tVal}>{val ?? "–"}</Text>
-              <Text style={s.tLabel}>{label}</Text>
-            </Pressable>
-          ))}
-        </View>
         <View style={s.search}>
           <Feather name="search" size={18} color={colors.onSurface} />
-          <TextInput value={text} onChangeText={setText} placeholder="Search ref, address, postcode" placeholderTextColor={colors.muted} style={s.searchInput} testID="project-search-input" autoCapitalize="none" />
+          <TextInput value={text} onChangeText={setText} placeholder="Search address or reference" placeholderTextColor={colors.muted} style={s.searchInput} testID="project-search-input" autoCapitalize="none" />
         </View>
       </ScreenHeader>
       <View style={s.chipRow}>
@@ -88,27 +112,21 @@ export default function Dashboard() {
           ))}
         </ScrollView>
       </View>
-      <View style={s.thead}>
-        <Text style={[s.th, s.cRef]}>REF</Text>
-        <Text style={[s.th, s.cAddr]}>ADDRESS / INSTALLER</Text>
-        <Text style={[s.th, s.cProg]}>NCS</Text>
-        <Text style={[s.th, s.cStatus]}>STATUS</Text>
-      </View>
-      {q.isLoading ? (
-        <Loading />
-      ) : q.isError ? (
+      {q.isError ? (
         <View style={{ padding: space.lg }}><ErrorBlock message={(q.error as Error).message} onRetry={() => q.refetch()} /></View>
       ) : (
         <FlatList
           testID="project-table"
           data={data}
           keyExtractor={(p) => p.id}
-          renderItem={({ item }) => <Row p={item} onOpen={open} />}
+          ListHeaderComponent={header}
+          renderItem={({ item }) => (wide ? <Row p={item} onOpen={open} /> : <Card p={item} onOpen={open} />)}
           onEndReached={() => q.hasNextPage && q.fetchNextPage()}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); counts.refetch(); }} />}
-          contentContainerStyle={{ paddingBottom: (usesNativeTabs ? insets.bottom : 0) + space.xl }}
-          ListEmptyComponent={<Empty icon="inbox" text="No projects match" />}
-          initialNumToRender={15}
+          contentContainerStyle={[s.list, { paddingBottom: (usesNativeTabs ? insets.bottom : 0) + space.xl }]}
+          ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="inbox" text="No projects match" />}
+          initialNumToRender={10}
+          windowSize={7}
           removeClippedSubviews
         />
       )}
@@ -120,25 +138,26 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   newBtn: { flexDirection: "row", alignItems: "center", gap: 4, height: 44, paddingHorizontal: space.md, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border },
   newText: { fontFamily: fonts.display, fontWeight: "900", fontSize: 14, color: c.onBrandPrimary },
-  grid: { flexDirection: "row", flexWrap: "wrap", borderLeftWidth: BORDER, borderTopWidth: BORDER, borderColor: c.border },
-  tile: { width: "50%", paddingVertical: space.md, paddingHorizontal: space.md, borderRightWidth: BORDER, borderBottomWidth: BORDER, borderColor: c.border },
-  tVal: { fontFamily: fonts.display, fontWeight: "900", fontSize: 28, color: c.onSurface },
-  tLabel: { fontFamily: fonts.mono, fontSize: 11, color: c.onSurface, textTransform: "uppercase" },
   search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, height: 44 },
-  searchInput: { flex: 1, fontFamily: fonts.mono, fontSize: 14, color: c.onSurface, height: 44 },
+  searchInput: { flex: 1, fontSize: 15, color: c.onSurface, height: 44 },
   chipRow: { height: 56, justifyContent: "center", borderBottomWidth: BORDER, borderColor: c.border },
   chips: { gap: space.sm, paddingHorizontal: space.lg, alignItems: "center" },
   chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center", backgroundColor: c.surface },
-  chipText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  thead: { flexDirection: "row", paddingHorizontal: space.lg, paddingVertical: space.sm, backgroundColor: c.surfaceInverse, gap: space.sm },
-  th: { fontFamily: fonts.mono, fontSize: 10, color: c.onSurfaceInverse },
-  row: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.lg, minHeight: 56, borderBottomWidth: 1, borderColor: c.border, gap: space.sm },
-  rowPressed: { backgroundColor: c.surfaceSecondary },
-  cell: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  cRef: { width: 64 },
-  cAddr: { flex: 1 },
-  cProg: { width: 48, gap: 2 },
-  cStatus: { width: 96, alignItems: "flex-end" },
-  addr: { fontFamily: fonts.display, fontWeight: "700", fontSize: 14, color: c.onSurface },
-  sub: { fontFamily: fonts.mono, fontSize: 10, color: c.muted },
+  chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
+  list: { padding: space.lg, gap: space.md },
+  counters: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border, marginBottom: space.xs },
+  counter: { flex: 1, minHeight: 60, paddingVertical: space.sm, alignItems: "center", justifyContent: "center", borderRightWidth: 1, borderColor: c.border },
+  cVal: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: c.onSurface },
+  cLabel: { fontSize: 11, fontWeight: "600", color: c.onSurface },
+  card: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 6, backgroundColor: c.surface },
+  pressed: { backgroundColor: c.surfaceSecondary },
+  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.sm },
+  badges: { flexDirection: "row", gap: 4, flexShrink: 1, flexWrap: "wrap", justifyContent: "flex-end" },
+  ref: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
+  addr: { fontFamily: fonts.display, fontWeight: "800", fontSize: 17, lineHeight: 22, color: c.onSurface },
+  meta: { fontSize: 13, color: c.muted },
+  progRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  progText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
+  row: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.md, minHeight: 56, borderBottomWidth: 1, borderColor: c.border, gap: space.md },
+  cell: { fontSize: 14, color: c.onSurface },
 }));

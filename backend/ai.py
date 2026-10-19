@@ -92,7 +92,8 @@ PDF_SYSTEM = """You extract structured data from TrustMark / retrofit inspection
 Return ONLY JSON:
 {"ref": "project/job reference or null", "address": "full property address without postcode or null",
  "postcode": "UK postcode or null", "nc_count_stated": <integer or null>,
- "ncs": [{"description": "the non-compliance, concise", "required_work": "remedial work required, concise",
+ "ncs": [{"original_text": "the COMPLETE NC observation copied verbatim, unchanged",
+          "description": "short plain summary (max 15 words)", "required_work": "remedial work required, copied verbatim",
           "safety_critical": true|false, "pages": [1-based page numbers where this NC and its photos appear]}],
  "confidence": 0.0-1.0, "notes": "short note about anything unclear"}
 Rules: copy values exactly as written; never invent references or addresses (use null).
@@ -125,7 +126,8 @@ class PdfExtractor:
             if not isinstance(n, dict):
                 continue
             ncs.append({"description": str(n.get("description") or "").strip()[:500],
-                        "required_work": str(n.get("required_work") or "").strip()[:800],
+                        "original_text": str(n.get("original_text") or n.get("description") or "").strip(),
+                        "required_work": str(n.get("required_work") or "").strip(),
                         "safety_critical": bool(n.get("safety_critical")),
                         "pages": [int(p) for p in (n.get("pages") or []) if str(p).isdigit()][:6]})
         return {"ref": j.get("ref"), "address": j.get("address"), "postcode": j.get("postcode"),

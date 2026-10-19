@@ -175,8 +175,8 @@ async def forgot(body: ForgotIn):
     if u and u.active:
         code = await create_reset_token(u.id, hours=1)
         await audit("auth.reset_requested", u.id, f"user:{u.id}")
-        # No email provider configured yet: expose the code only in demo/dev mode.
-        if os.environ.get("DEMO_MODE") == "true":
+        # No email provider configured yet: expose the code only when explicitly enabled for local dev.
+        if os.environ.get("EXPOSE_RESET_CODES") == "true":
             out["dev_reset_code"] = code
     return out
 

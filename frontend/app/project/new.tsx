@@ -10,7 +10,7 @@ import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { PdfDraft, PdfImport } from "@/src/components/PdfImport";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type NcDraft = { description: string; required_work: string; safety_critical: boolean; pages?: number[]; photo_count?: number };
+type NcDraft = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages?: number[]; photo_count?: number };
 
 export default function NewProject() {
   const s = useStyles();

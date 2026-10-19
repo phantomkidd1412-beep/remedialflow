@@ -72,14 +72,21 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             <Badge status={nc.status} testID={`staff-nc-status-${nc.number}`} />
             {nc.safety_critical ? <Badge status="rejected" label="Safety-critical" /> : null}
           </View>
-          <Text style={s.desc} numberOfLines={expanded ? undefined : 1}>{nc.description}</Text>
+          <Text style={s.desc}>{nc.description}</Text>
+          <Text style={s.assignee} testID={`staff-nc-installer-${nc.number}`}>{nc.assigned_installer_name ?? "Unassigned"}{nc.approved_by === "ai" ? " · AI approved" : ""}</Text>
         </View>
         <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.onSurface} />
       </Pressable>
       {expanded ? (
         <View style={s.body}>
+          {nc.original_text && nc.original_text !== nc.description ? (
+            <>
+              <Label>Original TrustMark wording</Label>
+              <Text style={s.body1} selectable testID={`staff-nc-original-${nc.number}`}>{nc.original_text}</Text>
+            </>
+          ) : null}
           <Label>Required work</Label>
-          <Text style={s.mono}>{nc.required_work}</Text>
+          <Text style={s.body1} selectable>{nc.required_work}</Text>
 
           {nc.ai ? (
             <View style={s.ai} testID={`staff-nc-ai-${nc.number}`}>
@@ -114,9 +121,9 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           {nc.video_versions > 1 ? <Text style={s.muted}>{nc.video_versions - 1} superseded video version(s) retained</Text> : null}
 
           <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
+          <Btn title="Approve" icon="check" variant="success" onPress={() => act("approve")} loading={busy === "approve"} testID={`approve-${nc.number}`} />
           <View style={s.actions}>
-            <Btn title="Approve" variant="success" small onPress={() => act("approve")} loading={busy === "approve"} style={{ flex: 1 }} testID={`approve-${nc.number}`} />
-            <Btn title="More" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
+            <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
             <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
           </View>
         </View>
@@ -134,6 +141,8 @@ const useStyles = makeStyles((c) => ({
   desc: { fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface },
   body: { borderTopWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
   mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  body1: { fontSize: 15, lineHeight: 21, color: c.onSurface },
+  assignee: { fontSize: 13, color: c.muted },
   muted: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
   ai: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 4 },
   aiHead: { fontFamily: fonts.mono, fontSize: 12, color: c.onBrandTertiary },
