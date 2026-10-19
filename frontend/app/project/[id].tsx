@@ -57,7 +57,7 @@ export default function StaffProject() {
     <View style={s.root}>
       <ScreenHeader title={p.ref} sub={`${p.address} · ${p.postcode}`} back right={
         <View style={{ flexDirection: "row", gap: space.xs }}>
-          {p.source_report ? <Btn title="PDF" icon="file-text" small variant="outline" onPress={() => openReport(id).catch((e) => toast(e.message))} testID="open-report-button" /> : null}
+          {p.source_report ? <Btn title="PDF" icon="file-text" small variant="outline" onPress={() => openReport(id).then(() => toast("Inspection PDF downloaded")).catch((e) => toast(e.message))} testID="open-report-button" /> : null}
           <Btn title="Export" icon="download" small variant="outline" onPress={() => openExport(id).catch((e) => toast(e.message))} testID="export-project-button" />
         </View>
       }>

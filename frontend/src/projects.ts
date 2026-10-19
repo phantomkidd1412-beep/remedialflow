@@ -2,12 +2,31 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Linking, Platform } from "react-native";
 import { absUrl, api } from "@/src/api";
 
-/** Opens a short-lived signed export link (ZIP per project, or JSON metadata for everything). */
+/**
+ * Opens a signed file URL. Web: fetch it and save via a same-origin blob link, because the
+ * preview iframe blocks popups / cross-site framing ("refused to connect"). Native: system browser.
+ */
+async function openSigned(path: string, filename: string, inline = false) {
+  const url = absUrl(path);
+  if (Platform.OS !== "web") return Linking.openURL(url);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const blobUrl = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  if (inline) a.target = "_blank";
+  a.download = filename;
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+}
+
+/** Downloads a short-lived signed export (ZIP per project, or JSON metadata for everything). */
 export async function openExport(projectId?: string) {
   const r = await api<{ url: string }>(`/export/link${projectId ? `?project_id=${projectId}` : ""}`);
-  const url = absUrl(r.url);
-  if (Platform.OS === "web") window.open(url, "_blank");
-  else await Linking.openURL(url);
+  await openSigned(r.url, projectId ? "project-evidence.zip" : "remedialflow-metadata.json");
 }
 
 export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; source_report?: { filename?: string } | null };
@@ -53,7 +72,5 @@ export function useProject(id: string) {
 
 export async function openReport(projectId: string) {
   const r = await api<{ url: string }>(`/projects/${projectId}/report-link`);
-  const url = absUrl(r.url);
-  if (Platform.OS === "web") window.open(url, "_blank");
-  else await Linking.openURL(url);
+  await openSigned(r.url, "inspection-report.pdf");
 }
