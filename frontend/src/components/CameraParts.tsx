@@ -60,6 +60,9 @@ export function StampBlock({ geo, p, now }: { geo: ReturnType<typeof useGeo>; p:
 export const useCameraStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: "#000000" },
   cam: { flex: 1 },
+  focus: { position: "absolute", width: 72, height: 72, borderWidth: 2, borderColor: c.brandPrimary },
+  sideBar: { position: "absolute", right: space.lg, top: 140, gap: space.sm },
+  sideText: { fontFamily: fonts.mono, fontSize: 10, color: "#FFFFFF" },
   topBar: { position: "absolute", left: space.lg, right: space.lg, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   iconBtn: { width: 48, height: 48, backgroundColor: "#0A0A0A", borderWidth: BORDER, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
   countTag: { backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.sm, paddingVertical: 4 },

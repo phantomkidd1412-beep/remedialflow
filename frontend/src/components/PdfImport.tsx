@@ -8,9 +8,12 @@ import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export type PdfNc = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages: number[]; photo_count?: number };
 export type PdfDraft = { ref: string | null; address: string | null; postcode: string | null; nc_count_stated: number | null; ncs: PdfNc[]; confidence: number; notes: string };
+export type PhotoStats = { found: number; kept: number; filtered: number };
+export type Duplicate = { project_id: string; ref: string; address: string; postcode: string; reason: string };
+export type ImportInfo = { photo_stats?: PhotoStats | null; duplicate?: Duplicate | null };
 
 /** Pick an inspection PDF, upload it, and poll the background AI extraction. */
-export function PdfImport({ onResult }: { onResult: (draft: PdfDraft, importId: string, filename: string) => void }) {
+export function PdfImport({ onResult }: { onResult: (draft: PdfDraft, importId: string, filename: string, info: ImportInfo) => void }) {
   const s = useStyles();
   const { colors } = useTheme();
   const [phase, setPhase] = useState<"idle" | "uploading" | "reading" | "done" | "failed">("idle");
@@ -40,11 +43,11 @@ export function PdfImport({ onResult }: { onResult: (draft: PdfDraft, importId: 
       const started = Date.now();
       timer.current = setInterval(async () => {
         try {
-          const d = await api<{ status: string; draft?: PdfDraft; error?: string }>(`/imports/${id}`);
+          const d = await api<{ status: string; draft?: PdfDraft; error?: string } & ImportInfo>(`/imports/${id}`);
           if (d.status === "ready" && d.draft) {
             clearInterval(timer.current!);
             setPhase("done");
-            onResult(d.draft, id, a.name);
+            onResult(d.draft, id, a.name, { photo_stats: d.photo_stats, duplicate: d.duplicate });
           } else if (d.status === "failed" || Date.now() - started > 180000) {
             clearInterval(timer.current!);
             setPhase("failed");

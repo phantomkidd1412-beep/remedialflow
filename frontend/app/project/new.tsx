@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { Btn, ErrorBlock, Feather, Field, Label } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { PdfDraft, PdfImport } from "@/src/components/PdfImport";
+import { Duplicate, ImportInfo, PdfDraft, PdfImport } from "@/src/components/PdfImport";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type NcDraft = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages?: number[]; photo_count?: number };
@@ -29,9 +29,14 @@ export default function NewProject() {
   const [busy, setBusy] = useState(false);
   const [importId, setImportId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
+  const [summary, setSummary] = useState("");
+  const [dup, setDup] = useState<Duplicate | null>(null);
 
-  const applyPdf = (d: PdfDraft, id: string) => {
+  const applyPdf = (d: PdfDraft, id: string, _name: string, info: ImportInfo) => {
     setImportId(id);
+    setDup(info.duplicate ?? null);
+    const st = info.photo_stats;
+    setSummary(`${d.ncs.length} NC${d.ncs.length === 1 ? "" : "s"} detected${d.nc_count_stated ? ` (report states ${d.nc_count_stated})` : ""}${st ? ` · ${st.kept} report photo${st.kept === 1 ? "" : "s"} kept${st.filtered ? ` · ${st.filtered} logo/decoration image${st.filtered === 1 ? "" : "s"} skipped` : ""}` : ""}`);
     if (d.ref) setRef(d.ref);
     if (d.address) setAddress(d.address);
     if (d.postcode) setPostcode(d.postcode);
@@ -66,6 +71,16 @@ export default function NewProject() {
       <ScreenHeader title="NEW PROJECT" back />
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={[s.content, { paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <PdfImport onResult={applyPdf} />
+        {summary ? <Text style={s.summary} testID="pdf-import-summary">{summary}</Text> : null}
+        {dup && importId ? (
+          <View style={s.dup} testID="pdf-duplicate-card">
+            <Text style={s.dupTitle}>This report looks like an existing project</Text>
+            <Text style={s.dupBody}>{dup.ref} · {dup.address}{dup.postcode ? `, ${dup.postcode}` : ""}</Text>
+            <Text style={s.muted}>{dup.reason}. Updating keeps all existing NCs, evidence, statuses and history.</Text>
+            <Btn title={`Update ${dup.ref}`} icon="git-merge" variant="dark" small onPress={() => router.push({ pathname: "/project/merge", params: { importId, pid: dup.project_id } })} testID="pdf-duplicate-update" />
+            <Btn title="Create a new project anyway" variant="outline" small onPress={() => setDup(null)} testID="pdf-duplicate-dismiss" />
+          </View>
+        ) : null}
         {notes ? <Text style={s.warn} testID="pdf-import-notes">{notes}</Text> : null}
         <Field label="Project reference" value={ref} onChangeText={setRef} placeholder="EF-1030" autoCapitalize="characters" testID="new-project-ref" />
         <Field label="Property address" value={address} onChangeText={setAddress} testID="new-project-address" />
@@ -120,4 +135,8 @@ const useStyles = makeStyles((c) => ({
   mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
   warn: { fontFamily: fonts.mono, fontSize: 12, color: c.onWarning, backgroundColor: c.warning, borderWidth: BORDER, borderColor: c.border, padding: space.md },
   muted: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
+  summary: { fontSize: 14, fontWeight: "600", color: c.onSurface, borderWidth: BORDER, borderColor: c.border, padding: space.md },
+  dup: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.warning, padding: space.md, gap: space.sm },
+  dupTitle: { fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onWarning },
+  dupBody: { fontSize: 14, color: c.onWarning },
 }));

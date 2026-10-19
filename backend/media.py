@@ -105,10 +105,11 @@ def video_frames(data: bytes, duration: Optional[float], count: int = 4) -> List
 
 
 def pdf_text_and_images(data: bytes, max_pages: int = 60) -> tuple:
-    """Returns (text, {page_no: [jpeg bytes]}) – embedded photos >= 200px, page renders as fallback skipped."""
+    """Returns (text, {page_no: [jpeg bytes]}, stats) – embedded photos >= 200px; logos/decorations filtered out."""
     import pymupdf
+    from report_import import classify
     doc = pymupdf.open(stream=data, filetype="pdf")
-    text_parts, images = [], {}
+    text_parts, raw = [], {}
     for i, page in enumerate(doc):
         if i >= max_pages:
             break
@@ -129,12 +130,20 @@ def pdf_text_and_images(data: bytes, max_pages: int = 60) -> tuple:
                 img.thumbnail((2000, 2000))
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=90)
-                images.setdefault(i + 1, []).append(buf.getvalue())
+                raw.setdefault(i + 1, []).append(buf.getvalue())
             except Exception:
                 continue
-            if len(images.get(i + 1, [])) >= 6:
+            if len(raw.get(i + 1, [])) >= 12:
                 break
-    return "\n".join(text_parts), images
+    flagged = classify([(f"{p}-{k}", p, b) for p, imgs in raw.items() for k, b in enumerate(imgs)])
+    images = {}
+    for p, imgs in raw.items():
+        kept = [b for k, b in enumerate(imgs) if f"{p}-{k}" not in flagged][:6]
+        if kept:
+            images[p] = kept
+    stats = {"found": sum(len(v) for v in raw.values()), "kept": sum(len(v) for v in images.values()),
+             "filtered": len(flagged), "reasons": dict(__import__("collections").Counter(flagged.values()))}
+    return "\n".join(text_parts), images, stats
 
 
 def demo_trustmark_image(label: str, seed: int) -> bytes:

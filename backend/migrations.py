@@ -38,9 +38,19 @@ async def m003_rates_and_policies():
         await db.projects.update_one({"_id": p["_id"]}, {"$set": {"rates": {i: p.get("rate", rate) for i in ids}}})
 
 
+async def m004_pdf_photo_cleanup():
+    # hide logos / repeated decorations on existing imported projects; nothing is deleted
+    from report_import import clean_project_report_photos
+    for pid in await db.files.distinct("project_id", {"kind": "trustmark", "source": "pdf_import"}):
+        n = await clean_project_report_photos(pid)
+        if n:
+            log.info("project %s: %d decorative PDF images hidden", pid, n)
+
+
 MIGRATIONS = [("001_status_model_and_nc_assignment", m001_status_model_and_nc_assignment),
               ("002_project_lifecycle", m002_project_lifecycle),
-              ("003_rates_and_policies", m003_rates_and_policies)]
+              ("003_rates_and_policies", m003_rates_and_policies),
+              ("004_pdf_photo_cleanup", m004_pdf_photo_cleanup)]
 
 
 async def run_migrations():

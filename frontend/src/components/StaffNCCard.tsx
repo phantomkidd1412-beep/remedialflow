@@ -8,6 +8,7 @@ import { uploadForm } from "@/src/utils/upload";
 import { EvidenceFile, NCItem } from "@/src/projects";
 import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
+import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, onToggle, onDone }: { nc: NCItem; projectId: string; expanded: boolean; onToggle: (id: string) => void; onDone?: () => void }) {
@@ -20,7 +21,19 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [view, setView] = useState<EvidenceFile | null>(null);
+  const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenRefs = nc.trustmark_hidden ?? [];
 
+  const setHidden = async (fid: string, excluded: boolean) => {
+    try {
+      await api(`/files/${fid}/exclude`, { method: "POST", body: { excluded } });
+      refresh();
+      toast(excluded ? "Reference photo hidden" : "Reference photo restored");
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["project", projectId] });
     qc.invalidateQueries({ queryKey: ["review-queue"] });
@@ -35,7 +48,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
       await api(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note } });
       setNote("");
       refresh();
-      toast(`${nc.number}: ${({ approve: "approved", reject: "rejected", more_evidence: "more evidence requested", escalate: "escalated to Admin", return: "returned to Employee review" } as Record<string, string>)[action]}`);
+      toast(`${nc.number}: ${({ approve: "approved", reject: "rejected", more_evidence: "more evidence requested", escalate: "escalated to Admin", return: "returned to Employee review", trustmark_reject: "reopened (TrustMark rejection)" } as Record<string, string>)[action]}`);
       onDone?.();
     } catch (e: any) {
       toast(e.message);
@@ -89,7 +102,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             {nc.safety_critical ? <Badge status="rejected" label="Safety-critical" /> : null}
           </View>
           <Text style={s.desc}>{nc.description}</Text>
-          <Text style={s.assignee} testID={`staff-nc-installer-${nc.number}`}>{nc.assigned_installer_name ?? "Unassigned"}{nc.approved_by === "ai" ? " · AI approved" : ""}</Text>
+          <Text style={s.assignee} testID={`staff-nc-installer-${nc.number}`}>{nc.assigned_installer_name ?? "Unassigned"}{nc.approved_by === "ai" ? " · AI approved" : ""}{nc.reopen_history?.length ? ` · Reopened ${nc.reopen_history.length}× by TrustMark` : ""}</Text>
         </View>
         <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.onSurface} />
       </Pressable>
@@ -115,18 +128,37 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
 
           <Label>TrustMark reference ({nc.trustmark.length})</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-            {nc.trustmark.map((f) => <Thumb key={f.id} f={f} onPress={() => setView(f)} testID={`staff-trustmark-${f.id}`} />)}
+            {nc.trustmark.map((f, i) => <Thumb key={f.id} f={f} onPress={() => setPv({ files: nc.trustmark, i })} onLongPress={() => setHidden(f.id, true)} testID={`staff-trustmark-${f.id}`} />)}
             <Pressable style={s.add} onPress={() => upload("trustmark")} testID={`add-trustmark-${nc.number}`}>
               <Feather name="plus" size={20} color={colors.onSurface} />
             </Pressable>
           </ScrollView>
+          {hiddenRefs.length ? (
+            <Pressable onPress={() => setShowHidden((v) => !v)} style={s.hiddenToggle} testID={`toggle-hidden-${nc.number}`}>
+              <Feather name={showHidden ? "eye-off" : "eye"} size={14} color={colors.muted} />
+              <Text style={s.muted}>{hiddenRefs.length} logo/decoration image{hiddenRefs.length === 1 ? "" : "s"} hidden from the report · {showHidden ? "Hide" : "Show"}</Text>
+            </Pressable>
+          ) : null}
+          {showHidden ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
+              {hiddenRefs.map((f) => (
+                <View key={f.id} style={{ gap: 4, opacity: 0.85 }}>
+                  <Thumb f={f} size={72} testID={`hidden-trustmark-${f.id}`} />
+                  <Pressable onPress={() => setHidden(f.id, false)} style={s.restore} testID={`restore-trustmark-${f.id}`}>
+                    <Text style={s.tag}>RESTORE</Text>
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+          <Text style={s.muted}>Long-press a reference photo to hide it. Hidden files stay in storage.</Text>
 
           <Label>Evidence ({nc.photos.length} photo{nc.photos.length === 1 ? "" : "s"}{nc.video ? " + video" : ""})</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
             {nc.video ? <Thumb f={nc.video} size={88} onPress={() => setView(nc.video)} testID={`staff-video-${nc.number}`} /> : null}
-            {nc.photos.map((f) => (
+            {nc.photos.map((f, i) => (
               <View key={f.id} style={{ gap: 2 }}>
-                <Thumb f={f} size={88} onPress={() => setView(f)} testID={`staff-photo-${f.id}`} />
+                <Thumb f={f} size={88} onPress={() => setPv({ files: nc.photos, i })} testID={`staff-photo-${f.id}`} />
                 <Text style={s.tag}>{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
               </View>
             ))}
@@ -155,6 +187,9 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
                 <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
                 <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
               </View>
+              {nc.status === "approved" ? (
+                <Btn title="TrustMark rejected" icon="x-octagon" variant="outline" small onPress={() => act("trustmark_reject")} loading={busy === "trustmark_reject"} testID={`trustmark-reject-${nc.number}`} />
+              ) : null}
               {user?.role === "employee" && nc.status === "employee_review" ? (
                 <Btn title="Escalate to Admin" icon="arrow-up-circle" variant="dark" small onPress={() => act("escalate")} loading={busy === "escalate"} testID={`escalate-${nc.number}`} />
               ) : null}
@@ -166,6 +201,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
         </View>
       ) : null}
       <MediaViewer f={view} onClose={() => setView(null)} />
+      {pv ? <PhotoViewer files={pv.files} index={pv.i} onClose={() => setPv(null)} showInfo /> : null}
     </View>
   );
 });
@@ -187,6 +223,8 @@ const useStyles = makeStyles((c) => ({
   row: { gap: space.sm, paddingBottom: space.xs },
   add: { width: 72, height: 72, borderWidth: BORDER, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
   tag: { fontFamily: fonts.mono, fontSize: 9, color: c.muted },
+  hiddenToggle: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: 44 },
+  restore: { borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center", minHeight: 32 },
   actions: { flexDirection: "row", gap: space.sm },
   chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },

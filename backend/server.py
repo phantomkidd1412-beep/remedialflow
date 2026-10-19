@@ -21,6 +21,7 @@ from auth import router as auth_router, current_user, require, ph, revoke_all, c
 from storage import storage, evidence_path, APP_NAME
 from media import process_photo, video_frames, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
+from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 log = logging.getLogger("server")
@@ -305,7 +306,7 @@ class ProjectIn(BaseModel):
 async def _parse_pdf(import_id: str, data: bytes):
     import tempfile
     try:
-        text, images = await run_in_threadpool(pdf_text_and_images, data)
+        text, images, photo_stats = await run_in_threadpool(pdf_text_and_images, data)
         page_images = {}
         for page, imgs in images.items():
             paths = []
@@ -320,7 +321,7 @@ async def _parse_pdf(import_id: str, data: bytes):
             n["photo_count"] = sum(len(page_images.get(str(p), [])) for p in n["pages"])
         await db.imports.update_one({"_id": ObjectId(import_id)}, {"$set": {
             "status": "ready", "draft": draft, "page_images": page_images, "page_count": text.count("--- page "),
-            "finished_at": now_iso()}})
+            "photo_stats": photo_stats, "duplicate": await find_duplicate(draft), "finished_at": now_iso()}})
     except Exception as e:
         log.exception("pdf import failed")
         await db.imports.update_one({"_id": ObjectId(import_id)}, {"$set": {"status": "failed", "error": str(e)[:200]}})
@@ -357,13 +358,19 @@ async def _attach_pdf_photos(import_id: str, nc_pages: List[tuple]):
     for nc_id, pages in nc_pages:
         nc = NC.from_mongo(await db.ncs.find_one({"_id": ObjectId(nc_id)}))
         p = Project.from_mongo(await db.projects.find_one({"_id": oid(nc.project_id)}))
+        have = [d["dhash"] for d in await db.files.find({"nc_id": nc_id, "kind": "trustmark", "dhash": {"$exists": True}}, {"dhash": 1}).to_list(500)]
         for page in pages:
             for path in pi.get(str(page), []):
                 try:
                     data, _ = await storage.aget(path)
+                    h = hex_hash(data)
+                    if any(close(h, x) for x in have):  # already on this NC (e.g. re-imported report)
+                        continue
+                    have.append(h)
                     bg = BackgroundTasks()
                     up = UploadFile(io.BytesIO(data), filename=f"report-p{page}.jpg", headers={"content-type": "image/jpeg"})
                     f = await store_upload(nc, p, sys_user, up, {}, "trustmark", "pdf_import", None, bg)
+                    await db.files.update_one({"_id": oid(f.id)}, {"$set": {"dhash": h}})
                     await db.ncs.update_one({"_id": oid(nc.id)}, {"$push": {"trustmark_ids": f.id}})
                     await bg()
                 except Exception:
@@ -442,6 +449,112 @@ async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
     return {"ok": True}
 
 
+# ---------------- re-imported reports: merge into an existing project ----------------
+async def _ready_import(iid: str) -> dict:
+    imp = await db.imports.find_one({"_id": oid(iid)})
+    if not imp or imp.get("status") != "ready":
+        raise HTTPException(400, "Import is not ready")
+    return imp
+
+
+@api.get("/imports/{iid}/merge-preview")
+async def merge_preview(iid: str, project_id: str, u: User = Depends(staff)):
+    imp = await _ready_import(iid)
+    p = await db.projects.find_one({"_id": oid(project_id)}, {"ref": 1, "address": 1, "postcode": 1})
+    if not p:
+        raise HTTPException(404, "Project not found")
+    existing = await db.ncs.find({"project_id": project_id}).sort("number", 1).to_list(500)
+    items = match_ncs(imp["draft"]["ncs"], existing)
+    matched = {i["nc"]["id"] for i in items if i["nc"]}
+    return {"project": {"id": project_id, "ref": p["ref"], "address": p["address"], "postcode": p.get("postcode", "")},
+            "items": items, "photo_stats": imp.get("photo_stats"),
+            "untouched": [{"id": str(e["_id"]), "number": e["number"], "description": e.get("description", "")} for e in existing if str(e["_id"]) not in matched]}
+
+
+class MergeItem(BaseModel):
+    index: int
+    action: str = Field(pattern="^(update|new|skip)$")
+    nc_id: Optional[str] = None
+
+
+class MergeIn(BaseModel):
+    import_id: str
+    items: List[MergeItem]
+
+
+@api.post("/projects/{pid}/merge-import")
+async def merge_import(pid: str, body: MergeIn, bg: BackgroundTasks, u: User = Depends(staff)):
+    """Applies a re-imported report: updates matched NCs (old wording kept in text_history), adds new NCs.
+    Existing NCs, statuses, evidence and history are never removed."""
+    imp = await _ready_import(body.import_id)
+    proj = await db.projects.find_one({"_id": oid(pid)})
+    if not proj:
+        raise HTTPException(404, "Project not found")
+    drafts = imp["draft"]["ncs"]
+    if any(it.index < 0 or it.index >= len(drafts) for it in body.items):
+        raise HTTPException(400, "Unknown NC in report")
+    counts, nc_pages, ts = {"update": 0, "new": 0, "skip": 0}, [], now_iso()
+    n_existing = await db.ncs.count_documents({"project_id": pid})
+    for it in body.items:
+        d = drafts[it.index]
+        counts[it.action] += 1
+        if it.action == "update":
+            nc = await db.ncs.find_one({"_id": oid(it.nc_id or ""), "project_id": pid})
+            if not nc:
+                raise HTTPException(400, f"NC to update not found for report item {it.index + 1}")
+            new = {"original_text": d.get("original_text") or d["description"], "description": d["description"],
+                   "required_work": d["required_work"], "safety_critical": bool(d.get("safety_critical"))}
+            old = {k: nc.get(k) for k in new}
+            if old != new:
+                await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {**new, "updated_at": ts},
+                                        "$push": {"text_history": {**old, "replaced_at": ts, "by": u.id, "import_id": body.import_id}}})
+            await audit("nc.updated_from_report", u.id, f"nc:{it.nc_id}", {"import_id": body.import_id, "changed": old != new})
+            if d.get("pages"):
+                nc_pages.append((it.nc_id, d["pages"]))
+        elif it.action == "new":
+            n_existing += 1
+            nid = await add_nc(pid, NCIn(**{k: d.get(k) for k in ("description", "required_work", "original_text") if d.get(k)},
+                                         safety_critical=bool(d.get("safety_critical"))), n_existing, proj.get("installer_id"))
+            await audit("nc.created", u.id, f"nc:{nid}", {"import_id": body.import_id})
+            if d.get("pages"):
+                nc_pages.append((nid, d["pages"]))
+    upd = {"$set": {"source_report": {"import_id": body.import_id, "path": imp["path"], "sha256": imp["sha256"], "filename": imp.get("filename")}}}
+    if proj.get("source_report"):
+        upd["$push"] = {"report_history": {**proj["source_report"], "replaced_at": ts, "by": u.id}}
+    await db.projects.update_one({"_id": oid(pid)}, upd)
+    await db.imports.update_one({"_id": oid(body.import_id)}, {"$set": {"project_id": pid, "merged_at": ts}})
+    if counts["new"] and proj.get("installer_id"):
+        await notify(proj["installer_id"], "project_assigned", f"New NCs: {proj['ref']}", f"{proj['ref']} · {counts['new']} new NC(s) added from updated report", pid)
+    await recompute_project(pid)
+    if nc_pages:
+        bg.add_task(_attach_pdf_photos, body.import_id, nc_pages)
+    await audit("project.merged_import", u.id, f"project:{pid}", {"import_id": body.import_id, **counts})
+    return {"ok": True, **counts}
+
+
+@api.post("/projects/{pid}/clean-report-photos")
+async def clean_report_photos(pid: str, u: User = Depends(staff)):
+    n = await clean_project_report_photos(pid)
+    await audit("project.report_photos_cleaned", u.id, f"project:{pid}", {"hidden": n})
+    return {"hidden": n}
+
+
+class ExcludeIn(BaseModel):
+    excluded: bool
+
+
+@api.post("/files/{fid}/exclude")
+async def exclude_file(fid: str, body: ExcludeIn, u: User = Depends(staff)):
+    """Hide/restore a TrustMark reference image. The file always stays in storage."""
+    f = await db.files.find_one({"_id": oid(fid), "kind": "trustmark"})
+    if not f:
+        raise HTTPException(404, "Reference photo not found")
+    await db.files.update_one({"_id": f["_id"]}, {"$set": {"excluded": body.excluded, "manual_keep": not body.excluded,
+                                                         "exclude_reason": "manual" if body.excluded else None}})
+    await audit("evidence.excluded" if body.excluded else "evidence.restored", u.id, f"nc:{f['nc_id']}", {"file_id": fid})
+    return {"ok": True}
+
+
 @api.post("/projects/{pid}/ncs")
 async def create_nc(pid: str, body: NCIn, u: User = Depends(staff)):
     await get_project(pid, u)
@@ -466,11 +579,12 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
     out = []
     for n in ncs:
         fs = by_nc.get(n.id, [])
-        trust = [file_public(f) for f in fs if f.kind == "trustmark"]
+        trust = [file_public(f) for f in fs if f.kind == "trustmark" and not f.excluded]
+        hidden = [file_public(f) for f in fs if f.kind == "trustmark" and f.excluded] if u.role != "installer" else []
         photos = [file_public(f) for f in fs if f.kind == "photo" and f.status != "superseded"]
         video = next((file_public(f) for f in fs if f.id == n.active_video_id), None)
         d = n.model_dump()
-        d.update(trustmark=trust, photos=photos, video=video,
+        d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, video=video,
                  video_versions=sum(1 for f in fs if f.kind == "video"),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
         out.append(d)
@@ -623,7 +737,7 @@ async def run_assessment(nc_id: str, sub_id: str):
         s = await get_settings()
         sub = Submission.from_mongo(await db.submissions.find_one({"_id": ObjectId(sub_id)}))
         photos = [EvidenceFile.from_mongo(d) for d in await db.files.find({"_id": {"$in": [ObjectId(i) for i in sub.photo_ids]}}).to_list(100)]
-        trust = [EvidenceFile.from_mongo(d) for d in await db.files.find({"nc_id": nc_id, "kind": "trustmark"}).to_list(10)]
+        trust = [EvidenceFile.from_mongo(d) for d in await db.files.find({"nc_id": nc_id, "kind": "trustmark", "excluded": {"$ne": True}}).to_list(10)]
 
         async def img(f, variant="display"):
             path = f.paths.get(variant) or f.paths.get("original")
@@ -713,7 +827,7 @@ async def submit(nc_id: str, bg: BackgroundTasks, u: User = Depends(current_user
 
 
 class ReviewIn(BaseModel):
-    action: str = Field(pattern="^(approve|reject|more_evidence|escalate|return)$")
+    action: str = Field(pattern="^(approve|reject|more_evidence|escalate|return|trustmark_reject)$")
     note: str = ""
 
 
@@ -726,17 +840,24 @@ async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
         raise HTTPException(403, "Only Admin can return an escalated NC")
     if nc.status == "admin_review" and u.role != "admin":
         raise HTTPException(403, "This NC is awaiting Admin review")
+    if body.action == "trustmark_reject" and nc.status != "approved":
+        raise HTTPException(400, "Only internally approved NCs can be rejected by TrustMark")
     status = {"approve": "approved", "reject": "rejected", "more_evidence": "more_evidence",
-              "escalate": "admin_review", "return": "employee_review"}[body.action]
+              "escalate": "admin_review", "return": "employee_review", "trustmark_reject": "rejected"}[body.action]
     st = {"status": status, "review_note": body.note, "reviewed_by": u.id, "updated_at": now_iso()}
     if status == "approved":
         st.update(approved_by=u.id, approved_at=now_iso())
     elif status == "rejected":
-        st["rejection_source"] = u.role
-    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": st})
+        st["rejection_source"] = "trustmark" if body.action == "trustmark_reject" else u.role
+    upd = {"$set": st}
+    if body.action == "trustmark_reject":  # reopen: evidence and earlier approval kept in history
+        upd["$push"] = {"reopen_history": {"at": now_iso(), "by": u.id, "source": "trustmark", "note": body.note,
+                                           "previous_approved_at": nc.approved_at, "previous_approved_by": nc.approved_by}}
+    await db.ncs.update_one({"_id": oid(nc_id)}, upd)
     raw = await db.ncs.find_one({"_id": oid(nc_id)})
     if status == "rejected":
-        await nc_notify(raw, nc.assigned_installer_id, "rejected", f"Action required: {nc.number} rejected", body.note)
+        src = "TrustMark" if body.action == "trustmark_reject" else u.role.capitalize()
+        await nc_notify(raw, nc.assigned_installer_id, f"rejected_{st['rejection_source']}", f"Action required: {nc.number} rejected by {src}", body.note)
     elif status == "more_evidence":
         await nc_notify(raw, nc.assigned_installer_id, "more_evidence", f"More evidence needed: {nc.number}", body.note)
     elif status == "approved":
@@ -866,6 +987,39 @@ async def earnings(u: User = Depends(current_user)):
             "in_progress": 0 if daily else sum(p["amount"] for p in pending), "jobs_in_progress": 0 if daily else len(pending)}
 
 
+@api.get("/admin/payments")
+async def payments(u: User = Depends(admin)):
+    """Earnings grouped by installer and week (Monday)."""
+    from datetime import datetime, timedelta
+    names = {str(d["_id"]): d["name"] for d in await db.users.find({"role": "installer"}, {"name": 1}).to_list(1000)}
+    groups: dict = {}
+    for e in await db.earnings.find({}).sort("earned_at", -1).to_list(5000):
+        d = datetime.fromisoformat(e["earned_at"]).date()
+        wk = (d - timedelta(days=d.weekday())).isoformat()
+        g = groups.setdefault((e["installer_id"], wk), {"installer_id": e["installer_id"], "installer_name": names.get(e["installer_id"], "?"),
+                                                          "week": wk, "unpaid": 0, "paid": 0, "jobs": []})
+        g["unpaid" if e["status"] == "earned" else "paid"] += e["amount"]
+        g["jobs"].append({"ref": e["ref"], "amount": e["amount"], "status": e["status"]})
+    return sorted(groups.values(), key=lambda g: (g["unpaid"] == 0, g["week"]), reverse=False)
+
+
+class PayWeekIn(BaseModel):
+    installer_id: str
+    week: str
+
+
+@api.post("/admin/payments/mark-paid")
+async def pay_week(body: PayWeekIn, u: User = Depends(admin)):
+    from datetime import date, timedelta
+    start = date.fromisoformat(body.week)
+    end = (start + timedelta(days=7)).isoformat()
+    q = {"installer_id": body.installer_id, "status": "earned", "earned_at": {"$gte": start.isoformat(), "$lt": end}}
+    ids = [d["_id"] for d in await db.earnings.find(q, {"_id": 1}).to_list(1000)]
+    await db.earnings.update_many({"_id": {"$in": ids}}, {"$set": {"status": "paid", "paid_at": now_iso(), "paid_by": u.id}})
+    await audit("earning.week_paid", u.id, f"user:{body.installer_id}", {"week": body.week, "count": len(ids)})
+    return {"ok": True, "count": len(ids)}
+
+
 @api.post("/earnings/{eid}/paid")
 async def mark_paid(eid: str, u: User = Depends(admin)):
     await db.earnings.update_one({"_id": oid(eid)}, {"$set": {"status": "paid", "paid_at": now_iso()}})
@@ -909,24 +1063,54 @@ async def project_manifest(pid: str) -> dict:
 
 @api.get("/export/project/{pid}.zip")
 async def export_project(pid: str, exp: int, sig: str):
+    """TrustMark Evidence Pack: NC PDFs (before/after) + Videos/. Excluded photos stay in storage."""
+    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated
     if not verify_signed(f"export:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
-    man = await project_manifest(pid)
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("manifest.json", json.dumps(man, indent=2, default=str))
-        for f in man["files"]:
-            for variant in ("original", "stamped"):
-                path = f.get("paths", {}).get(variant)
-                if path:
-                    try:
-                        data, _ = await storage.aget(path)
-                        z.writestr(path.replace(f"{APP_NAME}/", ""), data)
-                    except Exception:
-                        log.warning("export skip %s", path)
-    ref = (man["project"] or {}).get("ref", pid)
-    return Response(buf.getvalue(), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{ref}-evidence.zip"'})
+    p = await db.projects.find_one({"_id": oid(pid)})
+    if not p:
+        raise HTTPException(404, "Project not found")
+    ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
+    entries, vcount, prepared = [], {}, []
+
+    async def get(f, *variants):
+        for v in variants:
+            if f.get("paths", {}).get(v):
+                try:
+                    return (await storage.aget(f["paths"][v]))[0]
+                except Exception:
+                    log.warning("pack skip %s", f["_id"])
+        return None
+
+    for n in ncs:
+        nid = str(n["_id"])
+        files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(500)
+        trust = [b for f in files if f["kind"] == "trustmark" and not f.get("excluded") for b in [await get(f, "display", "original")] if b]
+        rem = [b for f in files if f["kind"] == "photo" and f["status"] != "superseded" for b in [await get(f, "stamped", "display", "original")] if b]
+        prepared.append((n, files, trust, rem))
+    rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
+    for n, files, trust, rem in prepared:
+        trust = await run_in_threadpool(drop_repeated, trust, rep)
+        rem = await run_in_threadpool(select_photos, rem, 6)
+        name = f"{n['number']}_{slug(n.get('description', ''))}"
+        if n["status"] == "approved":
+            who = "AI" if n.get("approved_by") == "ai" else "employee/admin"
+            line = f"INTERNALLY APPROVED ({who}) {(n.get('approved_at') or '')[:10]}"
+        else:
+            line = f"NOT YET INTERNALLY APPROVED - current status: {n['status'].replace('_', ' ')}"
+        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, line)
+        entries.append((f"{name}.pdf", pdf))
+        for f in files:
+            if f["kind"] == "video":
+                data = await get(f, "original")
+                if data:
+                    vcount[name] = vcount.get(name, 0) + 1
+                    suffix = "" if vcount[name] == 1 else f"_{vcount[name]}"
+                    entries.append((f"Videos/{name}{suffix}.mp4", data))
+    data = await run_in_threadpool(build_zip, entries)
+    await audit("export.evidence_pack", None, f"project:{pid}", {"files": len(entries)})
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
 
 
 @api.get("/export/all.json")

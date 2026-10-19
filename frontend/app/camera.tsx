@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
@@ -25,6 +26,23 @@ export default function Camera() {
   const [shots, setShots] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  const [zoom, setZoom] = useState(0);
+  const [flash, setFlash] = useState<"off" | "on" | "auto">("auto");
+  const [af, setAf] = useState<"on" | "off">("on");
+  const [focusAt, setFocusAt] = useState<{ x: number; y: number } | null>(null);
+  const [zoomBase, setZoomBase] = useState(0);
+  // Pinch-to-zoom + tap-to-refocus (expo-camera has no focus-point API: toggling autofocus forces a new focus pass).
+  const gestures = Gesture.Simultaneous(
+    Gesture.Pinch().runOnJS(true)
+      .onStart(() => setZoomBase(zoom))
+      .onUpdate((e) => setZoom(Math.max(0, Math.min(1, zoomBase + (e.scale - 1) * 0.35)))),
+    Gesture.Tap().runOnJS(true).onEnd((e) => {
+      setFocusAt({ x: e.x, y: e.y });
+      setAf("off");
+      setTimeout(() => setAf("on"), 60);
+      setTimeout(() => setFocusAt(null), 900);
+    }),
+  );
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -54,7 +72,21 @@ export default function Camera() {
 
   return (
     <View style={s.root} testID="camera-screen">
-      <CameraView ref={cam} style={s.cam} facing="back" onCameraReady={() => setReady(true)} />
+      <GestureDetector gesture={gestures}>
+        <View style={s.cam} collapsable={false}>
+          <CameraView ref={cam} style={{ flex: 1 }} facing="back" zoom={zoom} flash={flash} autofocus={af} onCameraReady={() => setReady(true)} testID="camera-view" />
+          {focusAt ? <View pointerEvents="none" style={[s.focus, { left: focusAt.x - 36, top: focusAt.y - 36 }]} testID="camera-focus-ring" /> : null}
+          <View pointerEvents="box-none" style={s.sideBar}>
+            <Pressable onPress={() => setFlash(flash === "auto" ? "on" : flash === "on" ? "off" : "auto")} style={s.iconBtn} testID="camera-flash-button" hitSlop={6}>
+              <Feather name={flash === "off" ? "zap-off" : "zap"} size={22} color="#FFFFFF" />
+              <Text style={s.sideText}>{flash.toUpperCase()}</Text>
+            </Pressable>
+            <Pressable onPress={() => setZoom(zoom > 0.05 ? 0 : 0.3)} style={s.iconBtn} testID="camera-zoom-button" hitSlop={6}>
+              <Text style={s.sideText}>{zoom > 0.05 ? `${(1 + zoom * 9).toFixed(1)}x` : "1x"}</Text>
+            </Pressable>
+          </View>
+        </View>
+      </GestureDetector>
       <View style={[s.topBar, { top: insets.top + space.sm }]}>
         <Pressable onPress={() => router.back()} style={s.iconBtn} testID="camera-close-button" hitSlop={6}>
           <Feather name="x" size={24} color="#FFFFFF" />

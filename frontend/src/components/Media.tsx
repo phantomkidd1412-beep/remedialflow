@@ -8,12 +8,12 @@ import { EvidenceFile } from "@/src/projects";
 import { Badge, Feather, fmtDate } from "@/src/ui";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-export function Thumb({ f, size = 72, onPress, testID }: { f: EvidenceFile; size?: number; onPress?: () => void; testID?: string }) {
+export function Thumb({ f, size = 72, onPress, onLongPress, testID }: { f: EvidenceFile; size?: number; onPress?: () => void; onLongPress?: () => void; testID?: string }) {
   const s = useStyles();
   const { colors } = useTheme();
   const uri = f.urls.thumb ? absUrl(f.urls.thumb) : null;
   return (
-    <Pressable onPress={onPress} style={[s.thumb, { width: size, height: size }]} testID={testID}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} style={[s.thumb, { width: size, height: size }]} testID={testID}>
       {uri ? (
         <Image source={{ uri, cacheKey: `${f.id}-thumb` }} style={{ width: "100%", height: "100%" }} contentFit="cover" transition={120} recyclingKey={f.id} />
       ) : (

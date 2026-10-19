@@ -8,6 +8,7 @@ import { Badge, Btn, Field, Label, Loading, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
+type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string }[] };
 type S = { auto_approve_low_risk: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
 function Choice({ value, options, onChange, testID }: { value: string; options: [string, string][]; onChange: (v: string) => void; testID: string }) {
@@ -30,7 +31,7 @@ export default function SettingsScreen() {
   const toast = useToast();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["settings"], queryFn: () => api<S>("/settings") });
-  const earn = useQuery({ queryKey: ["earnings-admin"], queryFn: () => api<any>("/earnings") });
+  const earn = useQuery({ queryKey: ["admin-payments"], queryFn: () => api<PayGroup[]>("/admin/payments") });
   const [draft, setF] = useState<S | null>(null);
   const [busy, setBusy] = useState(false);
   const f = draft ?? q.data ?? null;
@@ -50,12 +51,12 @@ export default function SettingsScreen() {
     }
   };
 
-  const pay = async (id: string) => {
-    await api(`/earnings/${id}/paid`, { method: "POST" });
+  const payWeek = async (g: PayGroup) => {
+    const r = await api<{ count: number }>("/admin/payments/mark-paid", { method: "POST", body: { installer_id: g.installer_id, week: g.week } });
+    toast(`${r.count} job(s) marked paid for ${g.installer_name}`);
     earn.refetch();
   };
-
-  const unpaid = (earn.data?.items ?? []).filter((i: any) => i.status === "earned");
+  const groups = earn.data ?? [];
 
   return (
     <View style={s.root}>
@@ -81,15 +82,17 @@ export default function SettingsScreen() {
         <Field label="Payment terms (shown to installers)" value={f.payment_terms} onChangeText={(v) => set({ payment_terms: v })} testID="setting-payment-terms" />
         <Btn title="Save settings" onPress={save} loading={busy} testID="settings-save-button" />
 
-        <Text style={s.section}>UNPAID INSTALLER EARNINGS ({unpaid.length})</Text>
-        {unpaid.map((e: any) => (
-          <View key={e.id} style={s.payRow} testID={`unpaid-${e.ref}`}>
-            <View style={{ flex: 1 }}>
-              <Text style={s.mono}>{e.ref} · {e.installer_name}</Text>
-              <Text style={s.mono}>{money(e.amount, e.currency)}</Text>
+        <Text style={s.section}>PAYMENTS BY INSTALLER & WEEK</Text>
+        {groups.length === 0 ? <Text style={s.mono}>No earnings yet.</Text> : null}
+        {groups.map((g) => (
+          <View key={`${g.installer_id}-${g.week}`} style={s.payRow} testID={`pay-group-${g.installer_name.replace(/\s+/g, "-")}-${g.week}`}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={s.payName}>{g.installer_name}</Text>
+              <Text style={s.mono}>Week of {g.week.split("-").reverse().join("/")} · {g.jobs.length} job(s)</Text>
+              <Text style={s.mono}>{g.jobs.map((j) => j.ref).join(", ")}</Text>
+              <Text style={s.mono}>Unpaid {money(g.unpaid, f.currency)} · Paid {money(g.paid, f.currency)}</Text>
             </View>
-            <Badge status="earned" />
-            <Btn title="Paid" small variant="success" onPress={() => pay(e.id)} testID={`mark-paid-${e.ref}`} />
+            {g.unpaid > 0 ? <Btn title="Mark week paid" small variant="success" onPress={() => payWeek(g)} testID={`pay-week-${g.installer_name.replace(/\s+/g, "-")}-${g.week}`} /> : <Badge status="paid" />}
           </View>
         ))}
       </KeyboardAwareScrollView>
@@ -106,4 +109,5 @@ const useStyles = makeStyles((c) => ({
   choiceText: { fontFamily: fonts.mono, fontSize: 11, color: c.onSurface, textAlign: "center" },
   payRow: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, padding: space.md },
   mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  payName: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSurface },
 }));

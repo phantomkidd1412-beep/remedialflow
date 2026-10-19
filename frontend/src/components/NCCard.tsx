@@ -7,6 +7,7 @@ import { NCItem, ProjectRow, DONE, EvidenceFile } from "@/src/projects";
 import { QueueItem, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
+import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 function exifDate(exif: any): string | null {
@@ -23,6 +24,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const toast = useToast();
   const { enqueueSubmit, enqueueUpload, discard, retry } = useQueue();
   const [view, setView] = useState<EvidenceFile | null>(null);
+  const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [confirm, setConfirm] = useState<QueueItem | null>(null);
 
   const done = DONE.includes(nc.status);
@@ -65,15 +67,15 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
       {expanded ? (
         <View style={s.body}>
-          {nc.ai?.feedback || nc.review_note ? (
+          {nc.ai?.feedback || nc.review_note || nc.status === "rejected" ? (
             <View style={[s.feedback, nc.status === "more_evidence" || nc.status === "rejected" ? { backgroundColor: colors.warning } : null]} testID={`nc-feedback-${nc.number}`}>
-              <Text style={s.fbText}>{nc.review_note || nc.ai?.feedback}</Text>
+              <Text style={s.fbText}>{nc.status === "rejected" ? `Rejected by ${nc.rejection_source === "trustmark" ? "TrustMark" : nc.rejection_source === "admin" ? "Admin" : "Employee"}${nc.review_note ? ": " : ""}` : ""}{nc.review_note || (nc.status === "rejected" ? "" : nc.ai?.feedback)}</Text>
             </View>
           ) : null}
 
           <Label>Original TrustMark photos</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-            {nc.trustmark.length ? nc.trustmark.map((f) => <Thumb key={f.id} f={f} size={96} onPress={() => setView(f)} testID={`trustmark-thumb-${f.id}`} />) : <Text style={s.muted}>None provided</Text>}
+            {nc.trustmark.length ? nc.trustmark.map((f, i) => <Thumb key={f.id} f={f} size={96} onPress={() => setPv({ files: nc.trustmark, i })} testID={`trustmark-thumb-${f.id}`} />) : <Text style={s.muted}>None provided</Text>}
           </ScrollView>
 
           {nc.original_text && nc.original_text !== nc.description ? (
@@ -97,7 +99,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
               <Label>New evidence {nc.status === "assessing" ? "" : "(not yet submitted)"}</Label>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
                 {nc.video ? <Thumb f={nc.video} onPress={() => setView(nc.video)} testID={`video-thumb-${nc.number}`} /> : null}
-                {drafts.map((f) => <Thumb key={f.id} f={f} onPress={() => setView(f)} testID={`draft-thumb-${f.id}`} />)}
+                {drafts.map((f, i) => <Thumb key={f.id} f={f} onPress={() => setPv({ files: drafts, i })} testID={`draft-thumb-${f.id}`} />)}
                 {uploads.map((q) => (
                   <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? setConfirm(q) : undefined)} onLongPress={() => setConfirm(q)} testID={`queued-item-${q.id}`}>
                     {q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
@@ -115,7 +117,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             <>
               <Label>Submitted evidence</Label>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-                {submitted.map((f) => <Thumb key={f.id} f={f} size={56} onPress={() => setView(f)} testID={`submitted-thumb-${f.id}`} />)}
+                {submitted.map((f, i) => <Thumb key={f.id} f={f} size={56} onPress={() => setPv({ files: submitted, i })} testID={`submitted-thumb-${f.id}`} />)}
               </ScrollView>
             </>
           ) : null}
@@ -130,6 +132,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
       ) : null}
 
       <MediaViewer f={view} onClose={() => setView(null)} />
+      {pv ? <PhotoViewer files={pv.files} index={pv.i} onClose={() => setPv(null)} /> : null}
       <Sheet visible={!!confirm} onClose={() => setConfirm(null)} title="Unsynced item" testID="queued-item-sheet">
         <Text style={s.work}>{confirm?.error ? `Error: ${confirm.error}` : "This file is stored on this phone and has not reached the server yet."}</Text>
         <Btn title="Retry upload" icon="refresh-cw" onPress={() => { if (confirm) retry(confirm.id); setConfirm(null); }} testID="queued-item-retry" />

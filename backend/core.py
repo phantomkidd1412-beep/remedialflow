@@ -114,6 +114,8 @@ class NC(BaseDocument):
     approved_by: Optional[str] = None  # "ai" or user id
     approved_at: Optional[str] = None
     rejection_source: Optional[str] = None  # employee | admin | trustmark
+    reopen_history: List[dict] = []
+    text_history: List[dict] = []  # earlier wording replaced by a re-imported report
     trustmark_ids: List[str] = []
     draft_submission_id: Optional[str] = None
     active_video_id: Optional[str] = None
@@ -147,6 +149,9 @@ class EvidenceFile(BaseDocument):
     status: str = "draft"  # draft | submitted | superseded
     client_id: Optional[str] = None  # idempotency key from device queue
     processing: str = "pending"  # pending | ready | failed
+    excluded: bool = False  # hidden logo/decoration from a PDF import (file kept in storage)
+    exclude_reason: Optional[str] = None  # banner | graphic | repeated | manual
+    manual_keep: bool = False  # staff restored it; automatic cleanup leaves it alone
 
 
 class Submission(BaseDocument):

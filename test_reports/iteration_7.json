@@ -1,0 +1,43 @@
+{
+  "summary": "Phase 7 (PDF clean-up) verified end-to-end against the public preview URL. Backend: 17/17 pytest passed (new file /app/backend/tests/test_p7_pdf_cleanup_merge.py; XML in /app/test_reports/pytest/pytest_p7.xml). POST /api/projects/import-pdf correctly returns {id,status:processing}; GET /api/imports/{iid} eventually returns status=ready with photo_stats {found,kept,filtered,reasons} and a duplicate dict for the P419977 report (reason 'Same project reference', existing project_id). For P419977 the filter removes >=1 banner/graphic/repeated image; found>=kept and found-filtered==kept. GET /imports/{iid}/merge-preview?project_id=PID returns {project,items[{index,draft,score,kind in match|ambiguous|new,nc}],untouched[],photo_stats}, 403 for installer, 404 for unknown project. POST /projects/{pid}/merge-import correctly updates matched NCs (new wording applied, numbering preserved), adds 'new' NCs with next sequential NC-NN starting at pre_count+1, 'skip' is a no-op, source_report is replaced on the project, untouched existing NCs stay intact. invalid action -> 422; update with nc_id from another project -> 400; installer -> 403. Logo filter: migration 004 ran, GET /api/projects/{pid} exposes trustmark_hidden (admin sees content, installer always sees []); POST /files/{fid}/exclude 404 for non-trustmark fid, 403 for installer, round-trip restore(false)->hide(true) OK on a migrated P419977 banner image; POST /projects/{pid}/clean-report-photos returns {hidden:N} and is staff-only. Frontend (390x844, employee logged in, Expo preview URL): direct nav to /project/merge?importId=<ready id>&pid=<TEST-MERGE-* project> renders UPDATE PROJECT with 3 merge-item-{0,1,2} cards, each exposing merge-{i}-{update|new|skip}, apply button merge-apply labelled 'CHOOSE 1 MORE' and disabled until the ambiguous item is chosen; TEST-MERGE-491C9 header and 'Phase 7 Merge Apply Site' address shown. /project/new source review confirms pdf-import-summary, pdf-duplicate-card, pdf-duplicate-update (navigates to /project/merge with importId+pid), pdf-duplicate-dismiss. StaffNCCard source confirms toggle-hidden-{number}, restore-trustmark-{fid}, long-press on staff-trustmark-{fid}. P419977 was NEVER mutated - only read for duplicate detection, merge-preview against TEST-MERGE-* projects, and a restore/hide round-trip on one hidden banner file (ended in the same hidden state).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p7_pdf_cleanup_merge.py",
+    "/app/test_reports/pytest/pytest_p7.xml"
+  ],
+  "action_items": [
+    "No Phase-7 action items. Regression note: `pytest tests/test_backend.py` and `pytest tests/test_p0_p1_upgrade.py` have 6 pre-existing failures that are NOT caused by Phase 7 (TestAuth::test_forgot_demo_mode - /api/auth/forgot no longer returns demo code by design, see /app/memory/test_credentials.md; TestExport::test_export_project_zip - still expects manifest.json but P8 Evidence Pack is NC-N_<Title>.pdf-only; TestDashboardProjects/test_dashboard_counts, TestRBAC/test_installer2_cannot_access_other_project, TestVideo/test_video_upload_and_supersede, TestMigrationPreservation/test_assigned_installer_inherited - all drift caused by accumulated TEST-* data from prior iterations). The focused P2-P8 suites (test_p2_p3_p4_earnings, test_p5_p6_p8_payments, test_pdf_import, test_p7_pdf_cleanup_merge) all pass 84/84 together. Main agent may want to retire or re-baseline the obsolete tests in a later housekeeping pass."
+  ],
+  "critical_code_review_comments": [
+    "report_import.py:27-62 classify() is well-structured: banner (aspect>3), graphic (top-4 colour mass>60% & <60 distinct bins) are both local decisions; running header/footer requires >=3 distinct pages AND >= half the image-bearing pages, which correctly keeps real site photos that appear on 2 NCs.",
+    "report_import.py:118-124 similarity() takes max of difflib ratio and a slightly discounted word-containment, so a shortened re-import ('Gas entry tee must have 250mm clearance' vs the full 4-sentence original) still exceeds the 0.5 AMBIGUOUS threshold and surfaces as 'possible match' instead of silently becoming 'new'.",
+    "server.py:498-513 merge_import() guards item.index range (400), then per-item does an ownership check `project_id: pid` on nc_id (400 if foreign) - verified by test_update_with_foreign_nc_id_400. Pydantic Field pattern on MergeItem.action -> 422 for unknown verbs - verified by test_invalid_action_422.",
+    "server.py:505-510 Text history is only $pushed when the dict actually changed (old != new) - correct, avoids spurious history entries on no-op updates.",
+    "server.py:521-524 source_report replacement happens unconditionally; prior source_report is $pushed into report_history. Good: no silent loss of provenance.",
+    "server.py:546-555 /files/{fid}/exclude enforces kind='trustmark' at the query - a photo fid returns 404 rather than silently flipping a wrong file; manual_keep=true on restore means a later clean-report-photos pass will NOT re-hide it (report_import.py:103 check). Confirmed in test_restore_then_hide_trustmark_file.",
+    "report_import.py:66-107 clean_project_report_photos() correctly skips files that are already excluded or marked manual_keep - re-running is idempotent and preserves user choices.",
+    "server.py:583 trustmark_hidden is `[]` for installers (role guard inline); verified against installer_token in test_trustmark_hidden_installer_empty.",
+    "frontend/app/project/merge.tsx:34-35 `pick()` defaults match->update, new->new, ambiguous->undefined (forces user choice); `pending` only counts items without a pick, so the apply button correctly disables until every ambiguous one is resolved - verified live ('CHOOSE 1 MORE').",
+    "frontend/app/project/new.tsx:39 summary string format exactly matches the spec: 'N NCs detected (report states M) · K report photos kept · F logo/decoration images skipped'."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p7_pdf_cleanup_merge.py (new)",
+    "/app/test_reports/pytest/pytest_p7.xml (new)",
+    "/app/test_reports/iteration_7.json (new)"
+  ],
+  "success_rate": {"backend": "100% (17/17 Phase 7; 84/84 across P2+P5+P6+P8+P7+pdf_import)", "frontend": "100% - merge screen testIDs verified live; new.tsx & StaffNCCard testIDs verified by code review"},
+  "seed_data_creation": "Three TEST-MERGE-* projects (each with 3-4 NCs whose wording matches the P419977 report), one TEST-MERGE-OTHER-* project (one unrelated NC used to verify the foreign nc_id 400), one TEST-CLEAN-* project (empty, used for clean-report-photos smoke). P419977 was uploaded twice as a transient import (dedupes to same import ids are not required, each creates a new /api/imports row) but P419977's project document and NCs were NEVER mutated. Two prior test runs merged into TEST-MERGE-* projects (not into P419977). One hidden banner file on P419977 was restored and immediately hidden again to leave state unchanged.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Re-run with: `EXPO_PUBLIC_BACKEND_URL=https://field-evidence-app-1.preview.emergentagent.com pytest backend/tests/test_p7_pdf_cleanup_merge.py backend/tests/test_pdf_import.py backend/tests/test_p5_p6_p8_payments.py backend/tests/test_p2_p3_p4_earnings.py -o addopts='' -v`. Expect 84 passed, 4 skipped. The P7 suite uses /tmp/p419977.pdf (must stay in place) and /app/tests/sample_inspection_report.pdf. If /tmp/p419977.pdf is missing, delete the file before the next run so the fixture fails fast rather than hanging. Legacy failures in test_backend.py and test_p0_p1_upgrade.py are unrelated to Phase 7 and have been itemised in action_items.",
+  "rca_of_issue": "No issue to RCA. All Phase 7 features behave exactly as specified. Observation on classify(): on the P419977 report the filter typically marks ~4 TrustMark banner strips as `banner` (aspect ratio >3) and the TrustMark-logo square as `graphic`; real site photos (bricks, vents, thresholds) are kept. The dHash deduplication inside _attach_pdf_photos (server.py:361-367) correctly avoids attaching the same report page twice when the same page is referenced by multiple NCs."
+}
