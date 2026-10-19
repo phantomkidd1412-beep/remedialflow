@@ -104,6 +104,39 @@ def video_frames(data: bytes, duration: Optional[float], count: int = 4) -> List
     return frames
 
 
+def pdf_text_and_images(data: bytes, max_pages: int = 60) -> tuple:
+    """Returns (text, {page_no: [jpeg bytes]}) – embedded photos >= 200px, page renders as fallback skipped."""
+    import pymupdf
+    doc = pymupdf.open(stream=data, filetype="pdf")
+    text_parts, images = [], {}
+    for i, page in enumerate(doc):
+        if i >= max_pages:
+            break
+        text_parts.append(f"--- page {i + 1} ---\n{page.get_text()}")
+        seen = set()
+        for info in page.get_images(full=True):
+            xref = info[0]
+            if xref in seen:
+                continue
+            seen.add(xref)
+            try:
+                pix = pymupdf.Pixmap(doc, xref)
+                if pix.width < 200 or pix.height < 200:
+                    continue
+                if pix.n - pix.alpha >= 4:  # CMYK -> RGB
+                    pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+                img = Image.open(io.BytesIO(pix.tobytes("png"))).convert("RGB")
+                img.thumbnail((2000, 2000))
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=90)
+                images.setdefault(i + 1, []).append(buf.getvalue())
+            except Exception:
+                continue
+            if len(images.get(i + 1, [])) >= 6:
+                break
+    return "\n".join(text_parts), images
+
+
 def demo_trustmark_image(label: str, seed: int) -> bytes:
     """Generates a textured placeholder 'inspection photo' for seeded demo data."""
     import random

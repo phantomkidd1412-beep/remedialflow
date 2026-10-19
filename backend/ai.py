@@ -88,5 +88,54 @@ class LlmAssessor(Assessor):
                                     ["AI response could not be read"], self.model_name)
 
 
+PDF_SYSTEM = """You extract structured data from TrustMark / retrofit inspection reports (PDF).
+Return ONLY JSON:
+{"ref": "project/job reference or null", "address": "full property address without postcode or null",
+ "postcode": "UK postcode or null", "nc_count_stated": <integer or null>,
+ "ncs": [{"description": "the non-compliance, concise", "required_work": "remedial work required, concise",
+          "safety_critical": true|false, "pages": [1-based page numbers where this NC and its photos appear]}],
+ "confidence": 0.0-1.0, "notes": "short note about anything unclear"}
+Rules: copy values exactly as written; never invent references or addresses (use null).
+If the report only states a number of NCs without details, create that many entries with description "NC <n> – details not in report" and required_work "See inspection report".
+safety_critical = electrical, gas, fire, structural, combustion ventilation or carbon monoxide related."""
+
+
+class PdfExtractor:
+    def __init__(self, provider: str, model: str):
+        self.provider, self.model_name = provider, model
+
+    async def extract(self, pdf_path: str, text_hint: str) -> dict:
+        from emergentintegrations.llm.chat import FileContentWithMimeType
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"pdf-{uuid.uuid4()}",
+                       system_message=PDF_SYSTEM).with_model(self.provider, self.model_name)
+        msg = UserMessage(text=f"Extract the project details and every NC from this report.\n\nExtracted text (may be partial):\n{text_hint[:20000]}",
+                          file_contents=[FileContentWithMimeType(mime_type="application/pdf", file_path=pdf_path)])
+        out = ""
+        async for ev in chat.stream_message(msg):
+            if isinstance(ev, TextDelta):
+                out += ev.content
+            elif isinstance(ev, StreamDone):
+                break
+        m = re.search(r"\{.*\}", out, re.S)
+        if not m:
+            raise ValueError("AI returned no data")
+        j = json.loads(m.group(0))
+        ncs = []
+        for n in j.get("ncs") or []:
+            if not isinstance(n, dict):
+                continue
+            ncs.append({"description": str(n.get("description") or "").strip()[:500],
+                        "required_work": str(n.get("required_work") or "").strip()[:800],
+                        "safety_critical": bool(n.get("safety_critical")),
+                        "pages": [int(p) for p in (n.get("pages") or []) if str(p).isdigit()][:6]})
+        return {"ref": j.get("ref"), "address": j.get("address"), "postcode": j.get("postcode"),
+                "nc_count_stated": j.get("nc_count_stated"), "ncs": ncs,
+                "confidence": float(j.get("confidence") or 0), "notes": str(j.get("notes") or "")[:300]}
+
+
+def get_pdf_extractor() -> PdfExtractor:
+    return PdfExtractor(os.environ.get("AI_PROVIDER", "gemini"), os.environ.get("AI_DOC_MODEL", "gemini-3-flash-preview"))
+
+
 def get_assessor() -> Assessor:
     return LlmAssessor(os.environ.get("AI_PROVIDER", "gemini"), os.environ.get("AI_MODEL", "gemini-3-flash-preview"))

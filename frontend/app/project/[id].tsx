@@ -4,7 +4,7 @@ import { useLocalSearchParams } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
-import { openExport, useProject } from "@/src/projects";
+import { openExport, openReport, useProject } from "@/src/projects";
 import { Badge, Btn, ErrorBlock, Field, Label, Loading, Progress, Sheet, fmtDate, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { StaffNCCard } from "@/src/components/StaffNCCard";
@@ -55,7 +55,12 @@ export default function StaffProject() {
 
   return (
     <View style={s.root}>
-      <ScreenHeader title={p.ref} sub={`${p.address} · ${p.postcode}`} back right={<Btn title="Export" icon="download" small variant="outline" onPress={() => openExport(id).catch((e) => toast(e.message))} testID="export-project-button" />}>
+      <ScreenHeader title={p.ref} sub={`${p.address} · ${p.postcode}`} back right={
+        <View style={{ flexDirection: "row", gap: space.xs }}>
+          {p.source_report ? <Btn title="PDF" icon="file-text" small variant="outline" onPress={() => openReport(id).catch((e) => toast(e.message))} testID="open-report-button" /> : null}
+          <Btn title="Export" icon="download" small variant="outline" onPress={() => openExport(id).catch((e) => toast(e.message))} testID="export-project-button" />
+        </View>
+      }>
         <View style={s.prog}>
           <View style={{ flex: 1 }}><Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} /></View>
           <Text style={s.mono}>{p.nc_done}/{p.nc_total}</Text>

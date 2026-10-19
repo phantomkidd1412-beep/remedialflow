@@ -30,7 +30,7 @@ function VideoPlayer({ uri }: { uri: string }) {
   return <VideoView player={player} style={{ width: "100%", aspectRatio: 9 / 12 }} contentFit="contain" nativeControls />;
 }
 
-const SOURCE: Record<string, string> = { in_app_camera: "Captured in app", gallery: "Uploaded from phone gallery", employee_upload: "Uploaded by employee", system: "System / TrustMark import" };
+const SOURCE: Record<string, string> = { in_app_camera: "Captured in app", gallery: "Uploaded from phone gallery", employee_upload: "Uploaded by employee", pdf_import: "Imported from inspection PDF", system: "System / TrustMark import" };
 
 export function MediaViewer({ f, onClose }: { f: EvidenceFile | null; onClose: () => void }) {
   const s = useStyles();

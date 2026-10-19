@@ -75,6 +75,7 @@ class Project(BaseDocument):
     nc_total: int = 0
     nc_done: int = 0
     nc_review: int = 0
+    source_report: Optional[dict] = None
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 

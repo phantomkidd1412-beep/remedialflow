@@ -17,6 +17,7 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 
 ## Implemented (2026-10-19)
 - Everything above. Testing: backend 24/24 pass, frontend flows pass (iteration_1)
+- Create project from inspection PDF: AI (Gemini 3 Flash) extracts ref, address, postcode, NC count + NCs (description, work, safety flag, pages); report photos attached as TrustMark references; PDF stored with project (signed view link). Iteration_2: 9/9 backend + UI pass
 
 ## Backlog
 - P1: Email delivery for reset/setup codes (currently shown to admin / dev code)

@@ -10,7 +10,7 @@ export async function openExport(projectId?: string) {
   else await Linking.openURL(url);
 }
 
-export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number };
+export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; source_report?: { filename?: string } | null };
 
 export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
@@ -49,4 +49,11 @@ export function useProject(id: string) {
       return busy ? 4000 : false;
     },
   });
+}
+
+export async function openReport(projectId: string) {
+  const r = await api<{ url: string }>(`/projects/${projectId}/report-link`);
+  const url = absUrl(r.url);
+  if (Platform.OS === "web") window.open(url, "_blank");
+  else await Linking.openURL(url);
 }

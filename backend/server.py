@@ -19,8 +19,8 @@ from core import (db, client, User, Project, NC, EvidenceFile, Submission, AIRes
                   now_iso, oid, file_url, signed_query, verify_signed, audit, clean)
 from auth import router as auth_router, current_user, require, ph, revoke_all, create_reset_token
 from storage import storage, evidence_path, APP_NAME
-from media import process_photo, video_frames, demo_trustmark_image
-from ai import get_assessor, AssessmentInput
+from media import process_photo, video_frames, demo_trustmark_image, pdf_text_and_images
+from ai import get_assessor, AssessmentInput, get_pdf_extractor
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 log = logging.getLogger("server")
@@ -193,6 +193,7 @@ class NCIn(BaseModel):
     description: str = Field(min_length=1)
     required_work: str = Field(min_length=1)
     safety_critical: bool = False
+    pages: List[int] = []  # PDF pages whose photos become TrustMark references
 
 
 class ProjectIn(BaseModel):
@@ -202,6 +203,76 @@ class ProjectIn(BaseModel):
     installer_id: Optional[str] = None
     rate: Optional[float] = None
     ncs: List[NCIn] = []
+    import_id: Optional[str] = None
+
+
+# ---------------- PDF import (async) ----------------
+async def _parse_pdf(import_id: str, data: bytes):
+    import tempfile
+    try:
+        text, images = await run_in_threadpool(pdf_text_and_images, data)
+        page_images = {}
+        for page, imgs in images.items():
+            paths = []
+            for k, b in enumerate(imgs):
+                paths.append(await storage.aput(f"{APP_NAME}/imports/{import_id}/page{page}-{k}.jpg", b, "image/jpeg"))
+            page_images[str(page)] = paths
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as tf:
+            tf.write(data)
+            tf.flush()
+            draft = await get_pdf_extractor().extract(tf.name, text)
+        for n in draft["ncs"]:
+            n["photo_count"] = sum(len(page_images.get(str(p), [])) for p in n["pages"])
+        await db.imports.update_one({"_id": ObjectId(import_id)}, {"$set": {
+            "status": "ready", "draft": draft, "page_images": page_images, "page_count": text.count("--- page "),
+            "finished_at": now_iso()}})
+    except Exception as e:
+        log.exception("pdf import failed")
+        await db.imports.update_one({"_id": ObjectId(import_id)}, {"$set": {"status": "failed", "error": str(e)[:200]}})
+
+
+@api.post("/projects/import-pdf")
+async def import_pdf(bg: BackgroundTasks, file: UploadFile = File(...), u: User = Depends(staff)):
+    data = await file.read()
+    if not data.startswith(b"%PDF"):
+        raise HTTPException(400, "Please choose a PDF file")
+    if len(data) > 40 * 1024 * 1024:
+        raise HTTPException(413, "PDF too large (max 40 MB)")
+    iid = ObjectId()
+    path = await storage.aput(f"{APP_NAME}/imports/{iid}/report.pdf", data, "application/pdf")
+    await db.imports.insert_one({"_id": iid, "status": "processing", "path": path, "sha256": hashlib.sha256(data).hexdigest(),
+                                 "filename": file.filename, "size": len(data), "uploaded_by": u.id, "created_at": now_iso()})
+    await audit("import.uploaded", u.id, f"import:{iid}", {"filename": file.filename, "size": len(data)})
+    bg.add_task(_parse_pdf, str(iid), data)
+    return {"id": str(iid), "status": "processing"}
+
+
+@api.get("/imports/{iid}")
+async def get_import(iid: str, u: User = Depends(staff)):
+    d = await db.imports.find_one({"_id": oid(iid)}, {"page_images": 0})
+    if not d:
+        raise HTTPException(404, "Import not found")
+    return clean(d)
+
+
+async def _attach_pdf_photos(import_id: str, nc_pages: List[tuple]):
+    imp = await db.imports.find_one({"_id": ObjectId(import_id)})
+    pi = (imp or {}).get("page_images", {})
+    sys_user = User(id=imp["uploaded_by"], email="import", name="import", role="employee")
+    for nc_id, pages in nc_pages:
+        nc = NC.from_mongo(await db.ncs.find_one({"_id": ObjectId(nc_id)}))
+        p = Project.from_mongo(await db.projects.find_one({"_id": oid(nc.project_id)}))
+        for page in pages:
+            for path in pi.get(str(page), []):
+                try:
+                    data, _ = await storage.aget(path)
+                    bg = BackgroundTasks()
+                    up = UploadFile(io.BytesIO(data), filename=f"report-p{page}.jpg", headers={"content-type": "image/jpeg"})
+                    f = await store_upload(nc, p, sys_user, up, {}, "trustmark", "pdf_import", None, bg)
+                    await db.ncs.update_one({"_id": oid(nc.id)}, {"$push": {"trustmark_ids": f.id}})
+                    await bg()
+                except Exception:
+                    log.exception("attach pdf photo failed")
 
 
 class ProjectPatch(BaseModel):
@@ -210,24 +281,36 @@ class ProjectPatch(BaseModel):
 
 
 async def add_nc(pid: str, body: NCIn, idx: int) -> str:
-    nc = NC(project_id=pid, number=f"NC-{idx:02d}", **body.model_dump())
+    nc = NC(project_id=pid, number=f"NC-{idx:02d}", **body.model_dump(exclude={"pages"}))
     r = await db.ncs.insert_one(nc.to_mongo())
     return str(r.inserted_id)
 
 
 @api.post("/projects")
-async def create_project(body: ProjectIn, u: User = Depends(staff)):
+async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends(staff)):
     if await db.projects.find_one({"ref": body.ref}):
         raise HTTPException(409, "Project reference already exists")
     s = await get_settings()
     p = Project(ref=body.ref, address=body.address, postcode=body.postcode.upper(), installer_id=body.installer_id or None,
                 rate=body.rate if body.rate is not None else s.default_job_rate)
-    r = await db.projects.insert_one(p.to_mongo())
+    doc = p.to_mongo()
+    if body.import_id:
+        imp = await db.imports.find_one({"_id": oid(body.import_id)}, {"path": 1, "sha256": 1, "filename": 1})
+        if imp:
+            doc["source_report"] = {"import_id": body.import_id, "path": imp["path"], "sha256": imp["sha256"], "filename": imp.get("filename")}
+    r = await db.projects.insert_one(doc)
     pid = str(r.inserted_id)
+    nc_pages = []
     for i, n in enumerate(body.ncs, 1):
-        await add_nc(pid, n, i)
+        nid = await add_nc(pid, n, i)
+        if n.pages:
+            nc_pages.append((nid, n.pages))
     await recompute_project(pid)
-    await audit("project.created", u.id, f"project:{pid}", {"ref": p.ref})
+    if body.import_id:
+        await db.imports.update_one({"_id": oid(body.import_id)}, {"$set": {"project_id": pid}})
+        if nc_pages:
+            bg.add_task(_attach_pdf_photos, body.import_id, nc_pages)
+    await audit("project.created", u.id, f"project:{pid}", {"ref": p.ref, "import_id": body.import_id})
     return {"id": pid}
 
 
@@ -276,6 +359,23 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         iu = await db.users.find_one({"_id": oid(p.installer_id)}, {"name": 1})
         pd["installer_name"] = iu["name"] if iu else None
     return {"project": pd, "ncs": out}
+
+
+@api.get("/projects/{pid}/report-link")
+async def report_link(pid: str, u: User = Depends(staff)):
+    p = await db.projects.find_one({"_id": oid(pid)}, {"source_report": 1})
+    if not p or not p.get("source_report"):
+        raise HTTPException(404, "No source report")
+    return {"url": f"/api/reports/{pid}?{signed_query(f'report:{pid}', 1)}"}
+
+
+@api.get("/reports/{pid}")
+async def serve_report(pid: str, exp: int, sig: str):
+    if not verify_signed(f"report:{pid}", exp, sig):
+        raise HTTPException(403, "Link expired or invalid")
+    p = await db.projects.find_one({"_id": oid(pid)}, {"source_report": 1})
+    data, _ = await storage.aget(p["source_report"]["path"])
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p["source_report"].get("filename") or "report.pdf"}"'})
 
 
 @api.get("/projects/{pid}/audit")
