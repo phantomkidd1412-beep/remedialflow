@@ -1,0 +1,24 @@
+{
+  "summary": "First-run comprehensive test. Backend: 24/24 pytest cases passed covering auth (login 4 accounts, wrong pwd, /me, refresh rotation + reuse family revocation, logout, rate limit, forgot/reset), RBAC (installer blocked from admin/dashboard/review-queue, cross-installer project 403, employee cannot PUT settings), admin user flow (create+setup_code, reset, login, deactivate -> immediate 401 + refresh fail), dashboard counts, projects search/pagination, evidence multipart upload with GPS (location_verified=true, sha256 match, stamped/display/thumb variants ready, signed URL 200, tampered sig 403), idempotent client_id, photo without GPS (accept_flag -> location_verified=false), gallery source (location_verified=false), location_policy=reject -> 422 + restored, video upload with supersede (video_versions=2, active_video_id updated), submit -> assessing -> AI finalises status with feedback, review approve-all -> project completed -> earning created -> admin mark paid, export project.zip (manifest.json present), export all.json (admin only, employee 403). Frontend (390x844 mobile viewport): installer login via demo chip -> jobs cards EF-1024/EF-1025 visible, job detail opens, NC accordion toggles revealing take-photos button, camera route opens camera-permission-gate (expected on web), earnings tab shows unpaid tile, profile shows name/email/role, change-password sheet opens, logout returns to login. Employee: dashboard with 4 tiles + 3 project rows, search filters to 1 row for EF-1024, project detail opens with export/audit buttons, review tab lists items, account menu shows new project + logout. Admin: users screen with 5 rows + invite button opens invite-sheet, user row opens user-actions-sheet, settings screen loads and 'Save settings' shows 'Settings saved' toast.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_backend.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 677 lines – close to the 700-line soft limit; consider splitting admin/users, projects, evidence, review, export into separate routers for maintainability.",
+    "In auth.py line 116, the login verification `ph.verify(body.password, DUMMY) and False` is a timing-attack mitigation but the `and False` makes intent non-obvious; a short comment above it would help future readers.",
+    "run_assessment() in server.py polls DB every 1s for up to 60s waiting for image processing to finish; this ties up an asyncio task. Consider an event/trigger when _process_file completes instead of polling.",
+    "project_detail uses `files.find({... status in [draft, submitted, superseded]})` then builds `by_nc` in Python – for projects with many NCs this is fine, but add an index on (project_id, status) to keep large-dataset queries fast."
+  ],
+  "updated_files": ["/app/backend/tests/__init__.py", "/app/backend/tests/test_backend.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created 1 transient TEST_ user in /api/admin/users (then deactivated as part of the admin-flow test). Approved all NCs on project EF-1026 which caused its status to become 'completed' and generated an earning for installer2; admin then marked that earning paid. All seeded demo accounts were left reactivated at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "EF-1026 is now in 'completed' status and installer2 has a paid earning for it. If a future test needs EF-1026 to be in 'active' status, re-seed or reset the ncs/projects/earnings collections. The /api/auth/forgot test resets the employee password back to the demo value, so credentials remain stable."
+}

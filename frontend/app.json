@@ -1,0 +1,81 @@
+{
+  "expo": {
+    "name": "RemedialFlow",
+    "slug": "frontend",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "frontend",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.emergent.fieldevidenceapp.pnhb44",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Capture timestamped remediation evidence photos and videos",
+        "NSMicrophoneUsageDescription": "Record audio with remediation evidence videos",
+        "NSLocationWhenInUseUsageDescription": "Geotag evidence photos at the property",
+        "NSPhotoLibraryUsageDescription": "Attach existing photos as evidence"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#000000"
+      },
+      "package": "com.emergent.fieldevidenceapp.pnhb44",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-image.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
+      ],
+      "expo-font",
+      "expo-image",
+      "expo-secure-store",
+      "expo-web-browser",
+      "expo-status-bar",
+      "expo-video",
+      "@react-native-vector-icons/feather",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Capture timestamped remediation evidence photos and videos",
+          "microphonePermission": "Record audio with remediation evidence videos",
+          "recordAudioAndroid": true
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Geotag evidence photos at the property"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Attach existing photos as evidence"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
