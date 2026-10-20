@@ -290,13 +290,12 @@ class TestP8EvidencePack:
         doc = pymupdf.open(stream=z.read(nc1_pdf), filetype="pdf")
         text = "\n".join(p.get_text() for p in doc)
         doc.close()
+        # Simplified client-facing PDF (iter 20): no workflow / approval / AI wording
         assert STATE["ref"] in text, text[:400]
         assert "NC-01" in text
-        assert "INTERNALLY APPROVED" in text, text[:400]  # re-approved in P5.test_13
-        assert "Original TrustMark observation" in text
-        assert "Required remedial work" in text
-        assert "before" in text.lower()
-        assert "after" in text.lower()
+        assert "NON-COMPLIANCE" in text
+        for banned in ("APPROVED", "Approved", "AI", "Employee", "status", "confidence"):
+            assert banned not in text, f"PDF should not contain '{banned}': {text[:400]}"
 
     def test_05_nc2_pdf_approved(self, tokens):
         import pymupdf
@@ -305,7 +304,10 @@ class TestP8EvidencePack:
         doc = pymupdf.open(stream=z.read(nc2_pdf), filetype="pdf")
         text = "\n".join(p.get_text() for p in doc)
         doc.close()
-        assert "INTERNALLY APPROVED" in text, text[:300]
+        assert "NC-02" in text
+        assert "NON-COMPLIANCE" in text
+        for banned in ("APPROVED", "Approved", "AI", "Employee", "status", "confidence"):
+            assert banned not in text, f"PDF should not contain '{banned}': {text[:400]}"
 
     def test_06_tampered_sig_403(self, tokens):
         bad = STATE["export_url"].rsplit("sig=", 1)

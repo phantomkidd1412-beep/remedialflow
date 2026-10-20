@@ -26,6 +26,18 @@ def sharpness(data: bytes) -> float:
     return edges * (0.4 if bright < 40 or bright > 230 else 1.0)  # penalise very dark / blown-out shots
 
 
+def readable(imgs: List[bytes]) -> List[bytes]:
+    """Drop corrupt/truncated images so one bad file can never break a whole evidence pack."""
+    ok = []
+    for b in imgs:
+        try:
+            Image.open(io.BytesIO(b)).convert("L")
+            ok.append(b)
+        except Exception:
+            continue
+    return ok
+
+
 def select_photos(photos: List[bytes], limit: int = 6) -> List[bytes]:
     """Best first by sharpness/lighting; drops exact and near-duplicates (dHash distance <= 6)."""
     scored = sorted(((sharpness(b), dhash(b), b) for b in photos), key=lambda x: -x[0])
@@ -56,49 +68,88 @@ def drop_repeated(imgs: List[bytes], rep: set) -> List[bytes]:
     return [b for b in imgs if not any(bin(dhash(b) ^ r).count("1") <= 4 for r in rep)]
 
 
-def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[bytes], status_line: str) -> bytes:
+def _pdf_image(b: bytes, max_px: int = 1600) -> Tuple[bytes, float]:
+    """Readable-quality JPEG (long edge <= max_px) and its aspect ratio (w/h). Keeps PDFs a sensible size."""
+    from PIL import ImageOps
+    img = ImageOps.exif_transpose(Image.open(io.BytesIO(b))).convert("RGB")
+    img.thumbnail((max_px, max_px))
+    out = io.BytesIO()
+    img.save(out, "JPEG", quality=85)
+    return out.getvalue(), img.width / max(img.height, 1)
+
+
+def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[bytes]) -> bytes:
+    """Clean client-facing NC sheet: address, references, original TrustMark wording, before/after photos and an
+    optional staff note. Deliberately contains NO internal workflow data (approvals, reviewers, AI, statuses)."""
     import pymupdf
     doc = pymupdf.open()
-    W, H, M = 595, 842, 40
+    W, H, M, GAP = 595, 842, 36, 8
+    BLACK = (0, 0, 0)
     page = doc.new_page(width=W, height=H)
     y = M
 
-    def text(t, size=10, bold=False, color=(0, 0, 0)):
+    def new_page():
         nonlocal page, y
-        rect = pymupdf.Rect(M, y, W - M, H - M)
-        h = page.insert_textbox(rect, t, fontsize=size, fontname="hebo" if bold else "helv", color=color)
-        used = (rect.height - h) if h >= 0 else rect.height
-        y += used + 6
-        if h < 0 or y > H - 120:
-            page = doc.new_page(width=W, height=H)
-            y = M
+        page = doc.new_page(width=W, height=H)
+        y = M
 
-    def section(title, imgs):
-        nonlocal page, y
-        text(title, 12, True)
+    def text(t, size=10, bold=False, after=4):
+        nonlocal y
+        for _ in range(2):  # retry once on a fresh page if it doesn't fit
+            rect = pymupdf.Rect(M, y, W - M, H - M)
+            left = page.insert_textbox(rect, t, fontsize=size, fontname="hebo" if bold else "helv", color=BLACK)
+            if left >= 0:
+                y += rect.height - left + after
+                return
+            new_page()
+
+    def heading(t):
+        nonlocal y
+        if y > H - M - 60:
+            new_page()
+        y += 6
+        text(t, 9.5, True, 3)
+
+    def photos(title, imgs):
+        nonlocal y
         if not imgs:
-            text("None provided.", 10, color=(0.4, 0.4, 0.4))
             return
-        cw, ch = (W - 2 * M - 10) / 2, 220
-        for i, b in enumerate(imgs):
-            if i % 2 == 0 and y + ch > H - M:
-                page = doc.new_page(width=W, height=H)
-                y = M
-            x = M + (i % 2) * (cw + 10)
-            page.insert_image(pymupdf.Rect(x, y, x + cw, y + ch), stream=b, keep_proportion=True)
-            if i % 2 == 1 or i == len(imgs) - 1:
-                y += ch + 10
+        prepared = [_pdf_image(b) for b in imgs]
+        full = W - 2 * M
+        cols = 1 if len(prepared) == 1 else 2
+        cw = (full - GAP * (cols - 1)) / cols
+        cap = 330 if cols == 1 else 250
+        rows = [prepared[i:i + cols] for i in range(0, len(prepared), cols)]
+        first_h = max(min(cw / a, cap) for _, a in rows[0])
+        if y + 22 + first_h > H - M:  # keep the heading with its first row of photos
+            new_page()
+        heading(title)
+        for row in rows:
+            rh = max(min(cw / a, cap) for _, a in row)
+            if y + rh > H - M:
+                new_page()
+            for i, (b, a) in enumerate(row):
+                x = M + i * (cw + GAP)
+                page.insert_image(pymupdf.Rect(x, y, x + cw, y + rh), stream=b, keep_proportion=True)
+            y += rh + GAP
 
-    text(f"{project['address']}{', ' + project['postcode'] if project.get('postcode') else ''}", 14, True)
-    text(f"Project {project['ref']}   ·   {nc['number']}", 11)
-    text(status_line, 11, True, (0, 0.45, 0.2) if status_line.startswith("INTERNALLY APPROVED") else (0.75, 0.2, 0))
-    text("Original TrustMark observation", 11, True)
-    text(nc.get("original_text") or nc["description"], 10)
-    text("Required remedial work", 11, True)
-    text(nc["required_work"], 10)
-    section("ORIGINAL TRUSTMARK DEFECT PHOTOGRAPHS (before)", originals)
-    section("INSTALLER REMEDIATION PHOTOGRAPHS (after) - stamped with date, time, GPS and project reference", remediation)
-    out = doc.tobytes(deflate=True)
+    addr = f"{project.get('address', '')}{', ' + project['postcode'] if project.get('postcode') else ''}"
+    text(addr, 14, True, 2)
+    text(f"Project Reference: {project['ref']}   |   NC Reference: {nc['number']}", 10, False, 4)
+    page.draw_line((M, y), (W - M, y), color=BLACK, width=0.6)
+    y += 4
+    heading("NON-COMPLIANCE")
+    text(nc.get("original_text") or nc.get("description", ""), 10)
+    photos("ORIGINAL TRUSTMARK DEFECT PHOTOGRAPHS", originals)
+    if remediation:
+        photos("REMEDIATION PHOTOGRAPHS", remediation)
+    else:
+        heading("REMEDIATION PHOTOGRAPHS")
+        text("Not yet supplied.", 10)
+    if (nc.get("export_note") or "").strip():
+        heading("REMEDIATION NOTE")
+        text(nc["export_note"].strip(), 10)
+    out = doc.tobytes(deflate=True, garbage=3)
     doc.close()
     return out
 

@@ -74,6 +74,7 @@ type Ctx = {
   items: QueueItem[];
   syncing: boolean;
   progress: { done: number; total: number } | null;
+  pct: Record<string, number>; // live upload fraction (0..1) per queue item id; in-memory only
   retryFailed: () => void;
   enqueueUpload: (projectId: string, ncId: string, uri: string, mime: string, meta: EvidenceMeta) => Promise<void>;
   enqueueSubmit: (projectId: string, ncId: string) => Promise<void>;
@@ -95,7 +96,7 @@ function persistFile(uri: string, id: string, mime: string): string {
     const { File, Directory, Paths } = require("expo-file-system");
     const dir = new Directory(Paths.document, "evidence");
     if (!dir.exists) dir.create({ intermediates: true, idempotent: true });
-    const dest = new File(dir, `${id}.${mime.includes("video") ? "mp4" : "jpg"}`);
+    const dest = new File(dir, `${id}.${mime.includes("quicktime") ? "mov" : mime.includes("video") ? "mp4" : "jpg"}`);
     new File(uri).copy(dest);
     return dest.uri;
   } catch {
@@ -117,6 +118,8 @@ export function QueueProvider({ children }: PropsWithChildren) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [pct, setPct] = useState<Record<string, number>>({});
+  const lastPct = useRef(0);
   const ref = useRef<QueueItem[]>([]);
   const running = useRef(false);
 
@@ -151,9 +154,21 @@ export function QueueProvider({ children }: PropsWithChildren) {
               uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
                 headers: t ? { Authorization: `Bearer ${t}` } : {},
                 fields: { meta: JSON.stringify({ ...next.meta, client_id: next.id }) },
-                files: { file: { uri: next.uri!, name: next.mime!.includes("video") ? "video.mp4" : "photo.jpg", mimeType: next.mime } },
+                files: { file: { uri: next.uri!, name: next.mime!.includes("video") ? (next.mime!.includes("quicktime") ? "video.mov" : "video.mp4") : "photo.jpg", mimeType: next.mime } },
+                onProgress: (f) => {
+                  // throttle re-renders: only on >=2% change
+                  if (Math.abs(f - lastPct.current) < 0.02 && f < 1) return;
+                  lastPct.current = f;
+                  setPct((m) => ({ ...m, [next.id]: f }));
+                },
               }),
-            ), UPLOAD_TIMEOUT);
+            ), UPLOAD_TIMEOUT).finally(() => {
+              lastPct.current = 0;
+              setPct((m) => {
+                const { [next.id]: _, ...rest } = m;
+                return rest;
+              });
+            });
           } else {
             // idempotent on client_id; server refuses (409) until every expected upload has arrived
             r = await withTimeout(authed((t) =>
@@ -265,7 +280,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
   const visible = items.filter((i) => !i.userId || i.userId === user?.id);
 
   return (
-    <QueueCtx.Provider value={{ items: visible, syncing, progress, retryFailed, enqueueUpload, enqueueSubmit, discard, clearAll, retry, retryNc, syncNow: process }}>
+    <QueueCtx.Provider value={{ items: visible, syncing, progress, pct, retryFailed, enqueueUpload, enqueueSubmit, discard, clearAll, retry, retryNc, syncNow: process }}>
       {children}
     </QueueCtx.Provider>
   );

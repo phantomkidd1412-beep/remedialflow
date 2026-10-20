@@ -11,6 +11,34 @@ import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
+/** Optional brief factual note printed on the exported NC PDF. Never filled automatically. */
+function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [val, setVal] = useState(nc.export_note ?? "");
+  const [busy, setBusy] = useState(false);
+  const dirty = val.trim() !== (nc.export_note ?? "");
+  const save = async () => {
+    setBusy(true);
+    try {
+      await api(`/ncs/${nc.id}/export-note`, { method: "PUT", body: { note: val } });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+      toast("PDF note saved");
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Label>PDF remediation note (optional)</Label>
+      <Field placeholder="Brief factual note for the exported PDF, only if needed" value={val} onChangeText={setVal} multiline maxLength={600} testID={`export-note-${nc.number}`} />
+      {dirty ? <Btn title="Save PDF note" icon="save" variant="outline" small onPress={save} loading={busy} testID={`export-note-save-${nc.number}`} /> : null}
+    </>
+  );
+}
+
 export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, onToggle, onDone }: { nc: NCItem; projectId: string; expanded: boolean; onToggle: (id: string) => void; onDone?: () => void }) {
   const { user } = useAuth();
   const installers = useQuery({ queryKey: ["installers"], queryFn: () => api<{ id: string; name: string }[]>("/installers"), staleTime: 300000, enabled: expanded });
@@ -167,6 +195,8 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             </Pressable>
           </ScrollView>
           {nc.video_versions > 1 ? <Text style={s.muted}>{nc.video_versions - 1} superseded video version(s) retained</Text> : null}
+
+          <ExportNote nc={nc} projectId={projectId} />
 
           <Label>Assigned installer</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>

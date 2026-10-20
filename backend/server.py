@@ -822,6 +822,19 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
     return file_public(f)
 
 
+class ExportNoteIn(BaseModel):
+    note: str = Field(default="", max_length=600)
+
+
+@api.put("/ncs/{nc_id}/export-note")
+async def set_export_note(nc_id: str, body: ExportNoteIn, u: User = Depends(staff)):
+    await get_nc(nc_id, u)
+    note = body.note.strip()
+    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"export_note": note, "updated_at": now_iso()}})
+    await audit("nc.export_note", u.id, f"nc:{nc_id}", {"length": len(note)})
+    return {"ok": True, "export_note": note}
+
+
 @api.post("/ncs/{nc_id}/trustmark")
 async def upload_trustmark(nc_id: str, bg: BackgroundTasks, file: UploadFile = File(...), u: User = Depends(staff)):
     nc, p = await get_nc(nc_id, u)
@@ -1211,7 +1224,7 @@ async def project_manifest(pid: str) -> dict:
 @api.get("/export/project/{pid}.zip")
 async def export_project(pid: str, exp: int, sig: str):
     """TrustMark Evidence Pack: NC PDFs (before/after) + Videos/. Excluded photos stay in storage."""
-    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated
+    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
     if not verify_signed(f"export:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     p = await db.projects.find_one({"_id": oid(pid)})
@@ -1234,18 +1247,14 @@ async def export_project(pid: str, exp: int, sig: str):
         files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(500)
         trust = [b for f in files if f["kind"] == "trustmark" and not f.get("excluded") for b in [await get(f, "display", "original")] if b]
         rem = [b for f in files if f["kind"] == "photo" and f["status"] != "superseded" for b in [await get(f, "stamped", "display", "original")] if b]
+        trust, rem = await run_in_threadpool(readable, trust), await run_in_threadpool(readable, rem)
         prepared.append((n, files, trust, rem))
     rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
     for n, files, trust, rem in prepared:
         trust = await run_in_threadpool(drop_repeated, trust, rep)
         rem = await run_in_threadpool(select_photos, rem, 6)
         name = f"{n['number']}_{slug(n.get('description', ''))}"
-        if n["status"] == "approved":
-            who = "AI" if n.get("approved_by") == "ai" else "employee/admin"
-            line = f"INTERNALLY APPROVED ({who}) {(n.get('approved_at') or '')[:10]}"
-        else:
-            line = f"NOT YET INTERNALLY APPROVED - current status: {n['status'].replace('_', ' ')}"
-        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, line)
+        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem)
         entries.append((f"{name}.pdf", pdf))
         for f in files:
             if f["kind"] == "video":

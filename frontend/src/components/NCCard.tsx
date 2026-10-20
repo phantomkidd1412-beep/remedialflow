@@ -22,7 +22,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const { colors } = useTheme();
   const router = useRouter();
   const toast = useToast();
-  const { enqueueSubmit, enqueueUpload, discard, retry, retryNc } = useQueue();
+  const { enqueueSubmit, enqueueUpload, discard, retry, retryNc, pct } = useQueue();
   const [view, setView] = useState<EvidenceFile | null>(null);
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [confirm, setConfirm] = useState<QueueItem | null>(null);
@@ -46,14 +46,36 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number };
 
   const pickGallery = async () => {
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], allowsMultipleSelection: true, quality: 1, exif: true, selectionLimit: 10 });
+    const r = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ["images", "videos"],
+      allowsMultipleSelection: true,
+      selectionLimit: 10,
+      quality: 1, // no re-compression of photos
+      exif: true,
+      // iOS: hand over the original file (no HEVC->H.264 transcode / downscale)
+      preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
+      videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
+    });
     if (r.canceled) return;
-    for (const a of r.assets) {
+    const photos = r.assets.filter((a) => a.type !== "video");
+    const videos = r.assets.filter((a) => a.type === "video");
+    const bad = videos.filter((a) => a.mimeType && !/mp4|quicktime|mov/i.test(a.mimeType));
+    const video = videos.find((a) => !bad.includes(a));
+    for (const a of photos) {
       await enqueueUpload(project.id, nc.id, a.uri, a.mimeType || "image/jpeg", {
+        // captured_at only from the file's own EXIF; GPS is never claimed for gallery media
         kind: "photo", source: "gallery", captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       });
     }
-    toast(`${r.assets.length} gallery photo(s) queued · marked as gallery upload`);
+    if (video) {
+      await enqueueUpload(project.id, nc.id, video.uri, video.mimeType || (/\.mov$/i.test(video.uri) ? "video/quicktime" : "video/mp4"), {
+        kind: "video", source: "gallery", captured_at: null, ...tzInfo(), lat: null, lng: null, accuracy_m: null,
+        duration_s: video.duration ? Math.round(video.duration / 100) / 10 : null,
+      });
+    }
+    const parts = [photos.length ? `${photos.length} photo(s)` : "", video ? "1 video" : ""].filter(Boolean).join(" + ");
+    const notes = [videos.length - bad.length > 1 ? "only one video per NC, first one used" : "", bad.length ? "unsupported video skipped (MP4/MOV only)" : ""].filter(Boolean).join(" · ");
+    toast(parts ? `${parts} queued · marked as gallery upload${notes ? ` · ${notes}` : ""}` : notes || "Nothing selected");
   };
 
   const submit = async () => {
@@ -122,7 +144,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
                   <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? openConfirm(q) : undefined)} onLongPress={() => q.status !== "uploaded" && q.status !== "uploading" && openConfirm(q)} testID={`queued-item-${q.id}`}>
                     {q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
                     <View style={[s.localTag, q.status === "failed" && { backgroundColor: colors.error }, q.status === "uploaded" && { backgroundColor: colors.success }]}>
-                      <Text style={[s.localText, q.status === "failed" && { color: colors.onError }, q.status === "uploaded" && { color: colors.onSuccess }]} testID={`queued-status-${q.id}`}>{STATUS_LABEL[q.status].toUpperCase()}</Text>
+                      <Text style={[s.localText, q.status === "failed" && { color: colors.onError }, q.status === "uploaded" && { color: colors.onSuccess }]} testID={`queued-status-${q.id}`}>{q.status === "uploading" && pct[q.id] != null ? `${Math.round(pct[q.id] * 100)}%` : STATUS_LABEL[q.status].toUpperCase()}</Text>
                     </View>
                   </Pressable>
                 ))}

@@ -81,3 +81,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Submit API: optional {client_id, expect}; 409 until all expected uploads arrive (AI not triggered); idempotent retries; atomic claim prevents double assessment.
 - Deleted-project reimport: duplicate.deleted flag; POST /api/projects/restore-match (staff; import owner or exact ref; server recomputes match); Restore and continue import -> merge screen; audit project.restored with role/via; recycle bin stays admin-only.
 - Backend regression 278 passed / 4 skipped.
+
+## Gallery video upload + simplified NC PDF (iteration 20, agent-tested)
+- Installer Gallery picker: photos + videos (multi-select), iOS passthrough/original representation, MP4/MOV (server byte-sniffed), one active video per NC (first selected used). Uses existing offline queue/retry/client_id dedupe. Per-item upload % (XHR on web, expo-file-system createUploadTask on native).
+- Gallery stamps never claim GPS; missing EXIF date -> "DATE TAKEN: NOT AVAILABLE"; EXIF date marked "FROM FILE, NOT VERIFIED".
+- NC PDF: address, Project/NC reference, NON-COMPLIANCE (original wording), original TrustMark photos, remediation photos, optional staff "PDF remediation note" (PUT /api/ncs/{id}/export-note). No approval/AI/status info. Corrupt images skipped. ZIP + Videos/ unchanged.

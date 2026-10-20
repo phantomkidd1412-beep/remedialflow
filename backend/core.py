@@ -124,6 +124,7 @@ class NC(BaseDocument):
     active_video_id: Optional[str] = None
     ai: Optional[AIResult] = None
     review_note: str = ""
+    export_note: str = ""  # optional brief factual note printed on the exported NC PDF (staff-written)
     reviewed_by: Optional[str] = None
     updated_at: str = Field(default_factory=now_iso)
 

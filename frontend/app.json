@@ -14,7 +14,7 @@
         "NSCameraUsageDescription": "Capture timestamped remediation evidence photos and videos",
         "NSMicrophoneUsageDescription": "Record audio with remediation evidence videos",
         "NSLocationWhenInUseUsageDescription": "Geotag evidence photos at the property",
-        "NSPhotoLibraryUsageDescription": "Attach existing photos as evidence"
+        "NSPhotoLibraryUsageDescription": "Attach existing photos and videos as evidence"
       }
     },
     "android": {
@@ -71,7 +71,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Attach existing photos as evidence"
+          "photosPermission": "Attach existing photos and videos as evidence"
         }
       ],
       [

@@ -1,0 +1,46 @@
+{
+  "summary": "Iter 20 — tested the two targeted RemedialFlow improvements end-to-end. (1) GALLERY VIDEO UPLOAD backend + (2) SIMPLIFIED NC EVIDENCE PDF backend + optional PUT /ncs/{id}/export-note endpoint. Added /app/backend/tests/test_iter20_gallery_pdf.py with 15 tests across 5 classes (stamp_lines unit tests, gallery video MP4/MOV upload, 415/403/404 negatives, client_id idempotency, export-note auth/length/persistence, PDF ZIP shape, PDF text omits workflow info and contains the required sections, empty-note omission, readable() resilience). All 15 new tests pass. Updated the two tests in /app/backend/tests/test_p5_p6_p8_payments.py (TestP8EvidencePack.test_04/05) that still asserted the removed 'INTERNALLY APPROVED' / 'Original TrustMark observation' / 'Required remedial work' / 'before'/'after' PDF strings — they now assert the simplified PDF shape (NON-COMPLIANCE present, banned workflow/AI/approval wording absent); file now passes 25/25 (1 skipped). Full backend regression at -n 0 after the fix: 281 passed, 4 skipped, 2 pre-existing non-iter20 issues (see below). Frontend (390x844): installer EF-1025 job detail now shows the three evidence buttons (take-photos-NC-01 'TAKE PHOTOS', record-video-NC-01 'VIDEO', gallery-upload-NC-01 'GALLERY') plus submit-evidence-NC-01 — gallery testID resolves and renders a Btn with image icon alongside the preserved Camera/Video buttons. Employee project detail NC card (expanded) renders export-note-NC-01 textarea and export-note-save-NC-01 button; filling the field, clicking save triggers PUT /ncs/{id}/export-note and shows a 'PDF note saved' toast. One video per NC behaviour, upload-progress wiring, native file picker and offline queue state machine are covered by backend tests + code review (web preview cannot drive native pickers / FileSystem upload tasks). No deployment, no emails, no account changes.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_p7_pdf_cleanup_merge.py", "issue": "9 collection errors because /tmp/p419977.pdf fixture file is not present in this environment (pre-existing environmental; file is expected to be provisioned out-of-band). Not an iter-20 regression."},
+      {"endpoint": "tests/test_iter18_submit_restore.py::TestSubmitExpect::test_e_two_concurrent_submits_one_assessment", "issue": "Flaky under -n 0: observed (400 'Add at least one photo or video', 200 'assessing') on one run — the second thread's submit raced ahead of the photo's background _process_file settling. The code path with 3-layer idempotency still prevents duplicate assessments; the race is in the test's timing, not the server. Previous iter-19 report also flagged flakiness; re-run alone usually passes."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_gallery_pdf.py",
+    "/app/test_reports/pytest/pytest_iter20.xml"
+  ],
+  "action_items": [
+    "No code fixes required for iter-20 scope. All 7 review checkpoints verified: gallery MP4+MOV upload, kind:video+non-video bytes -> 415, same client_id idempotency, cross-installer 403, gallery-photo stamp 'DATE TAKEN: NOT AVAILABLE' / 'GPS: NOT AVAILABLE (GALLERY UPLOAD)' and the '(FROM FILE, NOT VERIFIED)' variant, in-app camera stamp unchanged, Admin PDF export: ZIP has NC-xx_*.pdf + Videos/*.mp4, PDF omits APPROVED/Approved/AI/Employee/status/confidence/stamped-with/reviewer wording, PDF contains address + 'Project Reference: ' + 'NC Reference: ' + 'NON-COMPLIANCE' + original TrustMark wording + 'REMEDIATION PHOTOGRAPHS' (+ 'REMEDIATION NOTE' when set, omitted when empty), evidence_pack.readable() drops corrupt bytes, PUT /ncs/{id}/export-note employee->200 / installer->403 / >600 chars->422 / stored on project.ncs[].export_note.",
+    "Pre-existing: provision /tmp/p419977.pdf so test_p7_pdf_cleanup_merge.py setup fixtures can run (environmental, unrelated to iter-20).",
+    "Pre-existing (iter-19 known flake): consider adding a small post-upload settle (e.g., poll /files/{id}.processing=='ready' or at least a 300ms sleep) inside test_iter18_submit_restore.py::TestSubmitExpect::test_e_two_concurrent_submits_one_assessment to stabilise the race. Not an iter-20 regression."
+  ],
+  "critical_code_review_comments": [
+    "backend/media.py:28-49 stamp_lines() correctly treats gallery differently from in-app camera: for gallery, DATE line is 'NOT AVAILABLE' when captured_at is null (never falls back to datetime.now), and GPS line is ALWAYS 'NOT AVAILABLE (GALLERY UPLOAD)' regardless of lat/lng supplied by the client — defensive against clients that incorrectly stamp a gallery import with current coords. In-app-camera path unchanged.",
+    "backend/evidence_pack.py:81-154 nc_pdf() has no reference to AI/approval/status/confidence/reviewer anywhere; only inserts the four required sections and the optional REMEDIATION NOTE (lines 149-151). readable() (lines 29-38) protects the export against corrupt bytes by try/convert — verified by iter20 unit test.",
+    "backend/server.py:794-822 upload_evidence: enforces source=='gallery' only for installers; computes location_verified strictly as (source=='in_app_camera' AND lat AND lng AND accuracy_m<=50). A client passing lat/lng with source:gallery gets location_verified=false (verified by test_mp4_gallery_upload_sets_active_video). _sniff() rejects a PNG masquerading as video/mp4 — 415 verified.",
+    "backend/server.py:829-835 PUT /ncs/{nc_id}/export-note: Pydantic ExportNoteIn with max_length=600 (422 verified for 601 chars); dep=staff -> installer 403; empty-string accepted (section omitted in PDF).",
+    "frontend/src/components/NCCard.tsx:162-168 preserves the 3-button row (Camera/Video/Gallery) under one visual group; new 'Gallery' button has testID gallery-upload-NC-xx (verified in UI). captured_at from EXIF only, lat/lng forcibly null when source=gallery (lines 65-72) — client cannot accidentally claim GPS on imported media.",
+    "frontend/src/components/StaffNCCard.tsx:24-37 PUT /ncs/{nc.id}/export-note on save; multiline Field with maxLength=600 matches backend validation; save button testID export-note-save-NC-xx is only rendered when dirty — verified by UI test that typing enables the button and clicking it fires a 'PDF note saved' toast."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter20_gallery_pdf.py (NEW — 15 tests, all pass)",
+    "/app/backend/tests/test_p5_p6_p8_payments.py (TestP8EvidencePack.test_04/05 updated: removed obsolete 'INTERNALLY APPROVED' / 'Original TrustMark observation' / 'Required remedial work' / 'before'/'after' assertions, replaced with simplified-PDF assertions)"
+  ],
+  "success_rate": {
+    "backend": "iter20 file: 15/15 pass. Fixed test_p5_p6_p8_payments: 25/25 pass (1 pre-existing skip). Full suite: 281 pass + 4 skip + 1 pre-existing timing flake + 9 pre-existing fixture-missing errors (unrelated to iter-20).",
+    "frontend": "2/2 verified (installer gallery button renders alongside camera/video; employee export-note field saves and toasts). Native-only paths (file-picker, offline queue, upload-progress %) deferred to on-device build — logic reviewed and matches spec."
+  },
+  "seed_data_creation": "test_iter20_gallery_pdf.py creates one TEST-ITER20-{ts} project with 1 NC assigned to installer1; soft-deletes it in module teardown. Also uploads one PNG photo and sets a transient export_note on that project before the PDF export assertions. UI run saved a transient 'UI test remediation note' on EF-1025 NC-01 — safe to overwrite.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Primary new artefact: /app/backend/tests/test_iter20_gallery_pdf.py. Full regression file list unchanged; run with EXPO_PUBLIC_BACKEND_URL exported (test_p0_p1_upgrade.py hard-requires it in-env, no default). Baseline at -n 0 is now 281 passed / 4 skipped (iter-19 was 278/4; delta is iter20's +15 minus the 2 old PDF asserts that were split into 2 updated asserts, plus 1 restored flaky-recovery). Known pre-existing issues not caused by iter-20: (a) /tmp/p419977.pdf absence blocks test_p7_pdf_cleanup_merge.py fixtures (environmental), (b) test_iter18_submit_restore.py test_e is timing-sensitive — re-run alone if it flakes under full-suite -n 0. PDF text layer no longer contains any AI/approval/reviewer wording — any future test that greps those strings must be updated. One video per NC: a new video upload supersedes the previous (nc.active_video_id reassigned, prior file.status='superseded'). Signed export URL is relative ('/api/export/project/<pid>.zip?...') — prepend EXPO_PUBLIC_BACKEND_URL.",
+  "rca_of_issue": "N/A — all iter-20 acceptance criteria met. The 2 pre-existing issues above are not regressions."
+}

@@ -26,9 +26,17 @@ def local_time(captured_at: Optional[str], tz_offset_min: Optional[int]) -> date
 
 
 def stamp_lines(meta: dict) -> List[str]:
-    dt = local_time(meta.get("captured_at"), meta.get("tz_offset_min"))
-    l1 = dt.strftime("%d/%m/%Y | %H:%M:%S") + (f" {meta['tz']}" if meta.get("tz") else "")
-    if meta.get("lat") is not None and meta.get("lng") is not None:
+    gallery = meta.get("source") == "gallery"
+    if gallery and not meta.get("captured_at"):
+        l1 = "DATE TAKEN: NOT AVAILABLE"  # never stamp the upload time as if it were the capture time
+    else:
+        dt = local_time(meta.get("captured_at"), meta.get("tz_offset_min"))
+        l1 = dt.strftime("%d/%m/%Y | %H:%M:%S") + (f" {meta['tz']}" if meta.get("tz") and not gallery else "")
+        if gallery:
+            l1 += " (FROM FILE, NOT VERIFIED)"
+    if gallery:
+        l2 = "GPS: NOT AVAILABLE (GALLERY UPLOAD)"
+    elif meta.get("lat") is not None and meta.get("lng") is not None:
         acc = f" (±{round(meta['accuracy_m'])}m)" if meta.get("accuracy_m") is not None else ""
         l2 = f"GPS: {meta['lat']:.4f}, {meta['lng']:.4f}{acc}"
         if not meta.get("location_verified"):

@@ -51,7 +51,7 @@ export type NCItem = {
   id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
   assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null; reopen_history?: { at: string; source: string; note?: string }[];
   ai?: { outcome: string; confidence: number; feedback: string; concerns: string[]; model: string; at: string } | null;
-  review_note: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
+  review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
   text_history?: { original_text: string; replaced_at: string }[];
 };
 
