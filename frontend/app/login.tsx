@@ -53,9 +53,8 @@ export default function Login() {
   const doForgot = () =>
     run(async () => {
       const r = await api("/auth/forgot", { method: "POST", body: { email: email.trim() } });
-      setInfo(r.dev_reset_code ? `${r.message}\nDEV CODE: ${r.dev_reset_code}` : r.message);
-      if (r.dev_reset_code) setCode(r.dev_reset_code);
-      setMode("reset");
+      setInfo(`${r.message}\nOpen the link in the email to choose a new password.`);
+      setMode("login");
     });
 
   const doReset = () =>
@@ -85,14 +84,14 @@ export default function Login() {
           {info ? <Text style={s.info} testID="login-info">{info}</Text> : null}
           {err ? <ErrorBlock message={err} /> : null}
           {mode === "login" && <Btn title="Sign in" icon="log-in" onPress={doLogin} loading={busy} disabled={!email || !password} testID="login-submit-button" />}
-          {mode === "forgot" && <Btn title="Get reset code" onPress={doForgot} loading={busy} disabled={!email} testID="forgot-submit-button" />}
+          {mode === "forgot" && <Btn title="Email me a reset link" onPress={doForgot} loading={busy} disabled={!email} testID="forgot-submit-button" />}
           {mode === "reset" && <Btn title="Set password" onPress={doReset} loading={busy} disabled={!code || password.length < 8} testID="reset-submit-button" />}
 
           <View style={s.links}>
             {mode === "login" ? (
               <>
                 <Pressable onPress={() => { setMode("forgot"); setInfo(""); }} testID="forgot-password-link" hitSlop={8}><Text style={s.link}>Forgot password?</Text></Pressable>
-                <Pressable onPress={() => { setMode("reset"); setInfo(""); }} testID="have-code-link" hitSlop={8}><Text style={s.link}>Have a code?</Text></Pressable>
+                <Pressable onPress={() => { setMode("reset"); setInfo(""); }} testID="have-code-link" hitSlop={8}><Text style={s.link}>Have a setup code?</Text></Pressable>
               </>
             ) : (
               <Pressable onPress={() => setMode("login")} testID="back-to-login-link" hitSlop={8}><Text style={s.link}>Back to sign in</Text></Pressable>

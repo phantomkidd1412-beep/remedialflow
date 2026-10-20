@@ -245,7 +245,7 @@ class TestP3Escalation:
         assert r.status_code == 200
         # Wait for AI assessment
         final = None
-        for _ in range(45):
+        for _ in range(90):  # AI latency varies under parallel load; 180s budget
             time.sleep(2)
             d = requests.get(f"{API}/projects/{STATE['esc_pid']}",
                              headers=_hdr(tokens["admin"]), timeout=15).json()
@@ -349,7 +349,7 @@ class TestP3AIAutoApproval:
         STATE["lowrisk_nc"] = nc
 
         final = None
-        for _ in range(45):
+        for _ in range(90):  # AI latency varies under parallel load; 180s budget
             time.sleep(2)
             d = requests.get(f"{API}/projects/{pid}", headers=_hdr(tokens["admin"]), timeout=15).json()
             if d["ncs"][0]["status"] != "assessing":

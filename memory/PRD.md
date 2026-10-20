@@ -58,3 +58,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Offline project cache src/offlineCache.ts: per-user, only data previously loaded online (job list page 1 + project detail); 403/404 drops the cached copy; cleared on logout. Tokens remain in SecureStore.
 - Backend unchanged: get_nc enforces current assignment (403) and deleted project (404); approved NC upload 409; discard only drafts; evidence hide/restore/discard audited.
 - P11 fix: app/_layout.tsx setDefaultOptions now carries networkMode 'offlineFirst' + retry skipping offline/4xx (previously it overrode query-client defaults, pausing queries offline). Verified iteration 14.
+
+## P12 Production security (implemented, awaiting approval; NOT deployed)
+- backend/security.py: Mongo rate limiter (forgot 3/15min per email+IP, 20/h per IP; reset 10/15min per IP; 30 failed logins/IP/15min + existing 8/email), security headers, log redaction of tokens/sig/passwords, check_production_config (APP_ENV=production refuses DEMO_SEED, weak JWT_SECRET, non-https APP_PUBLIC_URL, CORS *). Docs/openapi disabled in production.
+- Reset: emailed single-use link (Emergent managed Resend, backend/emailer.py w/ guardrail gate), atomic claim, all other tokens superseded, sessions revoked; generic response; frontend app/reset.tsx; admin setup codes still work.
+- bootstrap_admin.py (one-time CLI, secret + db.system marker), disable_demo_accounts.py (deactivate only, owner approval). Demo logins refused in production.
+- Uploads: magic-byte type validation (jpg/png/heic/webp, mp4/mov), server-chosen extension. notify() skips inactive users.
+- Runbook: memory/DEPLOYMENT.md.

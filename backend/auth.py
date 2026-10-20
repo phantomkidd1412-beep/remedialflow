@@ -1,17 +1,24 @@
 """JWT access tokens (short-lived) + rotating refresh tokens with server-side sessions."""
 import os
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
+from html import escape
 from typing import Optional
 
 import jwt
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pwdlib import PasswordHash
 from pydantic import BaseModel, EmailStr, Field
 
 from core import db, User, SECRET, now_iso, oid, audit
+from emailer import send_email
+from security import DEMO_EMAILS, PRODUCTION, rate_limit
+
+log = logging.getLogger("auth")
+NO_SEND_DOMAINS = {"example.com", "example.org", "example.net", "test.com", "test.local"}
 
 ph = PasswordHash.recommended()
 ACCESS_MIN = int(os.environ.get("ACCESS_TOKEN_MINUTES", "15"))
@@ -89,8 +96,8 @@ class RefreshIn(BaseModel):
 
 
 class ResetIn(BaseModel):
-    token: str
-    password: str = Field(min_length=8)
+    token: str = Field(min_length=8, max_length=256)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class ForgotIn(BaseModel):
@@ -110,12 +117,16 @@ async def _attempts(email: str) -> int:
 @router.post("/login")
 async def login(body: LoginIn, req: Request, resp: Response):
     email = body.email.lower()
+    await rate_limit(req, "login-fail-ip", "", 30, 900, check_only=True)  # 30 failed logins per IP / 15 min
     if await _attempts(email) >= 8:
         raise HTTPException(429, "Too many attempts. Try again in 15 minutes.")
     u = User.from_mongo(await db.users.find_one({"email": email}))
     ok = ph.verify(body.password, u.password_hash) if u and u.password_hash else ph.verify(body.password, DUMMY) and False
+    if PRODUCTION and email in DEMO_EMAILS:
+        ok = False  # demo accounts never work in production
     if not u or not ok:
         await db.login_attempts.insert_one({"email": email, "at": now_iso()})
+        await rate_limit(req, "login-fail-ip", "", 10**9, 900)  # count the failure
         raise HTTPException(401, "Incorrect email or password")
     if not u.active:
         raise HTTPException(403, "Account deactivated")
@@ -169,33 +180,68 @@ async def create_reset_token(user_id: str, hours: int = 24) -> str:
 
 
 @router.post("/forgot")
-async def forgot(body: ForgotIn):
-    u = User.from_mongo(await db.users.find_one({"email": body.email.lower()}))
-    out = {"message": "If the account exists, a reset code has been issued. Contact your administrator if you do not receive it."}
-    if u and u.active:
-        code = await create_reset_token(u.id, hours=1)
+async def forgot(body: ForgotIn, req: Request, bg: BackgroundTasks):
+    """Always the same answer (no account enumeration). Emails a single-use link valid RESET_LINK_MINUTES."""
+    email = body.email.lower()
+    await rate_limit(req, "forgot", email, 3, 900)
+    await rate_limit(req, "forgot-ip", "", 20, 3600)
+    u = User.from_mongo(await db.users.find_one({"email": email}))
+    out = {"message": "If an account exists for that email, we've sent a password reset link. It expires in 30 minutes."}
+    base = os.environ.get("APP_PUBLIC_URL", "").rstrip("/")
+    if u and u.active and not (PRODUCTION and email in DEMO_EMAILS):
+        if email.endswith("@remedialflow.dev") or email.split("@")[-1] in NO_SEND_DOMAINS:
+            return out  # demo/test addresses: never send real email (no cost, no bounces)
+        if not base.startswith("https://"):
+            log.warning("APP_PUBLIC_URL not configured: reset email not sent")
+            return out
+        raw = secrets.token_urlsafe(32)
+        mins = int(os.environ.get("RESET_LINK_MINUTES", "30"))
+        await db.reset_tokens.insert_one({"user_id": u.id, "token_hash": h(raw), "used": False, "kind": "link",
+                                          "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=mins)).isoformat()})
         await audit("auth.reset_requested", u.id, f"user:{u.id}")
-        # No email provider configured yet: expose the code only when explicitly enabled for local dev.
-        if os.environ.get("EXPOSE_RESET_CODES") == "true":
-            out["dev_reset_code"] = code
+        bg.add_task(_send_reset, u.email, u.name, f"{base}/reset?token={raw}", mins)
     return out
 
 
+async def _send_reset(to: str, name: str, link: str, mins: int):
+    brand = escape(os.environ.get("EMAIL_FROM_NAME", "RemedialFlow"))
+    html = (f'<table role="presentation" width="100%"><tr><td style="padding:24px;font-family:Arial,sans-serif;color:#111">'
+            f'<p>Hi {escape(name)},</p><p>We received a request to reset your {brand} password.</p>'
+            f'<p><a href="{escape(link)}" style="display:inline-block;background:#FF6B00;color:#000;padding:12px 20px;'
+            f'text-decoration:none;font-weight:bold">Reset password</a></p>'
+            f'<p>This link works once and expires in {mins} minutes. If you did not ask for this, ignore this email; your password stays the same.</p>'
+            f'<p style="font-size:12px;color:#888">Sent by {brand}. We never ask for your password by email.</p></td></tr></table>')
+    try:
+        await send_email(to=to, subject=f"Reset your {brand} password", html=html)
+    except Exception:
+        log.warning("reset email not delivered")  # no recipient/link in logs
+
+
 @router.post("/reset")
-async def reset(body: ResetIn):
-    t = await db.reset_tokens.find_one({"token_hash": h(body.token.strip().upper()), "used": False})
-    if not t or t["expires_at"] < now_iso():
-        raise HTTPException(400, "Invalid or expired reset code")
-    await db.reset_tokens.update_one({"_id": t["_id"]}, {"$set": {"used": True}})
+async def reset(body: ResetIn, req: Request):
+    await rate_limit(req, "reset", "", 10, 900)
+    raw = body.token.strip()
+    now = now_iso()
+    # single use: claim atomically before changing the password (emailed link token, or admin-issued setup code)
+    t = None
+    for cand in {raw, raw.upper()}:
+        t = await db.reset_tokens.find_one_and_update({"token_hash": h(cand), "used": False, "expires_at": {"$gt": now}},
+                                                      {"$set": {"used": True, "used_at": now}})
+        if t:
+            break
+    if not t:
+        raise HTTPException(400, "This reset link or code is invalid, expired or already used")
     await db.users.update_one({"_id": oid(t["user_id"])},
                               {"$set": {"password_hash": ph.hash(body.password)}, "$inc": {"token_version": 1}})
+    await db.reset_tokens.update_many({"user_id": t["user_id"], "used": False}, {"$set": {"used": True, "superseded": True}})
     await revoke_all(t["user_id"])
     await audit("auth.password_reset", t["user_id"], f"user:{t['user_id']}")
     return {"ok": True}
 
 
 @router.post("/change-password")
-async def change_password(body: ChangeIn, u: User = Depends(current_user)):
+async def change_password(body: ChangeIn, req: Request, u: User = Depends(current_user)):
+    await rate_limit(req, "change-pw", u.id, 10, 900)
     if not ph.verify(body.current_password, u.password_hash):
         raise HTTPException(400, "Current password is incorrect")
     await db.users.update_one({"_id": oid(u.id)}, {"$set": {"password_hash": ph.hash(body.new_password)}})

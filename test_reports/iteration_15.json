@@ -1,0 +1,39 @@
+{
+  "summary": "Phase 12 production security & launch-readiness tests. New file /app/backend/tests/test_p12_security.py (16 tests) all GREEN against the live preview URL: emailed-link reset flow (admin creates user -> forgot returns identical generic text for known & unknown emails with no token in response -> link token inserted directly into db.reset_tokens -> /auth/reset 200 -> old password 401, new 200, old access token 401, reuse 400, expired 400, admin setup code one-shot case-insensitive works then 400 on reuse); rate limits (4th /auth/forgot same email -> 429; 9th wrong-password login same email -> 429; 10 successful admin logins all 200, confirming successes are NOT rate-limited); bootstrap_admin.py CLI (wrong secret refused, demo email refused with marker absent, success prints 'Admin ready', second run refused with 'already completed', short password refused); production config guard (APP_ENV=production + DEMO_SEED=true import raises 'Unsafe production configuration'; safe prod env imports and app.docs_url is None); permissions bypass (employee -> /admin/users, /admin/activity, /admin/deleted-projects, /admin/payments all 403; employee PATCH own role via /admin/users/{id} -> 403; employee PUT /projects/{pid}/rates/{iid} -> 403; installer -> /admin/users, /admin/activity, /review-queue, /review-groups -> 403; no-auth -> 401/403); upload magic-byte validation (text bytes named x.jpg -> 415, real JPEG -> 200); security headers on /api (X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security present with max-age); disabled account (PATCH active=false -> access token immediately 401, refresh 401, assigning NC produces zero new notifications for that user). Full regression `pytest tests/` ran 214 passed + 4 skipped + 2 flakes (TestDashboardProjects::test_dashboard_counts and test_projects_search_and_filter both ConnectTimeout to preview URL — re-run in isolation: 3/3 pass; same known flake E1 described). Frontend (390x844): forgot link -> info text matches generic 'If an account exists...' copy; /reset?token=<valid raw> shows reset-password-input + reset-password-confirm; mismatch surfaces 'Passwords do not match'; success surfaces reset-done; reused same token surfaces 'invalid, expired or already used'; /reset with no token surfaces 'This reset link is incomplete'. Cleanup performed: db.system admin_bootstrap marker deleted (confirmed absent); any test-owner-* and test-fe-* users deactivated/removed; db.rate_limits and bootstrap-related login_attempts cleared.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p12_security.py",
+    "/app/test_reports/pytest/pytest_p12.xml",
+    "/app/test_reports/pytest/pytest_full_regression_iter15.xml"
+  ],
+  "action_items": [
+    "No functional action items from this iteration — all 16 P12 security tests pass, full regression matches E1's expected baseline (214 pass + 4 skip, 2 flakes that pass in isolation).",
+    "(Hygiene only, optional) The 2 flakes are the long-standing ConnectTimeout to the preview URL during big-list fetches (TestDashboardProjects). Consider marking them with pytest.mark.flaky(reruns=1) in tests/test_backend.py so the full-suite report stays green under preview-URL congestion."
+  ],
+  "critical_code_review_comments": [
+    "auth.py:120 uses `rate_limit(..., check_only=True)` before verifying the password AND then `rate_limit(..., 10**9, 900)` to only count the failure after an invalid attempt — this correctly keeps successful logins out of the IP failure bucket. Verified behaviourally with 10 consecutive successful admin logins.",
+    "auth.py:189 /auth/forgot returns the SAME dict for known and unknown emails and never includes a token/reset_code (confirmed in tests). The only side-effect visible to the client is the HTTP 429 after the 3rd attempt (ip+email bucket), which is a design choice; the 429 message itself is still generic.",
+    "auth.py:224 /auth/reset: for cand in {raw, raw.upper()} — this correctly accepts both the user-typed case-insensitive setup code (admin issues all-upper code) AND the url-safe link token (treated as-is). Verified by sending the admin setup code in lower-case and getting 200.",
+    "security.py:21 rate_limit uses a Mongo-backed sliding-ish window and keeps the identifier hashed with the client IP; no raw identifier is stored (good for enumeration resistance).",
+    "bootstrap_admin.py:38 claims the marker BEFORE creating/updating the user via insert_one with fixed _id='admin_bootstrap' — this is the right order: concurrent races cannot both succeed, and a crash after the insert still leaves the slot consumed.",
+    "server.py:109 notify() short-circuits on `active:true` lookup — confirmed: assigning an NC to a just-deactivated installer wrote zero rows to db.notifications."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_p12_security.py (new, 16 tests)"
+  ],
+  "success_rate": {
+    "backend": "16/16 (100%) new P12 tests; full regression 214 passed + 4 skipped + 2 known flakes (both pass in isolation) over 232 total",
+    "frontend": "6/6 reset-flow scenarios green at 390x844 (forgot info text, /reset inputs visible, mismatch error, reset-done, reuse error, no-token error)"
+  },
+  "seed_data_creation": "Transient only (deleted at end). Test users with prefixes test-p12-*, test-rl-*, test-lrl-*, test-dis-*, test-fe-*, test-owner-* were created and cleaned up. db.system admin_bootstrap marker was created by the bootstrap CLI test and DELETED at the end — CONFIRMED absent (marker: None). The test-owner-*@example.com user created during bootstrap testing was deactivated so the real owner can bootstrap later.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 12 is complete and verified end-to-end. db.system admin_bootstrap marker is intentionally absent (verified). test-owner-*@example.com users are deactivated (not deleted) so audit trail persists; real owner bootstrap on prod will create a fresh user. demo accounts in /app/memory/test_credentials.md are untouched and still work for login in APP_ENV=development. The two existing dashboard flakes (TestDashboardProjects::test_dashboard_counts / test_projects_search_and_filter) only reproduce under heavy preview-URL congestion; they pass in isolation and are unrelated to P12.",
+  "rca_of_issue": "N/A — no bugs found. Full P12 feature set is working as designed. The only concern is a long-standing network flake on the preview URL (ConnectTimeout) during full-suite runs, which is infrastructure-side and already acknowledged by E1."
+}

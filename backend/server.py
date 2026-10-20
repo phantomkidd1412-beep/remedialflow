@@ -23,10 +23,16 @@ from media import process_photo, video_frames, demo_trustmark_image, pdf_text_an
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
+from security import PRODUCTION, check_production_config, install_log_redaction, security_headers
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 log = logging.getLogger("server")
+install_log_redaction()
+check_production_config()
 
-app = FastAPI(title="RemedialFlow")
+# API docs / schema are development-only
+app = FastAPI(title="RemedialFlow", docs_url=None if PRODUCTION else "/docs", redoc_url=None, openapi_url=None if PRODUCTION else "/openapi.json")
+app.middleware("http")(security_headers)
 api = APIRouter(prefix="/api")
 staff = require("admin", "employee")
 admin = require("admin")
@@ -104,6 +110,8 @@ async def notify(user_id: Optional[str], kind: str, title: str, body: str, proje
     """In-app notification; an unread one with the same key is refreshed instead of duplicated."""
     if not user_id:
         return
+    if not await db.users.find_one({"_id": oid(user_id), "active": True}, {"_id": 1}):
+        return  # disabled accounts receive nothing new
     if project_id and await db.projects.find_one({"_id": oid(project_id), "deleted": {"$ne": None}}, {"_id": 1}):
         return  # deleted projects never notify
     key = f"{kind}:{project_id}:{nc_id or ''}"
@@ -706,6 +714,21 @@ async def _process_file(fid: str, data: bytes, meta: Optional[dict]):
         await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"processing": "failed", "processing_error": str(e)[:200]}})
 
 
+def _sniff(b: bytes) -> Optional[str]:
+    if b[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    if b[4:8] == b"ftyp":
+        brand = b[8:12]
+        if brand in (b"heic", b"heix", b"mif1", b"msf1", b"heis", b"hevc"):
+            return "heic"
+        return "mov" if brand == b"qt  " else "mp4"
+    return None
+
+
 async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict, kind: str, source: str,
                        submission_id: Optional[str], bg: BackgroundTasks) -> EvidenceFile:
     data = await file.read()
@@ -713,9 +736,14 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
         raise HTTPException(400, "Empty file")
     if len(data) > MAX_UPLOAD:
         raise HTTPException(413, "File too large")
+    # validate the real file type from its bytes (client content-type/filename are not trusted)
+    sniff = _sniff(data)
+    allowed = {"video": {"mp4", "mov"}, "photo": {"jpg", "png", "heic", "webp"}, "trustmark": {"jpg", "png", "heic", "webp"}}.get(kind, {"jpg", "png"})
+    if sniff not in allowed:
+        raise HTTPException(415, "Unsupported file type")
     fid = ObjectId()
-    mime = file.content_type or ("video/mp4" if kind == "video" else "image/jpeg")
-    ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else ("mp4" if kind == "video" else "jpg")
+    mime = {"jpg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp", "mp4": "video/mp4", "mov": "video/quicktime"}[sniff]
+    ext = sniff  # server-chosen extension: no user-controlled path parts
     sha = hashlib.sha256(data).hexdigest()
     path = await storage.aput(evidence_path(p.id, nc.id, submission_id or "reference", str(fid), "original", ext), data, mime)
     lat, lng, acc = meta.get("lat"), meta.get("lng"), meta.get("accuracy_m")
@@ -1252,6 +1280,7 @@ async def startup():
     await db.projects.create_index("status")
     await db.audit.create_index("seq", unique=True)
     await db.audit.create_index("target")
+    await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     from migrations import run_migrations
     await run_migrations()
     if os.environ.get("DEMO_SEED") == "true":
