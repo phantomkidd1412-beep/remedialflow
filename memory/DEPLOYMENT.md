@@ -52,3 +52,17 @@ Mobile builds never show demo shortcuts (`__DEV__` only).
 - Gemini 3 Flash AI assessments + PDF imports (per call).
 - Transactional email (per recipient; reset links only).
 - Object storage + hosting per the Emergent plan. Apple developer account (USD 99/yr) and Google Play (one-off USD 25) if publishing to stores.
+
+## 8. Push notifications (pending)
+- Provide `frontend/google-services.json` (package `com.emergent.fieldevidenceapp.pnhb44`) and add `"googleServicesFile": "./google-services.json"` to app.json android section.
+- At build time supply APNs auth key (.p8) and Google service account JSON. EMERGENT_PUSH_KEY is set by the deployment pipeline (never edit).
+- Push works only in real builds (not Expo Go / web). Cost: per recipient per push (Emergent credits).
+
+## 9. Approved-later test: real reset email
+- Needs your recipient address + approval. Steps: create/choose a user with that email, POST /api/auth/forgot, open link, set password. One email ≈ one recipient unit of credits.
+
+## 10. Execution order on production (do not run without approval)
+1. Back up DB (mongodump). 2. Set production env (section 1) incl. ADMIN_BOOTSTRAP_SECRET.
+3. `python bootstrap_admin.py owner@… "Owner"` → verify login. 4. Remove ADMIN_BOOTSTRAP_SECRET.
+5. `python disable_demo_accounts.py --yes` (refuses unless a real admin exists; deactivates, never deletes, revokes sessions).
+6. Verify demo logins fail and Activity Log shows system.admin_bootstrapped + user.demo_disabled.

@@ -27,7 +27,8 @@
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION"
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -71,6 +72,12 @@
         "expo-image-picker",
         {
           "photosPermission": "Attach existing photos as evidence"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#FF6B00"
         }
       ]
     ],

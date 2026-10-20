@@ -188,7 +188,7 @@ async def tracker_export_link(fmt: str = "csv", view: str = "completed", range: 
         raise HTTPException(400, "fmt must be csv or xlsx")
     qs = _canon({"fmt": fmt, "view": view, "range": range, "anchor": anchor, "start": start, "end": end, "search": search, "sort": sort})
     await tracker_rows(view, range, anchor, start, end, search, sort)  # validate params now
-    return {"url": f"/api/tracker/export?{qs}&{signed_query('tracker:' + qs, 1)}"}
+    return {"url": f"/api/tracker/export?{qs}&{signed_query('tracker:' + qs, 10, stable=False)}"}
 
 
 HEAD = ["Project ref", "Address", "Installer(s)", "Total NCs", "Approved NCs", "Completed", "TrustMark resolved", "Status", "Reopened", "Days outstanding"]
@@ -198,6 +198,12 @@ def _d(v):
     return v[:10] if v else ""
 
 
+def _safe(v):
+    """Neutralise spreadsheet formula injection: text starting with = + - @ | tab/CR is stored as literal text."""
+    s = str(v or "")
+    return "'" + s if s[:1] in ("=", "+", "-", "@", "|", "\t", "\r") else s
+
+
 @router.get("/tracker/export")
 async def tracker_export(exp: int, sig: str, fmt: str = "csv", view: str = "completed", range: str = "week", anchor: Optional[str] = None,
                          start: Optional[str] = None, end: Optional[str] = None, search: str = "", sort: str = "newest"):
@@ -205,8 +211,8 @@ async def tracker_export(exp: int, sig: str, fmt: str = "csv", view: str = "comp
     if not verify_signed("tracker:" + qs, exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     rows, _, _ = await tracker_rows(view, range, anchor, start, end, search, sort)
-    data = [[r["ref"], r["address"], ", ".join(r["installers"]), r["nc_total"], r["nc_done"], _d(r["completed_at"]), _d(r["resolved_at"]),
-             (r["status"] or "").replace("_", " "), "Yes" if r["reopened"] else "", r["days_outstanding"]] for r in rows]
+    data = [[_safe(r["ref"]), _safe(r["address"]), _safe(", ".join(r["installers"])), r["nc_total"], r["nc_done"], _d(r["completed_at"]),
+             _d(r["resolved_at"]), (r["status"] or "").replace("_", " "), "Yes" if r["reopened"] else "", r["days_outstanding"]] for r in rows]
     name = f"work-tracker-{view}-{datetime.now(timezone.utc).date().isoformat()}"
     if fmt == "xlsx":
         from openpyxl import Workbook

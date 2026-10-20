@@ -15,7 +15,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from core import db, User, SECRET, now_iso, oid, audit
 from emailer import send_email
-from security import DEMO_EMAILS, PRODUCTION, rate_limit
+from security import DEMO_EMAILS, PRODUCTION, origin_allowed, rate_limit
 
 log = logging.getLogger("auth")
 NO_SEND_DOMAINS = {"example.com", "example.org", "example.net", "test.com", "test.local"}
@@ -76,10 +76,23 @@ def require(*roles):
     return dep
 
 
+def cookie_session(req: Request) -> Optional[str]:
+    """CSRF guard for the only cookie-authenticated endpoints (web refresh/logout).
+    Requires the custom X-Client: web header (forces a CORS preflight cross-site) AND, when the browser sends one,
+    an Origin on the allowlist. SameSite=Strict on the cookie is the third layer. Native apps send the refresh
+    token in the body and never use the cookie, so they are unaffected. All other APIs use Bearer tokens."""
+    raw = req.cookies.get(COOKIE)
+    if not raw:
+        return None
+    if req.headers.get("x-client") != "web" or not origin_allowed(req.headers.get("origin")):
+        raise HTTPException(403, "Request blocked (CSRF protection)")
+    return raw
+
+
 def token_payload(resp: Response, req: Request, u: User, refresh: str) -> dict:
     out = {"access_token": access_token(u), "user": u.public(), "expires_in": ACCESS_MIN * 60}
     if req.headers.get("x-client") == "web":
-        resp.set_cookie(COOKIE, refresh, httponly=True, secure=True, samesite="lax",
+        resp.set_cookie(COOKIE, refresh, httponly=True, secure=True, samesite="strict",
                         max_age=REFRESH_DAYS * 86400, path="/api/auth")
     else:
         out["refresh_token"] = refresh
@@ -138,7 +151,7 @@ async def login(body: LoginIn, req: Request, resp: Response):
 
 @router.post("/refresh")
 async def refresh(body: RefreshIn, req: Request, resp: Response):
-    raw = body.refresh_token or req.cookies.get(COOKIE)
+    raw = body.refresh_token or cookie_session(req)
     if not raw:
         raise HTTPException(401, "No session")
     s = await db.sessions.find_one({"refresh_hash": h(raw)})
@@ -160,7 +173,7 @@ async def refresh(body: RefreshIn, req: Request, resp: Response):
 
 @router.post("/logout")
 async def logout(body: RefreshIn, req: Request, resp: Response):
-    raw = body.refresh_token or req.cookies.get(COOKIE)
+    raw = body.refresh_token or cookie_session(req)
     if raw:
         await db.sessions.update_one({"refresh_hash": h(raw)}, {"$set": {"revoked": True}})
     resp.delete_cookie(COOKIE, path="/api/auth")
@@ -173,7 +186,8 @@ async def me(u: User = Depends(current_user)):
 
 
 async def create_reset_token(user_id: str, hours: int = 24) -> str:
-    raw = secrets.token_urlsafe(9).replace("-", "x").replace("_", "y")[:12].upper()
+    # 16 chars from a 31-symbol unambiguous alphabet (~79 bits); uppercase-only so codes stay easy to type.
+    raw = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(16))
     await db.reset_tokens.insert_one({"user_id": user_id, "token_hash": h(raw), "used": False,
                                       "expires_at": (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()})
     return raw
@@ -240,10 +254,13 @@ async def reset(body: ResetIn, req: Request):
 
 
 @router.post("/change-password")
-async def change_password(body: ChangeIn, req: Request, u: User = Depends(current_user)):
+async def change_password(body: ChangeIn, req: Request, resp: Response, u: User = Depends(current_user)):
     await rate_limit(req, "change-pw", u.id, 10, 900)
     if not ph.verify(body.current_password, u.password_hash):
         raise HTTPException(400, "Current password is incorrect")
-    await db.users.update_one({"_id": oid(u.id)}, {"$set": {"password_hash": ph.hash(body.new_password)}})
+    # evict every existing session (incl. a stolen one), then keep THIS device signed in with a fresh session
+    await db.users.update_one({"_id": oid(u.id)}, {"$set": {"password_hash": ph.hash(body.new_password)}, "$inc": {"token_version": 1}})
+    await revoke_all(u.id)
     await audit("auth.password_changed", u.id, f"user:{u.id}")
-    return {"ok": True}
+    fresh = User.from_mongo(await db.users.find_one({"_id": oid(u.id)}))
+    return {"ok": True, **token_payload(resp, req, fresh, await new_session(fresh))}

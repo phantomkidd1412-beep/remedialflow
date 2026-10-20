@@ -185,14 +185,19 @@ async def get_settings() -> Settings:
 
 
 # ---------- Signed temporary URLs ----------
+# Dedicated URL-signing key (separate from JWT signing). Falls back to a key derived from JWT_SECRET (domain-separated).
+URL_SIGNING_KEY = os.environ.get("URL_SIGNING_SECRET") or hmac.new(SECRET.encode(), b"remedialflow-url-signing-v1", hashlib.sha256).hexdigest()
+
+
 def sign(payload: str) -> str:
-    return hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()[:40]
+    return hmac.new(URL_SIGNING_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()[:40]
 
 
-def signed_query(payload: str, ttl_hours: int = 2) -> str:
-    # Rounded to the hour so URLs stay stable (cache-friendly) within a window.
+def signed_query(payload: str, ttl_minutes: int = 60, stable: bool = True) -> str:
+    # stable=True: expiry rounded to a 15-min bucket so image URLs stay cache-friendly (valid 60-75 min).
+    # stable=False: exact short expiry for one-off downloads (exports/reports).
     now = int(datetime.now(timezone.utc).timestamp())
-    exp = (now // 3600 + ttl_hours) * 3600
+    exp = ((now // 900) * 900 + 900 if stable else now) + ttl_minutes * 60
     return f"exp={exp}&sig={sign(f'{payload}:{exp}')}"
 
 

@@ -4,7 +4,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useAuth } from "@/src/auth";
-import { api } from "@/src/api";
+import { changePassword } from "@/src/api";
 import { useQueue } from "@/src/queue";
 import { usesNativeTabs } from "@/src/navigation";
 import { Btn, ErrorBlock, Feather, Field, IconName, Label, Sheet, useToast } from "@/src/ui";
@@ -41,7 +41,7 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
     setBusy(true);
     setErr("");
     try {
-      await api("/auth/change-password", { method: "POST", body: { current_password: cur, new_password: nw } });
+      await changePassword(cur, nw);
       setPw(false);
       setCur("");
       setNw("");

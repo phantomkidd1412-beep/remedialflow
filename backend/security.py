@@ -39,12 +39,25 @@ async def rate_limit(req: Request, bucket: str, ident: str, limit: int, seconds:
         raise HTTPException(429, "Too many attempts. Please try again later.", headers={"Retry-After": str(seconds)})
 
 
+def origin_allowed(origin: str | None) -> bool:
+    """None = same-origin/non-browser request (browsers always send Origin on cross-site POSTs)."""
+    if not origin:
+        return True
+    allowed = {o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()}
+    if os.environ.get("APP_PUBLIC_URL"):
+        allowed.add(os.environ["APP_PUBLIC_URL"].rstrip("/"))
+    rx = os.environ.get("CORS_ORIGIN_REGEX")
+    return origin.rstrip("/") in allowed or bool(rx and re.fullmatch(rx, origin))
+
+
 SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Cache-Control": "no-store",
+    # API never serves pages: block scripts/framing for anything returned (incl. stored PDFs/images).
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; sandbox",
 }
 
 

@@ -9,6 +9,7 @@ import logging
 from typing import Optional, List
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -115,10 +116,21 @@ async def notify(user_id: Optional[str], kind: str, title: str, body: str, proje
     if project_id and await db.projects.find_one({"_id": oid(project_id), "deleted": {"$ne": None}}, {"_id": 1}):
         return  # deleted projects never notify
     key = f"{kind}:{project_id}:{nc_id or ''}"
-    await db.notifications.update_one(
+    res = await db.notifications.update_one(
         {"user_id": user_id, "key": key, "read": False},
         {"$set": {"kind": kind, "title": title, "body": body, "project_id": project_id, "nc_id": nc_id, "created_at": now_iso()},
          "$setOnInsert": {"user_id": user_id, "key": key, "read": False}}, upsert=True)
+    if res.upserted_id:  # only a NEW unread notification pushes (refreshes of an unread one stay silent)
+        from push import push_for
+        asyncio.create_task(push_for(user_id, kind, f"{key}:{res.upserted_id}"))
+
+
+async def notify_reviewers(nc_id: str):
+    """Employees get one (deduplicated) review alert per project while unread."""
+    nc = await db.ncs.find_one({"_id": oid(nc_id)}, {"project_id": 1, "number": 1})
+    p = await db.projects.find_one({"_id": oid(nc["project_id"])}, {"ref": 1})
+    async for e in db.users.find({"role": "employee", "active": True}, {"_id": 1}):
+        await notify(str(e["_id"]), "review_needed", f"Review needed: {p['ref']}", f"{p['ref']} · {nc['number']} is waiting for review", nc["project_id"])
 
 
 async def nc_notify(nc: dict, user_id: Optional[str], kind: str, title: str, extra: str = ""):
@@ -160,8 +172,11 @@ async def settle_earnings(pid: str):
         if await db.earnings.find_one({"project_id": pid, "installer_id": iid}):
             continue
         amount = await agreed_rate(pid, iid)
-        await db.earnings.insert_one({"installer_id": iid, "project_id": pid, "ref": p["ref"], "address": p["address"],
-                                      "amount": amount, "currency": s.currency, "status": "earned", "earned_at": now_iso(), "paid_at": None})
+        try:  # unique index on (project_id, installer_id) makes concurrent approvals idempotent
+            await db.earnings.insert_one({"installer_id": iid, "project_id": pid, "ref": p["ref"], "address": p["address"],
+                                          "amount": amount, "currency": s.currency, "status": "earned", "earned_at": now_iso(), "paid_at": None})
+        except DuplicateKeyError:
+            continue
         await audit("earning.created", None, f"project:{pid}", {"installer_id": iid, "amount": amount})
 
 
@@ -675,16 +690,19 @@ async def report_link(pid: str, u: User = Depends(staff)):
     p = await db.projects.find_one({"_id": oid(pid), "deleted": None}, {"source_report": 1})
     if not p or not p.get("source_report"):
         raise HTTPException(404, "No source report")
-    return {"url": f"/api/reports/{pid}?{signed_query(f'report:{pid}', 1)}"}
+    return {"url": f"/api/reports/{pid}?{signed_query(f'report:{pid}', 10, stable=False)}"}
 
 
 @api.get("/reports/{pid}")
 async def serve_report(pid: str, exp: int, sig: str):
     if not verify_signed(f"report:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
-    p = await db.projects.find_one({"_id": oid(pid)}, {"source_report": 1})
+    p = await db.projects.find_one({"_id": oid(pid)}, {"source_report": 1, "deleted": 1})
+    if not p or p.get("deleted") or not p.get("source_report"):
+        raise HTTPException(404, "Report not found")
     data, _ = await storage.aget(p["source_report"]["path"])
-    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{p["source_report"].get("filename") or "report.pdf"}"'})
+    fname = re.sub(r'[^A-Za-z0-9._ -]', "_", p["source_report"].get("filename") or "report.pdf")
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @api.get("/projects/{pid}/audit")
@@ -810,7 +828,9 @@ async def discard_evidence(fid: str, u: User = Depends(current_user)):
     f = EvidenceFile.from_mongo(await db.files.find_one({"_id": oid(fid)}))
     if not f or f.status != "draft":
         raise HTTPException(400, "Only unsubmitted drafts can be removed")
-    await get_project(f.project_id, u)
+    await get_nc(f.nc_id, u)  # NC-level: installers may only touch drafts on their own NC
+    if u.role == "installer" and f.uploaded_by != u.id:
+        raise HTTPException(403, "You can only remove your own drafts")
     # Soft-remove from the submission; the original object and audit record are retained.
     await db.files.update_one({"_id": oid(fid)}, {"$set": {"status": "discarded"}})
     if f.kind == "video":
@@ -890,6 +910,8 @@ async def run_assessment(nc_id: str, sub_id: str):
         ai.concerns = ai.concerns + reasons + flags
         extra = {"approved_by": "ai", "approved_at": now_iso()} if status == "approved" else {}
         await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso(), **extra}})
+        if status == "employee_review":
+            await notify_reviewers(nc_id)
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
         await recompute_project(nc.project_id)
     except Exception:
@@ -1124,9 +1146,11 @@ async def mark_paid(eid: str, u: User = Depends(admin)):
 async def serve_file(fid: str, variant: str, exp: int, sig: str):
     if not verify_signed(f"{fid}:{variant}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
-    f = await db.files.find_one({"_id": oid(fid)}, {"paths": 1, "mime": 1})
+    f = await db.files.find_one({"_id": oid(fid)}, {"paths": 1, "mime": 1, "project_id": 1})
     if not f or variant not in f.get("paths", {}):
         raise HTTPException(404, "Not found")
+    if f.get("project_id") and await db.projects.find_one({"_id": oid(f["project_id"]), "deleted": True}, {"_id": 1}):
+        raise HTTPException(404, "Not found")  # links stop working as soon as a project is deleted
     data, ct = await storage.aget(f["paths"][variant])
     if variant == "original":
         ct = f.get("mime") or ct
@@ -1138,10 +1162,10 @@ async def serve_file(fid: str, variant: str, exp: int, sig: str):
 async def export_link(project_id: Optional[str] = None, u: User = Depends(staff)):
     if project_id:
         await live_project(project_id)
-        return {"url": f"/api/export/project/{project_id}.zip?{signed_query(f'export:{project_id}', 1)}"}
+        return {"url": f"/api/export/project/{project_id}.zip?{signed_query(f'export:{project_id}', 10, stable=False)}"}
     if u.role != "admin":
         raise HTTPException(403, "Admin only")
-    return {"url": f"/api/export/all.json?{signed_query('export:all', 1)}"}
+    return {"url": f"/api/export/all.json?{signed_query('export:all', 10, stable=False)}"}
 
 
 async def project_manifest(pid: str) -> dict:
@@ -1161,7 +1185,7 @@ async def export_project(pid: str, exp: int, sig: str):
     if not verify_signed(f"export:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     p = await db.projects.find_one({"_id": oid(pid)})
-    if not p:
+    if not p or p.get("deleted"):
         raise HTTPException(404, "Project not found")
     ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
     entries, vcount, prepared = [], {}, []
@@ -1278,6 +1302,7 @@ async def startup():
     await db.ncs.create_index("project_id")
     await db.ncs.create_index("assigned_installer_id")
     await db.projects.create_index("status")
+    await db.earnings.create_index([("project_id", 1), ("installer_id", 1)], unique=True)
     await db.audit.create_index("seq", unique=True)
     await db.audit.create_index("target")
     await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
@@ -1304,6 +1329,8 @@ app.include_router(auth_router)
 app.include_router(api)
 from phase10 import router as p10_router  # noqa: E402  (imports server helpers lazily)
 app.include_router(p10_router)
+from push import router as push_router  # noqa: E402
+app.include_router(push_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
                    allow_methods=["*"], allow_headers=["*"])

@@ -1,0 +1,45 @@
+{
+  "summary": "RemedialFlow pre-deployment final check (iter 16). New file /app/backend/tests/test_final_csrf_push.py (17 tests) — all GREEN against live preview URL. Covers: (1) CSRF for cookie-authenticated web endpoints — web login with X-Client:web sets rf_refresh cookie, no body refresh_token; refresh with cookie but NO X-Client -> 403; refresh with cookie + Origin https://evil.example -> 403; refresh with X-Client:web + own origin -> 200 with rotated cookie; native body refresh (X-Client:native + refresh_token in body) still -> 200 unaffected; logout obeys the same CSRF rules; backend emits SameSite=strict/HttpOnly/Secure (confirmed via internal :8001). (2) Push: /api/register-push no auth -> 401; invalid platform -> 422; placeholder EMERGENT_PUSH_KEY -> clean 500/502 without crash; user_id spoofed in body is IGNORED (verified in db — the other user's push_active was NOT flipped); /api/unregister-push -> 200 and users.push_active=false. Assigning an NC via /ncs/{id}/assign returned in <2s (not blocked by failing push upstream) AND wrote the 'assigned' in-app notification for the newly-assigned installer; disabled installer -> assign refused 400 and zero notifications written for that user. (3) SEC-001: change-password response includes fresh access_token (+ refresh_token on native); old refresh now 401 on /auth/refresh; old access now 401 on /auth/me (token_version bumped); new access & new refresh both 200. Test performed on a scratch TEST_cp_*@example.com installer (demo creds untouched). (4) discard_evidence NC-scoped: installer2 DELETE /api/evidence/{fid} of installer1 draft -> 403; owner installer1 -> 200. Full regression `pytest tests/ -q` ran 232 passed + 4 skipped + 1 ConnectTimeout flake (test_approved_nc_rejects_upload; passes in isolation — same known preview-URL congestion flake E1 described). Frontend (390x844): installer login OK; page reload keeps session (cookie refresh path works); Account screen renders change-password + logout; change-password sheet opens with current & new inputs; expo-notifications emits an informational web warning only ('Listening to push token changes not yet fully supported on web'), NO red screen / no crash. Cleanup: db.rate_limits cleared via session fixture; TEST_cp_*/TEST_dis_* users deleted; demo passwords untouched. INFORMATIONAL: the Kubernetes ingress rewrites the Set-Cookie to 'SameSite=None; Partitioned' before it reaches the browser via the public preview URL, even though the backend emits 'SameSite=Strict' — on the preview URL the SameSite defense is NOT in effect; CSRF still holds via the X-Client:web header (preflight) + Origin allowlist. E1 should confirm the production ingress preserves SameSite=Strict (or accept the 2 remaining layers).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "Set-Cookie rf_refresh via preview ingress", "issue": "Backend emits SameSite=Strict (verified on :8001) but the preview-URL ingress rewrites it to SameSite=None; Partitioned. CSRF defense remains intact via X-Client header + Origin allowlist (both tested). Confirm production ingress preserves Strict."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_final_csrf_push.py",
+    "/app/test_reports/pytest/pytest_final_iter16.xml"
+  ],
+  "action_items": [
+    "No functional action items — all 17 new tests pass and full regression is clean modulo the 1 known preview-URL ConnectTimeout flake (passes in isolation).",
+    "Informational: verify the production deployment ingress does NOT rewrite rf_refresh's SameSite attribute from Strict to None. If it does, the preview behaviour will reach production and the Strict layer will be inert (defense still holds via X-Client + Origin, so this is not blocking)."
+  ],
+  "critical_code_review_comments": [
+    "auth.py:79 cookie_session() — guard runs ONLY when a cookie is present, so native-body refresh is untouched. Verified behaviourally (test_native_refresh_with_body_unaffected).",
+    "auth.py:255 change_password now bumps token_version, revokes all sessions, then returns fresh tokens via token_payload(). Native receives refresh_token in body; web receives rotated cookie. Verified end-to-end against a TEST user: old refresh -> 401, old access -> 401, new access -> 200.",
+    "push.py:35 register_push correctly derives user_id from the authenticated token (u.id). Any user_id in the body is a free-form field on the Pydantic model and is IGNORED — confirmed by inspecting the other user's push_active flag post-call (still unset).",
+    "push.py:74 push_for() uses find_one({active:true, push_active:true}) short-circuit AND the whole send is wrapped in try/except, so a 5xx from the relay (placeholder key) never crashes notify(). Verified: /ncs/{id}/assign returned in <2s and still wrote the in-app notification row.",
+    "server.py:109 notify() short-circuits on {active:true}. test_disabled_installer_gets_no_new_notification confirms zero rows written for a deactivated user.",
+    "server.py:819 discard_evidence now calls await get_nc(f.nc_id, u) BEFORE the owner check — this is the NC-scoped guard that returns 403 for installer2 even though the earlier draft/owner checks could leak existence. Correct ordering.",
+    "frontend/src/api.ts:49 login always sends X-Client:'web' on web and 'native' on native; logout and refreshSession both send the same header. The CSRF cookie path is exercised correctly from the real frontend (page reload keeps the session).",
+    "frontend/src/push.ts:7 registerForPush() short-circuits on Platform.OS==='web' || !Device.isDevice — expo-notifications therefore cannot throw during web preview boot. Verified (only an informational 'push token changes not supported on web' warning, no crash)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_final_csrf_push.py (new, 17 tests)"
+  ],
+  "success_rate": {
+    "backend": "17/17 (100%) new tests; full regression 232 passed + 4 skipped + 1 known preview-URL flake over 237 total (99.6% stable, 100% when flake re-run in isolation)",
+    "frontend": "4/4 scenarios green at 390x844 (login OK, session persists after reload via cookie refresh, Account screen renders, change-password sheet opens correctly; no red screen; no expo-notifications crash)"
+  },
+  "seed_data_creation": "Transient only. TEST_cp_*@example.com and TEST_dis_*@example.com users were created via admin API and DELETED at the end of their test. TEST-FCSRF-*, TEST-DIS-*, TEST-DSC-* projects were created and soft-deleted. db.rate_limits is cleared by the session-scoped autouse fixture. Demo accounts in /app/memory/test_credentials.md are UNTOUCHED (their passwords are not modified by any test — SEC-001 was tested on a scratch TEST user per the review-request guidance).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 4 pre-deploy features (CSRF, push, SEC-001, NC-scoped discard) are verified end-to-end on the live preview URL. Skipped tests (4) are all data-dependent legacy skips unrelated to this iteration: (a) test_p2_p3_p4_earnings.py:427 'low-risk NC status more_evidence not in employee_review' — depends on seed NC status; (b) test_p5_p6_p8_payments.py:327 'P419977 not present' — demo project P419977 was renamed/removed earlier; (c) test_p7_pdf_cleanup_merge.py:297 same P419977 absence; (d) test_p7_pdf_cleanup_merge.py:364 'no hidden trustmark file available to test restore'. The 1 flake (test_approved_nc_rejects_upload) is the long-standing ConnectTimeout on big-list fetches via the preview URL; passes immediately in isolation. One informational finding only: preview-URL ingress rewrites the rf_refresh cookie's SameSite from Strict to None;Partitioned; backend code is correct, this is infra-side and the other two CSRF layers (X-Client header + Origin allowlist) are both verified working. No bugs. No regressions. Push cannot actually deliver in preview (placeholder EMERGENT_PUSH_KEY) — only server-side behaviour tested, as per review-request instruction.",
+  "rca_of_issue": "N/A — no bugs found; feature set behaves as specified. Only observation worth noting is the ingress-level SameSite rewrite, which is infra, not an app bug."
+}

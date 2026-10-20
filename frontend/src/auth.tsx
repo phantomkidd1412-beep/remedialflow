@@ -3,6 +3,7 @@ import { storage } from "@/src/utils/storage";
 import { queryClient } from "@/src/query-client";
 import * as API from "@/src/api";
 import { clearCache, setCacheUser } from "@/src/offlineCache";
+import { registerForPush, unregisterPush } from "@/src/push";
 
 type Ctx = {
   user: API.User | null;
@@ -39,6 +40,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
           setCacheUser(u.id);
           setUser(u);
           await storage.setItem(CACHED, JSON.stringify(u));
+          void registerForPush(); // tokens rotate: re-register on every app open
         } else await storage.removeItem(CACHED);
       } catch {
         // No connection: keep working on-site with the cached identity; uploads queue until online.
@@ -60,10 +62,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setUser(u);
     setOffline(false);
     await storage.setItem(CACHED, JSON.stringify(u));
+    void registerForPush();
     return u;
   };
 
   const signOut = async () => {
+    await unregisterPush(); // stop pushes to this phone before the session ends
     await API.logout();
     await clear();
   };

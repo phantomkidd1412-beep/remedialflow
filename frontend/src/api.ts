@@ -31,6 +31,12 @@ async function handleTokens(data: any): Promise<User> {
   return data.user;
 }
 
+/** Changing the password revokes every session server-side; adopt the fresh one returned for this device. */
+export async function changePassword(current_password: string, new_password: string) {
+  const data = await api<any>("/auth/change-password", { method: "POST", body: { current_password, new_password } });
+  await handleTokens(data);
+}
+
 async function readError(r: Response): Promise<string> {
   try {
     const j = await r.json();
@@ -84,7 +90,7 @@ export async function logout() {
     await fetch(`${BASE}/api/auth/logout`, {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Client": isWeb ? "web" : "native" },
       body: JSON.stringify({ refresh_token: rt }),
     });
   } catch {}

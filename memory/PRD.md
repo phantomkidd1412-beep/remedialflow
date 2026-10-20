@@ -65,3 +65,13 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - bootstrap_admin.py (one-time CLI, secret + db.system marker), disable_demo_accounts.py (deactivate only, owner approval). Demo logins refused in production.
 - Uploads: magic-byte type validation (jpg/png/heic/webp, mp4/mov), server-chosen extension. notify() skips inactive users.
 - Runbook: memory/DEPLOYMENT.md.
+
+## Pre-deploy final check (iteration 16, green)
+- CSRF: auth.cookie_session (X-Client: web + Origin allowlist) on cookie refresh/logout; SameSite=Strict; native unaffected. Note: preview ingress rewrites SameSite to None; verify production.
+- Push (Emergent relay, backend/push.py; frontend src/push.ts + app/_layout.tsx): generic text, authenticated registration, push_active cleared on logout, inactive users skipped, only new notifications push; employees get review_needed. Needs google-services.json (pending from user) + build-time APNs .p8 and Google service account JSON. EMERGENT_PUSH_KEY=placeholder until deploy.
+- Security audit: CONDITIONAL PASS; SEC-001 (change-password session revocation) fixed; discard_evidence NC/uploader-scoped. Remaining P3: CORS methods/headers "*", uppercase setup-code entropy.
+
+## Security audit follow-up (post Phase 12) — agent-tested (iteration 17)
+- Fresh full audit: no Critical/High. Fixed both Mediums: spreadsheet formula injection in Work Tracker CSV/XLSX (phase10._safe), duplicate earnings race (unique index earnings(project_id, installer_id) + DuplicateKeyError handling).
+- Hardening: CSP on /api/*; TrustMark report PDFs served as attachment; dedicated derived URL-signing key (optional URL_SIGNING_SECRET env); file links 60-75 min, export/report/tracker links 10 min; signed links 404 for soft-deleted projects; admin setup/reset codes 16 chars.
+- Regression: 260 passed / 4 skipped. Nothing deployed, no email sent, no accounts disabled.
