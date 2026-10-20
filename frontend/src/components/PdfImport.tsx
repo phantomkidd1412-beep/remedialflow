@@ -9,7 +9,7 @@ import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 export type PdfNc = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages: number[]; photo_count?: number };
 export type PdfDraft = { ref: string | null; address: string | null; postcode: string | null; nc_count_stated: number | null; ncs: PdfNc[]; confidence: number; notes: string };
 export type PhotoStats = { found: number; kept: number; filtered: number };
-export type Duplicate = { project_id: string; ref: string; address: string; postcode: string; reason: string };
+export type Duplicate = { project_id: string; ref: string; address: string; postcode: string; reason: string; deleted?: boolean };
 export type ImportInfo = { photo_stats?: PhotoStats | null; duplicate?: Duplicate | null };
 
 /** Pick an inspection PDF, upload it, and poll the background AI extraction. */

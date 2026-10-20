@@ -165,8 +165,9 @@ def nc_similarity(d: dict, e: dict) -> float:
 async def find_duplicate(draft: dict) -> Optional[dict]:
     ref, pc = norm_ref(draft.get("ref")), norm_ref(draft.get("postcode"))
     best = None
-    async for p in db.projects.find({}, {"ref": 1, "address": 1, "postcode": 1}):
-        hit = {"project_id": str(p["_id"]), "ref": p["ref"], "address": p.get("address", ""), "postcode": p.get("postcode", "")}
+    async for p in db.projects.find({}, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1}):
+        hit = {"project_id": str(p["_id"]), "ref": p["ref"], "address": p.get("address", ""), "postcode": p.get("postcode", ""),
+               "deleted": bool(p.get("deleted"))}
         if ref and norm_ref(p["ref"]) == ref:
             return {**hit, "reason": "Same project reference"}
         if not best and pc and norm_ref(p.get("postcode")) == pc and similarity(p.get("address"), draft.get("address")) >= 0.6:

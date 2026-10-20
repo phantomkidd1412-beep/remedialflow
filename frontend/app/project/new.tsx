@@ -31,6 +31,24 @@ export default function NewProject() {
   const [notes, setNotes] = useState("");
   const [summary, setSummary] = useState("");
   const [dup, setDup] = useState<Duplicate | null>(null);
+  const [restoring, setRestoring] = useState(false);
+
+  /** Restores only the deleted project matching this import/reference (checked server-side), then continues. */
+  const restore = async (body: { import_id?: string; ref?: string }) => {
+    setRestoring(true);
+    setErr("");
+    try {
+      const r = await api<{ id: string; ref: string }>("/projects/restore-match", { method: "POST", body });
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      if (body.import_id) router.replace({ pathname: "/project/merge", params: { importId: body.import_id, pid: r.id } });
+      else router.replace(`/project/${r.id}`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setRestoring(false);
+    }
+  };
 
   const applyPdf = (d: PdfDraft, id: string, _name: string, info: ImportInfo) => {
     setImportId(id);
@@ -72,7 +90,15 @@ export default function NewProject() {
       <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={[s.content, { paddingBottom: insets.bottom + space.xl }]} keyboardShouldPersistTaps="handled">
         <PdfImport onResult={applyPdf} />
         {summary ? <Text style={s.summary} testID="pdf-import-summary">{summary}</Text> : null}
-        {dup && importId ? (
+        {dup && importId && dup.deleted ? (
+          <View style={s.dup} testID="pdf-deleted-card">
+            <Text style={s.dupTitle}>This project is in Deleted Projects</Text>
+            <Text style={s.dupBody}>{dup.ref} · {dup.address}{dup.postcode ? `, ${dup.postcode}` : ""}</Text>
+            <Text style={s.muted}>{dup.reason}. Restoring brings back the original project with all its NCs, evidence, assignments, payments and history, then continues this import as an update.</Text>
+            <Btn title="Restore and continue import" icon="rotate-ccw" variant="dark" small onPress={() => restore({ import_id: importId })} loading={restoring} testID="pdf-deleted-restore" />
+            <Btn title="Create a new project anyway" variant="outline" small onPress={() => setDup(null)} testID="pdf-duplicate-dismiss" />
+          </View>
+        ) : dup && importId ? (
           <View style={s.dup} testID="pdf-duplicate-card">
             <Text style={s.dupTitle}>This report looks like an existing project</Text>
             <Text style={s.dupBody}>{dup.ref} · {dup.address}{dup.postcode ? `, ${dup.postcode}` : ""}</Text>
@@ -116,6 +142,9 @@ export default function NewProject() {
         ))}
         <Btn title="Add another NC" icon="plus" variant="outline" small onPress={() => setNcs((l) => [...l, { description: "", required_work: "", safety_critical: false }])} testID="new-project-add-nc" />
         {err ? <ErrorBlock message={err} /> : null}
+        {err.includes("Deleted Projects") ? (
+          <Btn title="Restore deleted project" icon="rotate-ccw" variant="dark" onPress={() => restore(importId ? { import_id: importId } : { ref: ref.trim() })} loading={restoring} testID="create-deleted-restore" />
+        ) : null}
         <Btn title="Create project" onPress={save} loading={busy} disabled={!valid} testID="new-project-submit" />
         <Text style={s.muted}>{importId ? "Photos found on each NC's report pages are attached as TrustMark reference photos. The PDF is stored with the project." : "TrustMark photos can be added per NC after creation."}</Text>
       </KeyboardAwareScrollView>

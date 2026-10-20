@@ -75,3 +75,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Fresh full audit: no Critical/High. Fixed both Mediums: spreadsheet formula injection in Work Tracker CSV/XLSX (phase10._safe), duplicate earnings race (unique index earnings(project_id, installer_id) + DuplicateKeyError handling).
 - Hardening: CSP on /api/*; TrustMark report PDFs served as attachment; dedicated derived URL-signing key (optional URL_SIGNING_SECRET env); file links 60-75 min, export/report/tracker links 10 min; signed links 404 for soft-deleted projects; admin setup/reset codes 16 chars.
 - Regression: 260 passed / 4 skipped. Nothing deployed, no email sent, no accounts disabled.
+
+## Fixes: evidence submit state + deleted-project reimport (iteration 19, agent-tested)
+- Installer NC badge derived from queue (evidenceState): Pending Upload / Uploading / Submitting (only while request runs) / Submitted / Upload Failed (+error, Retry) / server status ("Awaiting Review" for assessing). NetInfo reconnect auto-sync; request timeouts reset stuck items to pending; survives restarts.
+- Submit API: optional {client_id, expect}; 409 until all expected uploads arrive (AI not triggered); idempotent retries; atomic claim prevents double assessment.
+- Deleted-project reimport: duplicate.deleted flag; POST /api/projects/restore-match (staff; import owner or exact ref; server recomputes match); Restore and continue import -> merge screen; audit project.restored with role/via; recycle bin stays admin-only.
+- Backend regression 278 passed / 4 skipped.

@@ -384,6 +384,9 @@ async def get_import(iid: str, u: User = Depends(staff)):
     d = await db.imports.find_one({"_id": oid(iid)}, {"page_images": 0})
     if not d:
         raise HTTPException(404, "Import not found")
+    if d.get("duplicate"):  # deleted/restored state may have changed since parsing
+        dp = await db.projects.find_one({"_id": oid(d["duplicate"]["project_id"])}, {"deleted": 1})
+        d["duplicate"]["deleted"] = bool(dp and dp.get("deleted"))
     return clean(d)
 
 
@@ -444,7 +447,9 @@ async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: Us
 @api.post("/projects")
 async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends(staff)):
     if await db.projects.find_one({"ref": body.ref}):
-        raise HTTPException(409, "Project reference already exists (check the Deleted Projects bin)")
+        if await db.projects.find_one({"ref": body.ref, "deleted": {"$ne": None}}, {"_id": 1}):
+            raise HTTPException(409, "This project reference exists in Deleted Projects. Restore it to continue.")
+        raise HTTPException(409, "Project reference already exists")
     s = await get_settings()
     p = Project(ref=body.ref, address=body.address, postcode=body.postcode.upper(), installer_id=body.installer_id or None,
                 rate=body.rate if body.rate is not None else s.default_job_rate, rate_override=body.rate is not None)
@@ -497,9 +502,11 @@ async def _ready_import(iid: str) -> dict:
 @api.get("/imports/{iid}/merge-preview")
 async def merge_preview(iid: str, project_id: str, u: User = Depends(staff)):
     imp = await _ready_import(iid)
-    p = await db.projects.find_one({"_id": oid(project_id)}, {"ref": 1, "address": 1, "postcode": 1})
+    p = await db.projects.find_one({"_id": oid(project_id)}, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1})
     if not p:
         raise HTTPException(404, "Project not found")
+    if p.get("deleted"):
+        raise HTTPException(409, "This project is in Deleted Projects. Restore it to continue the import.")
     existing = await db.ncs.find({"project_id": project_id}).sort("number", 1).to_list(500)
     items = match_ncs(imp["draft"]["ncs"], existing)
     matched = {i["nc"]["id"] for i in items if i["nc"]}
@@ -920,20 +927,43 @@ async def run_assessment(nc_id: str, sub_id: str):
                                 "ai": AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.").model_dump()}})
 
 
+class SubmitIn(BaseModel):
+    client_id: Optional[str] = Field(default=None, max_length=64)  # device idempotency key
+    expect: List[str] = Field(default=[], max_length=200)  # device client ids that must have arrived first
+
+
 @api.post("/ncs/{nc_id}/submit")
-async def submit(nc_id: str, bg: BackgroundTasks, u: User = Depends(current_user)):
+async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = None, u: User = Depends(current_user)):
+    body = body or SubmitIn()
     nc, p = await get_nc(nc_id, u)
+    if body.client_id:  # retried submit whose first response was lost: never re-run, never duplicate
+        prev = await db.submissions.find_one({"nc_id": nc_id, "submit_client_id": body.client_id}, {"_id": 1})
+        if prev:
+            return {"ok": True, "submission_id": str(prev["_id"]), "status": nc.status, "duplicate": True}
+    if body.expect:  # AI assessment must not start until every piece of evidence has uploaded
+        have = await db.files.distinct("client_id", {"nc_id": nc_id, "client_id": {"$in": [str(x)[:64] for x in body.expect]},
+                                                     "status": {"$in": ["draft", "submitted", "superseded"]}})
+        if len(set(have)) < len(set(body.expect)):
+            raise HTTPException(409, "Some evidence has not finished uploading")
     if not nc.draft_submission_id:
+        raw = await db.ncs.find_one({"_id": oid(nc_id)}, {"last_submit_client_id": 1})
+        if body.client_id and raw and raw.get("last_submit_client_id") == body.client_id:
+            return {"ok": True, "status": nc.status, "duplicate": True}  # same device request already claimed this draft
         raise HTTPException(400, "No new evidence to submit")
     drafts = await db.files.find({"submission_id": nc.draft_submission_id, "status": "draft"}).to_list(500)
     photo_ids = [str(d["_id"]) for d in drafts if d["kind"] == "photo"]
     if not photo_ids and not nc.active_video_id:
         raise HTTPException(400, "Add at least one photo or video")
     sid = nc.draft_submission_id
+    # atomic claim: two concurrent submits for the same draft cannot both start an assessment
+    claimed = await db.ncs.update_one({"_id": oid(nc_id), "draft_submission_id": sid},
+                                      {"$set": {"status": "assessing", "draft_submission_id": None, "updated_at": now_iso(),
+                                               "last_submit_client_id": body.client_id}})
+    if not claimed.modified_count:
+        return {"ok": True, "submission_id": sid, "status": "assessing", "duplicate": True}
     await db.files.update_many({"submission_id": sid, "status": "draft"}, {"$set": {"status": "submitted"}})
-    await db.submissions.update_one({"_id": oid(sid)}, {"$set": {"status": "submitted", "photo_ids": photo_ids,
+    await db.submissions.update_one({"_id": oid(sid)}, {"$set": {"status": "submitted", "photo_ids": photo_ids, "submit_client_id": body.client_id,
                                     "video_id": nc.active_video_id, "submitted_at": now_iso()}})
-    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"status": "assessing", "draft_submission_id": None, "updated_at": now_iso()}})
     await recompute_project(p.id)
     await audit("evidence.submitted", u.id, f"nc:{nc_id}", {"submission_id": sid, "photos": len(photo_ids), "video": nc.active_video_id})
     bg.add_task(run_assessment, nc_id, sid)

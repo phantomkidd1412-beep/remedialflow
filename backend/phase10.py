@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from auth import require
 from core import User, audit, db, now_iso, oid, signed_query, verify_signed
@@ -42,19 +43,51 @@ async def deleted_projects(u: User = Depends(admin)):
 @router.post("/admin/projects/{pid}/restore")
 async def restore_project(pid: str, u: User = Depends(admin)):
     """Restores the same record (no copies), so assignments, earnings and notifications are never duplicated."""
-    from server import recompute_project
     p = await db.projects.find_one({"_id": oid(pid), "deleted": {"$ne": None}}, {"deleted": 1, "ref": 1})
     if not p:
         raise HTTPException(404, "Deleted project not found")
-    entry = {**p["deleted"], "restored_at": now_iso(), "restored_by": u.id, "restored_by_name": u.name}
+    await _restore(p, u, "recycle_bin")
+    return {"ok": True}
+
+
+class RestoreMatchIn(BaseModel):
+    import_id: Optional[str] = None
+    ref: Optional[str] = Field(default=None, max_length=100)
+
+
+@router.post("/projects/restore-match")
+async def restore_match(body: RestoreMatchIn, u: User = Depends(staff)):
+    """Employee path: restore ONLY the deleted project that matches the report being imported (or the exact
+    reference being created). The recycle bin itself stays Admin-only."""
+    from report_import import find_duplicate
+    if body.import_id:
+        imp = await db.imports.find_one({"_id": oid(body.import_id), "status": "ready"}, {"draft": 1, "uploaded_by": 1})
+        if not imp or (u.role != "admin" and imp.get("uploaded_by") != u.id):
+            raise HTTPException(404, "Import not found")
+        dup = await find_duplicate(imp["draft"])  # recomputed server-side; never trust a client-supplied project id
+        p = await db.projects.find_one({"_id": oid(dup["project_id"]), "deleted": {"$ne": None}}, {"deleted": 1, "ref": 1, "address": 1}) if dup else None
+    elif body.ref and body.ref.strip():
+        p = await db.projects.find_one({"ref": body.ref.strip(), "deleted": {"$ne": None}}, {"deleted": 1, "ref": 1, "address": 1})
+    else:
+        raise HTTPException(400, "import_id or ref is required")
+    if not p:
+        raise HTTPException(404, "No matching deleted project")
+    await _restore(p, u, "import" if body.import_id else "create")
+    return {"ok": True, "id": str(p["_id"]), "ref": p["ref"], "address": p.get("address", "")}
+
+
+async def _restore(p: dict, u: User, via: str):
+    from server import recompute_project
+    pid = str(p["_id"])
+    entry = {**p["deleted"], "restored_at": now_iso(), "restored_by": u.id, "restored_by_name": u.name, "restored_by_role": u.role, "via": via}
     r = await db.projects.update_one({"_id": p["_id"], "deleted": p["deleted"]}, {"$set": {"deleted": None}, "$push": {"deletion_history": entry}})
     if not r.modified_count:
         raise HTTPException(409, "Project was already restored")
     await db.ncs.update_many({"project_id": pid}, {"$set": {"project_deleted": False}})
-    await db.notifications.update_many({"project_id": pid}, {"$set": {"hidden": False}})
-    await recompute_project(pid)  # idempotent: settles only earnings that don't exist yet
-    await audit("project.restored", u.id, f"project:{pid}", {"ref": p["ref"], "deleted_at": p["deleted"]["at"], "deleted_by": p["deleted"]["by"]})
-    return {"ok": True}
+    await db.notifications.update_many({"project_id": pid}, {"$set": {"hidden": False}})  # un-hide, never re-send
+    await recompute_project(pid)  # idempotent: settles only earnings that don't exist yet (unique index)
+    await audit("project.restored", u.id, f"project:{pid}", {"ref": p["ref"], "deleted_at": p["deleted"]["at"], "deleted_by": p["deleted"]["by"],
+                                                             "role": u.role, "via": via})
 
 
 # ---------------- activity log (admin, read-only) ----------------

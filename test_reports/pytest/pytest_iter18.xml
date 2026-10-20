@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="1" skipped="0" tests="8" time="35.616" timestamp="2026-10-20T17:15:16.424213+00:00" hostname="agent-env-fe9a2416-e077-4660-909c-e5a630b53f52"><testcase classname="tests.test_iter18_submit_restore.TestSubmitExpect" name="test_a_no_body_still_works_backcompat" time="1.791" /><testcase classname="tests.test_iter18_submit_restore.TestSubmitExpect" name="test_b_expect_missing_client_id_409" time="2.572" /><testcase classname="tests.test_iter18_submit_restore.TestSubmitExpect" name="test_c_after_upload_submit_succeeds" time="1.243" /><testcase classname="tests.test_iter18_submit_restore.TestSubmitExpect" name="test_e_two_concurrent_submits_one_assessment" time="1.164"><failure message="AssertionError: ['{&quot;detail&quot;:&quot;No new evidence to submit&quot;}', '{&quot;ok&quot;:true,&quot;submission_id&quot;:&quot;6ad7a1aa2120c8ae793785a9&quot;,&quot;status&quot;:&quot;assessing&quot;}']&#10;assert [200, 400] == [200, 200]&#10;  &#10;  At index 1 diff: 400 != 200&#10;  &#10;  Full diff:&#10;    [&#10;        200,&#10;  -     200,...&#10;  &#10;  ...Full output truncated (4 lines hidden), use '-vv' to show">backend/tests/test_iter18_submit_restore.py:146: in test_e_two_concurrent_submits_one_assessment
+    assert codes == [200, 200], [r.text for r in results]
+E   AssertionError: ['{"detail":"No new evidence to submit"}', '{"ok":true,"submission_id":"6ad7a1aa2120c8ae793785a9","status":"assessing"}']
+E   assert [200, 400] == [200, 200]
+E     
+E     At index 1 diff: 400 != 200
+E     
+E     Full diff:
+E       [
+E           200,
+E     -     200,...
+E     
+E     ...Full output truncated (4 lines hidden), use '-vv' to show</failure></testcase><testcase classname="tests.test_iter18_submit_restore.TestRestoreMatchRef" name="test_restore_match_by_ref_employee" time="1.673" /><testcase classname="tests.test_iter18_submit_restore.TestRestoreMatchRef" name="test_employee_cannot_see_admin_recycle_bin" time="0.306" /><testcase classname="tests.test_iter18_submit_restore.TestRestoreMatchRef" name="test_restore_shows_in_admin_activity" time="1.646" /><testcase classname="tests.test_iter18_submit_restore.TestPdfImportRestore" name="test_full_import_restore_flow" time="25.031"><error message="failed on setup with &quot;requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/imports/6ad7a1af2120c8ae793785bd (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xff9ec6017f90&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=10)'))&quot;">/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:239: in _new_conn
+    sock = connection.create_connection(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:85: in create_connection
+    raise err
+/root/.venv/lib/python3.11/site-packages/urllib3/util/connection.py:73: in create_connection
+    sock.connect(sa)
+E   TimeoutError: timed out
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:793: in urlopen
+    response = self._make_request(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:494: in _make_request
+    raise new_e
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:470: in _make_request
+    self._validate_conn(conn)
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:1125: in _validate_conn
+    conn.connect()
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:827: in connect
+    self.sock = sock = self._new_conn()
+                       ^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/urllib3/connection.py:248: in _new_conn
+    raise ConnectTimeoutError(
+E   urllib3.exceptions.ConnectTimeoutError: (&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xff9ec6017f90&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=10)')
+
+The above exception was the direct cause of the following exception:
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:696: in send
+    resp = conn.urlopen(
+/root/.venv/lib/python3.11/site-packages/urllib3/connectionpool.py:847: in urlopen
+    retries = retries.increment(
+/root/.venv/lib/python3.11/site-packages/urllib3/util/retry.py:555: in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/imports/6ad7a1af2120c8ae793785bd (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xff9ec6017f90&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=10)'))
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_iter18_submit_restore.py:228: in imp
+    d = requests.get(f"{API}/imports/{iid}", headers=H(emp), timeout=10).json()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:87: in get
+    return request("get", url, params=params, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/api.py:71: in request
+    return session.request(method=method, url=url, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:651: in request
+    resp = self.send(prep, **send_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/sessions.py:784: in send
+    r = adapter.send(request, **kwargs)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/adapters.py:717: in send
+    raise ConnectTimeout(e, request=request)
+E   requests.exceptions.ConnectTimeout: HTTPSConnectionPool(host='field-evidence-app-1.preview.emergentagent.com', port=443): Max retries exceeded with url: /api/imports/6ad7a1af2120c8ae793785bd (Caused by ConnectTimeoutError(&lt;HTTPSConnection(host='field-evidence-app-1.preview.emergentagent.com', port=443) at 0xff9ec6017f90&gt;, 'Connection to field-evidence-app-1.preview.emergentagent.com timed out. (connect timeout=10)'))</error></testcase></testsuite></testsuites>

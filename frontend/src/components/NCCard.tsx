@@ -4,7 +4,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { NCItem, ProjectRow, DONE, EvidenceFile } from "@/src/projects";
-import { QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
+import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
@@ -22,7 +22,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const { colors } = useTheme();
   const router = useRouter();
   const toast = useToast();
-  const { enqueueSubmit, enqueueUpload, discard, retry } = useQueue();
+  const { enqueueSubmit, enqueueUpload, discard, retry, retryNc } = useQueue();
   const [view, setView] = useState<EvidenceFile | null>(null);
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [confirm, setConfirm] = useState<QueueItem | null>(null);
@@ -34,10 +34,15 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
   const done = DONE.includes(nc.status);
   const uploads = queued.filter((q) => q.type === "upload");
-  const submitQueued = queued.some((q) => q.type === "submit");
+  const ev = evidenceState(queued);
+  const sub = queued.find((q) => q.type === "submit");
+  const submitQueued = !!sub && sub.status !== "failed";
   const drafts = nc.photos.filter((p) => p.status === "draft");
   const submitted = nc.photos.filter((p) => p.status === "submitted");
   const canSubmit = !done && nc.status !== "assessing" && !submitQueued && (nc.draft_count > 0 || uploads.length > 0);
+  const badge = ev
+    ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
+    : { status: nc.status, label: nc.status === "assessing" ? "Awaiting Review" : undefined };
   const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number };
 
   const pickGallery = async () => {
@@ -53,7 +58,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
   const submit = async () => {
     await enqueueSubmit(project.id, nc.id);
-    toast(uploads.length ? "Submit queued · sends after uploads finish" : "Submitting…");
+    toast(uploads.some((q) => q.status !== "uploaded") ? "Submit queued · sends after uploads finish" : "Submitting…");
   };
 
   return (
@@ -62,7 +67,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
         <View style={{ flex: 1, gap: 4 }}>
           <View style={s.headRow}>
             <Text style={s.num}>{nc.number}</Text>
-            <Badge status={submitQueued ? "uploading" : nc.status} label={submitQueued ? "Submitting" : undefined} testID={`nc-status-${nc.number}`} />
+            <Badge status={badge.status} label={badge.label} testID={`nc-status-${nc.number}`} />
             {nc.safety_critical ? <Badge status="rejected" label="Safety" /> : null}
           </View>
           <Text style={s.desc}>{nc.description}</Text>
@@ -72,6 +77,14 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
       {expanded ? (
         <View style={s.body}>
+          {ev?.key === "failed" ? (
+            <View style={[s.feedback, { backgroundColor: colors.error }]} testID={`nc-upload-error-${nc.number}`}>
+              <Text style={[s.fbText, { color: colors.onError }]}>{ev.error || "Upload failed."} Your evidence is still saved on this phone.</Text>
+              <Btn title="Retry upload" icon="refresh-cw" small onPress={() => retryNc(nc.id)} style={{ marginTop: space.sm }} testID={`nc-retry-${nc.number}`} />
+            </View>
+          ) : ev?.key === "pending" ? (
+            <Text style={s.muted} testID={`nc-pending-note-${nc.number}`}>{sub ? "Submit is queued. It sends automatically once all evidence has uploaded." : "Evidence is saved on this phone and uploads automatically when connected."}</Text>
+          ) : null}
           {nc.ai?.feedback || nc.review_note || nc.status === "rejected" ? (
             <View style={[s.feedback, nc.status === "more_evidence" || nc.status === "rejected" ? { backgroundColor: colors.warning } : null]} testID={`nc-feedback-${nc.number}`}>
               <Text style={s.fbText}>{nc.status === "rejected" ? `Rejected by ${nc.rejection_source === "trustmark" ? "TrustMark" : nc.rejection_source === "admin" ? "Admin" : "Employee"}${nc.review_note ? ": " : ""}` : ""}{nc.review_note || (nc.status === "rejected" ? "" : nc.ai?.feedback)}</Text>

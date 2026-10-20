@@ -2,6 +2,7 @@
 // removed after the server confirms receipt.
 import { createContext, PropsWithChildren, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { AppState, Platform } from "react-native";
+import NetInfo from "@react-native-community/netinfo";
 import { storage } from "@/src/utils/storage";
 import { uploadForm } from "@/src/utils/upload";
 import { authed, BASE, readError } from "@/src/api";
@@ -32,7 +33,33 @@ export type QueueItem = {
   status: "pending" | "uploading" | "uploaded" | "failed";
   error?: string;
   createdAt: string;
+  expect?: string[]; // submit only: client ids of uploads that must reach the server before AI assessment starts
 };
+
+/** Per-NC evidence state shown to the installer. null = nothing on the phone, show the server status. */
+export type EvidenceState = { key: "failed" | "submitting" | "uploading" | "submitted" | "pending"; label: string; error?: string; failed: QueueItem[] };
+
+export function evidenceState(queued: QueueItem[]): EvidenceState | null {
+  const sub = queued.find((q) => q.type === "submit");
+  const ups = queued.filter((q) => q.type === "upload" && q.status !== "uploaded");
+  const failed = [...(sub?.status === "failed" ? [sub] : []), ...ups.filter((q) => q.status === "failed")];
+  if (failed.length) return { key: "failed", label: "Upload Failed", error: failed[0].error, failed };
+  if (sub?.status === "uploading") return { key: "submitting", label: "Submitting", failed };
+  if (ups.some((q) => q.status === "uploading")) return { key: "uploading", label: "Uploading", failed };
+  if (sub?.status === "uploaded") return { key: "submitted", label: "Submitted", failed };
+  if (sub || ups.length) return { key: "pending", label: "Pending Upload", failed };
+  return null;
+}
+
+const SUBMIT_TIMEOUT = 45_000;
+const UPLOAD_TIMEOUT = 10 * 60_000;
+/** A hung request must never leave an item stuck on Uploading/Submitting: treat it like a dropped connection. */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error("timeout")), ms);
+    p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); });
+  });
+}
 
 export const STATUS_LABEL: Record<QueueItem["status"], string> = { pending: "Pending Upload", uploading: "Uploading", uploaded: "Uploaded", failed: "Upload Failed" };
 
@@ -53,6 +80,7 @@ type Ctx = {
   discard: (id: string) => Promise<void>;
   clearAll: () => Promise<void>;
   retry: (id: string) => void;
+  retryNc: (ncId: string) => void;
   syncNow: () => void;
 };
 
@@ -119,32 +147,39 @@ export function QueueProvider({ children }: PropsWithChildren) {
         let r: Response;
         try {
           if (next.type === "upload") {
-            r = await authed((t) =>
+            r = await withTimeout(authed((t) =>
               uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
                 headers: t ? { Authorization: `Bearer ${t}` } : {},
                 fields: { meta: JSON.stringify({ ...next.meta, client_id: next.id }) },
                 files: { file: { uri: next.uri!, name: next.mime!.includes("video") ? "video.mp4" : "photo.jpg", mimeType: next.mime } },
               }),
-            );
+            ), UPLOAD_TIMEOUT);
           } else {
-            r = await authed((t) =>
-              fetch(`${BASE}/api/ncs/${next.ncId}/submit`, { method: "POST", headers: t ? { Authorization: `Bearer ${t}` } : {} }),
-            );
+            // idempotent on client_id; server refuses (409) until every expected upload has arrived
+            r = await withTimeout(authed((t) =>
+              fetch(`${BASE}/api/ncs/${next.ncId}/submit`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+                body: JSON.stringify({ client_id: next.id, expect: next.expect ?? [] }),
+              }),
+            ), SUBMIT_TIMEOUT);
           }
-        } catch {
+        } catch (e: any) {
+          if (e?.status === 401) {
+            await patch(next.id, { status: "pending", error: "Sign in again to send" });
+            break;
+          }
           await patch(next.id, { status: "pending", error: "Waiting for connection" });
           break; // offline: stop and retry later
         }
         if (r.ok) {
           // server confirmed receipt (idempotent on client_id) - only now is the local copy released
-          if (next.type === "upload") {
-            done += 1;
-            await patch(next.id, { status: "uploaded", error: undefined });
-            setTimeout(() => {
-              removeFile(next.uri);
-              save(ref.current.filter((i) => i.id !== next.id));
-            }, 4000);
-          } else await save(ref.current.filter((i) => i.id !== next.id));
+          if (next.type === "upload") done += 1;
+          await patch(next.id, { status: "uploaded", error: undefined });
+          setTimeout(() => {
+            removeFile(next.uri);
+            save(ref.current.filter((i) => i.id !== next.id));
+          }, 4000);
           queryClient.invalidateQueries({ queryKey: ["project", next.projectId] });
           queryClient.invalidateQueries({ queryKey: ["projects"] });
         } else if (r.status >= 500 || r.status === 429) {
@@ -172,9 +207,14 @@ export function QueueProvider({ children }: PropsWithChildren) {
     })();
     const t = setInterval(() => process(), 15000);
     const sub = AppState.addEventListener("change", (s) => s === "active" && process());
+    // connectivity returned: send queued evidence straight away
+    const net = NetInfo.addEventListener((s) => {
+      if (s.isConnected && s.isInternetReachable !== false) process();
+    });
     return () => {
       clearInterval(t);
       sub.remove();
+      net();
     };
   }, [process, save]);
 
@@ -186,14 +226,22 @@ export function QueueProvider({ children }: PropsWithChildren) {
   };
 
   const enqueueSubmit: Ctx["enqueueSubmit"] = async (projectId, ncId) => {
-    if (ref.current.some((i) => i.type === "submit" && i.ncId === ncId)) return;
-    await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, userId: user?.id, status: "pending", createdAt: new Date().toISOString() }]);
+    const expect = ref.current.filter((i) => i.type === "upload" && i.ncId === ncId && (!i.userId || i.userId === user?.id)).map((i) => i.id);
+    const existing = ref.current.find((i) => i.type === "submit" && i.ncId === ncId);
+    if (existing && existing.status !== "failed") return;
+    if (existing) {
+      // re-submitting after a failure: same idempotency key, refreshed list of expected uploads
+      await save(ref.current.map((i) => (i.id === existing.id ? { ...i, status: "pending", error: undefined, expect: [...new Set([...(i.expect ?? []), ...expect])] } : i)));
+    } else {
+      await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, userId: user?.id, status: "pending", expect, createdAt: new Date().toISOString() }]);
+    }
     process();
   };
 
   const discard = async (id: string) => {
     removeFile(ref.current.find((i) => i.id === id)?.uri);
-    await save(ref.current.filter((i) => i.id !== id));
+    // a deleted upload is no longer expected by any pending submit
+    await save(ref.current.filter((i) => i.id !== id).map((i) => (i.expect?.includes(id) ? { ...i, expect: i.expect.filter((x) => x !== id) } : i)));
   };
 
   const clearAll = async () => {
@@ -205,6 +253,10 @@ export function QueueProvider({ children }: PropsWithChildren) {
     patch(id, { status: "pending", error: undefined }).then(process);
   };
 
+  const retryNc = (ncId: string) => {
+    save(ref.current.map((i) => (i.ncId === ncId && i.status === "failed" && (!i.userId || i.userId === user?.id) ? { ...i, status: "pending", error: undefined } : i))).then(process);
+  };
+
   const retryFailed = () => {
     save(ref.current.map((i) => (i.status === "failed" && (!i.userId || i.userId === user?.id) ? { ...i, status: "pending", error: undefined } : i))).then(process);
   };
@@ -213,7 +265,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
   const visible = items.filter((i) => !i.userId || i.userId === user?.id);
 
   return (
-    <QueueCtx.Provider value={{ items: visible, syncing, progress, retryFailed, enqueueUpload, enqueueSubmit, discard, clearAll, retry, syncNow: process }}>
+    <QueueCtx.Provider value={{ items: visible, syncing, progress, retryFailed, enqueueUpload, enqueueSubmit, discard, clearAll, retry, retryNc, syncNow: process }}>
       {children}
     </QueueCtx.Provider>
   );
