@@ -1,5 +1,6 @@
 import { createContext, PropsWithChildren, ReactNode, useCallback, useContext, useRef, useState } from "react";
-import { ActivityIndicator, Modal, Pressable, StyleProp, Text, TextInput, TextInputProps, View, ViewStyle } from "react-native";
+import { ActivityIndicator, Keyboard, Modal, Platform, Pressable, ScrollView, StyleProp, Text, TextInput, TextInputProps, View, ViewStyle } from "react-native";
+import { KeyboardAvoidingView } from "react-native-keyboard-controller";
 import Feather from "@react-native-vector-icons/feather";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { BORDER, fonts, makeStyles, space, ThemeColors, useTheme } from "@/src/theme";
@@ -26,6 +27,9 @@ const useStyles = makeStyles((c) => ({
   sheetBg: { flex: 1, backgroundColor: c.overlay, justifyContent: "flex-end" },
   sheet: { backgroundColor: c.surface, borderTopWidth: BORDER, borderColor: c.border, padding: space.lg, gap: space.md },
   sheetTitle: { fontFamily: fonts.display, fontWeight: "800", fontSize: 20, color: c.onSurface },
+  sheetForm: { maxHeight: "90%" },
+  sheetHead: { flexDirection: "row", alignItems: "center", gap: space.sm },
+  sheetClose: { width: 44, height: 44, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
   h1: { fontFamily: fonts.display, fontWeight: "900", fontSize: 24, color: c.onSurface, letterSpacing: -0.5 },
 }));
 
@@ -153,9 +157,32 @@ export function H1({ children, testID }: { children: ReactNode; testID?: string 
 }
 
 // ---------- Sheet (bottom modal) ----------
-export function Sheet({ visible, onClose, title, children, testID }: PropsWithChildren<{ visible: boolean; onClose: () => void; title: string; testID?: string }>) {
+/** dismissOnBackdrop=false: form mode — backdrop taps only dismiss the keyboard, an explicit Close (X) is shown,
+ *  and the sheet lifts above the keyboard with its content scrollable. */
+export function Sheet({ visible, onClose, title, children, testID, dismissOnBackdrop = true }: PropsWithChildren<{ visible: boolean; onClose: () => void; title: string; testID?: string; dismissOnBackdrop?: boolean }>) {
   const s = useStyles();
+  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
+  if (!dismissOnBackdrop)
+    return (
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent navigationBarTranslucent>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+          <Pressable style={s.sheetBg} onPress={Keyboard.dismiss} accessible={false} testID={`${testID ?? "sheet"}-backdrop`}>
+            <View style={[s.sheet, s.sheetForm, { paddingBottom: insets.bottom + space.lg }]} testID={testID}>
+              <View style={s.sheetHead}>
+                <Text style={[s.sheetTitle, { flex: 1 }]}>{title}</Text>
+                <Pressable onPress={onClose} hitSlop={8} style={s.sheetClose} accessibilityLabel="Close" testID={`${testID ?? "sheet"}-close`}>
+                  <Feather name="x" size={20} color={colors.onSurface} />
+                </Pressable>
+              </View>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: space.md }} showsVerticalScrollIndicator={false}>
+                {children}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </KeyboardAvoidingView>
+      </Modal>
+    );
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={s.sheetBg} onPress={onClose} testID={`${testID ?? "sheet"}-backdrop`}>

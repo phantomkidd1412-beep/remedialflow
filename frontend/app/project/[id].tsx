@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { FlatList, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
+import { FlatList, Keyboard, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -35,19 +35,37 @@ export default function StaffProject() {
   const [rateText, setRateText] = useState("");
   const [reason, setReason] = useState("");
   const [savingRate, setSavingRate] = useState(false);
-  const rateValid = rateText.trim() !== "" && !isNaN(Number(rateText)) && Number(rateText) >= 0;
+  const [rateErr, setRateErr] = useState("");
+  const closeRate = () => {
+    if (savingRate) return;
+    Keyboard.dismiss();
+    setRateErr("");
+    setRateFor(null);
+  };
 
   const saveRate = async () => {
     if (!rateFor) return;
+    const t = rateText.trim().replace(/^£/, "");
+    const value = Number(t);
+    if (!/^\d+(\.\d{1,2})?$/.test(t) || !isFinite(value)) {
+      setRateErr("Enter a valid amount, e.g. 150 or 150.50");
+      return;
+    }
+    if (value > 100000) {
+      setRateErr("Amount is too large");
+      return;
+    }
+    Keyboard.dismiss();
     setSavingRate(true);
+    setRateErr("");
     try {
-      const r = await api<{ earning_updated: boolean }>(`/projects/${id}/rates/${rateFor.installer_id}`, { method: "PUT", body: { rate: Number(rateText), reason: reason.trim() || null } });
+      const r = await api<{ earning_updated: boolean }>(`/projects/${id}/rates/${rateFor.installer_id}`, { method: "PUT", body: { rate: value, reason: reason.trim() || null } });
       setRateFor(null);
       qc.invalidateQueries({ queryKey: ["project", id] });
       qc.invalidateQueries({ queryKey: ["admin-payments"] });
       toast(r.earning_updated ? "Rate saved · unpaid amount updated" : "Rate saved");
     } catch (e: any) {
-      toast(e.message);
+      setRateErr(e?.message || "Could not save the rate. Please try again.");
     } finally {
       setSavingRate(false);
     }
@@ -159,11 +177,13 @@ export default function StaffProject() {
         {p.status === "completed" ? <Btn title="Mark TrustMark Resolved" icon="award" variant="success" onPress={resolve} testID="resolve-project-button" /> : null}
       </Sheet>
 
-      <Sheet visible={!!rateFor} onClose={() => setRateFor(null)} title={`Agreed rate · ${rateFor?.name ?? ""}`} testID="rate-sheet">
-        <Field label="Rate per job (£)" value={rateText} onChangeText={setRateText} keyboardType="decimal-pad" testID="rate-input" />
-        <Field label="Reason (optional)" value={reason} onChangeText={setReason} maxLength={300} testID="rate-reason-input" />
+      <Sheet visible={!!rateFor} onClose={closeRate} title={`Agreed rate · ${rateFor?.name ?? ""}`} testID="rate-sheet" dismissOnBackdrop={false}>
+        <Field label="Rate per job (£)" value={rateText} onChangeText={(t) => { setRateText(t); setRateErr(""); }} keyboardType="decimal-pad" returnKeyType="next" testID="rate-input" />
+        <Field label="Reason (optional)" value={reason} onChangeText={setReason} maxLength={300} returnKeyType="done" testID="rate-reason-input" />
         <Text style={s.hint}>{rateFor?.earning ? "This job is earned but unpaid, so the unpaid amount will change too." : "Applies when this installer's NCs on this project are approved."} Every change is logged.</Text>
-        <Btn title="Save rate" onPress={saveRate} loading={savingRate} disabled={!rateValid} testID="rate-save" />
+        {rateErr ? <Text style={s.err} testID="rate-error">{rateErr}</Text> : null}
+        <Btn title="Save rate" onPress={saveRate} loading={savingRate} disabled={savingRate} testID="rate-save" />
+        <Btn title="Cancel" variant="outline" onPress={closeRate} disabled={savingRate} testID="rate-cancel" />
       </Sheet>
 
       <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="Add NC" testID="add-nc-sheet">
@@ -211,4 +231,5 @@ const useStyles = makeStyles((c) => ({
   rateName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
   rateMeta: { fontSize: 13, color: c.muted },
   hint: { fontSize: 13, color: c.muted },
+  err: { fontSize: 14, fontWeight: "600", color: c.error },
 }));
