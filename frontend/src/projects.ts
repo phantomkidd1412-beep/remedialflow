@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { cached } from "@/src/offlineCache";
 import { Linking, Platform } from "react-native";
 import { absUrl, api } from "@/src/api";
 
@@ -62,8 +63,11 @@ export function useProjects(search = "", status = "") {
   return useInfiniteQuery({
     queryKey: ["projects", search, status],
     initialPageParam: 1,
-    queryFn: ({ pageParam }) =>
-      api<{ items: ProjectRow[]; has_more: boolean; total: number }>(`/projects?page=${pageParam}&limit=20&search=${encodeURIComponent(search)}&status=${status}`),
+    queryFn: ({ pageParam }) => {
+      const get = () => api<{ items: ProjectRow[]; has_more: boolean; total: number }>(`/projects?page=${pageParam}&limit=20&search=${encodeURIComponent(search)}&status=${status}`);
+      // first page of the unfiltered job list stays available offline
+      return pageParam === 1 && !search ? cached(`projects:${status}`, get) : get();
+    },
     getNextPageParam: (last, all) => (last.has_more ? all.length + 1 : undefined),
   });
 }
@@ -71,7 +75,7 @@ export function useProjects(search = "", status = "") {
 export function useProject(id: string) {
   return useQuery({
     queryKey: ["project", id],
-    queryFn: () => api<ProjectDetail>(`/projects/${id}`),
+    queryFn: () => cached(`project:${id}`, () => api<ProjectDetail>(`/projects/${id}`)),
     // Poll only while AI assessment / processing is running.
     refetchInterval: (q) => {
       const d = q.state.data as ProjectDetail | undefined;

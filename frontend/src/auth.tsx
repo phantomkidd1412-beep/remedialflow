@@ -2,6 +2,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 import { storage } from "@/src/utils/storage";
 import { queryClient } from "@/src/query-client";
 import * as API from "@/src/api";
+import { clearCache, setCacheUser } from "@/src/offlineCache";
 
 type Ctx = {
   user: API.User | null;
@@ -19,7 +20,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [ready, setReady] = useState(false);
   const [offline, setOffline] = useState(false);
 
+  useEffect(() => setCacheUser(user?.id ?? null), [user]);
+
   const clear = useCallback(async () => {
+    const raw = await storage.getItem(CACHED, null);
+    if (raw) await clearCache(JSON.parse(String(raw)).id); // cached project data; queued evidence is kept
     setUser(null);
     await storage.removeItem(CACHED);
     queryClient.clear();
@@ -31,6 +36,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       try {
         const u = await API.refreshSession();
         if (u) {
+          setCacheUser(u.id);
           setUser(u);
           await storage.setItem(CACHED, JSON.stringify(u));
         } else await storage.removeItem(CACHED);
@@ -38,6 +44,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         // No connection: keep working on-site with the cached identity; uploads queue until online.
         const raw = await storage.getItem(CACHED, null);
         if (raw) {
+          setCacheUser(JSON.parse(String(raw)).id);
           setUser(JSON.parse(String(raw)));
           setOffline(true);
         }
@@ -49,6 +56,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const signIn = async (email: string, password: string) => {
     const u = await API.login(email.trim(), password);
+    setCacheUser(u.id);
     setUser(u);
     setOffline(false);
     await storage.setItem(CACHED, JSON.stringify(u));

@@ -20,17 +20,18 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
   const router = useRouter();
   const toast = useToast();
   const { user, signOut, offline } = useAuth();
-  const { items, clearAll, syncNow } = useQueue();
+  const { items, syncNow } = useQueue();
   const [warn, setWarn] = useState(false);
   const [pw, setPw] = useState(false);
   const [cur, setCur] = useState("");
   const [nw, setNw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const unsynced = items.filter((i) => i.status !== "uploaded");
 
   const doLogout = async (force = false) => {
-    if (items.length && !force) return setWarn(true);
-    if (force) await clearAll();
+    if (unsynced.length && !force) return setWarn(true);
+    // unsynced evidence is never deleted on logout: it stays on this phone and uploads at this user's next sign-in
     setWarn(false);
     await signOut();
     router.replace("/login");
@@ -62,10 +63,10 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
           <Text style={s.mono} testID="profile-email">{user?.email}</Text>
           <Text style={s.role} testID="profile-role">{user?.role?.toUpperCase()}{offline ? " · OFFLINE MODE" : ""}</Text>
         </View>
-        {items.length ? (
+        {unsynced.length ? (
           <Pressable style={s.queueBox} onPress={syncNow} testID="profile-queue-status">
             <Feather name="upload-cloud" size={18} color={colors.onWarning} />
-            <Text style={s.queueText}>{items.length} item(s) waiting to sync · tap to retry</Text>
+            <Text style={s.queueText}>{unsynced.length} item(s) waiting to sync · tap to retry</Text>
           </Pressable>
         ) : null}
         {menu.length ? <Label>Manage</Label> : null}
@@ -85,10 +86,10 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
         <Btn title="Log out" icon="log-out" variant="outline" onPress={() => doLogout()} testID="logout-button" style={{ marginTop: space.lg }} />
       </ScrollView>
 
-      <Sheet visible={warn} onClose={() => setWarn(false)} title="Unsynced evidence" testID="logout-warning-sheet">
-        <Text style={s.mono}>{items.length} item(s) on this phone have NOT reached the server. Logging out will permanently delete them from this device.</Text>
-        <Btn title="Sync now" icon="upload-cloud" onPress={() => { syncNow(); setWarn(false); }} testID="logout-sync-first" />
-        <Btn title="Delete & log out" icon="trash-2" variant="danger" onPress={() => doLogout(true)} testID="logout-force-button" />
+      <Sheet visible={warn} onClose={() => setWarn(false)} title="Evidence not uploaded yet" testID="logout-warning-sheet">
+        <Text style={s.mono}>{unsynced.length} item(s) on this phone have NOT reached the server. If you log out they stay safely on this phone and upload the next time you sign in, but the office cannot see them until then.</Text>
+        <Btn title="Stay and sync now" icon="upload-cloud" onPress={() => { syncNow(); setWarn(false); }} testID="logout-sync-first" />
+        <Btn title="Log out anyway (keep evidence)" icon="log-out" variant="outline" onPress={() => doLogout(true)} testID="logout-force-button" />
       </Sheet>
 
       <Sheet visible={pw} onClose={() => setPw(false)} title="Change password" testID="change-password-sheet">

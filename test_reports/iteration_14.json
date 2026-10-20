@@ -1,0 +1,35 @@
+{
+  "summary": "Phase 11 offline retest (iter 14). The one outstanding bug from iter13 (never-opened job offline showed 'FAILED TO LOAD JOB DATA' instead of 'NOT AVAILABLE OFFLINE. OPEN THIS JOB ONCE WHILE CONNECTED.') is FIXED. Verified end-to-end at 390x844 web preview: (1) installer login + open job A online caches it; (2) context.set_offline(True) + SPA-nav back to job A renders fully (nc-list visible, no error block); (3) SPA-nav offline to never-opened job id (24-zeros) now shows the exact required copy 'NOT AVAILABLE OFFLINE. OPEN THIS JOB ONCE WHILE CONNECTED.' with a RETRY button within ~2.5s (screenshot /tmp/jobB_offline.jpg); (4) back online: dashboard loads 12 jobs, cached job A still cleanly renders. Staff regression (employee login) also green: dashboard (17 projects, 85 unassigned), direct /review and /tracker load without errors, project detail renders progress-text, and an unknown project id (24 zeros) shows 'PROJECT NOT FOUND' in ~3.9s (no 404 retry). /app/tests/frontend_p11_offline.py re-run: sync bar text is correct ('1 PENDING UPLOAD · OFFLINE, WILL SEND WHEN CONNECTED'), queued-status is 'PENDING UPLOAD'. Known web-only limitations in that script (page.reload / page.goto while offline fail with ERR_INTERNET_DISCONNECTED because Metro bundle is loaded from network; sync-now click hit a visibility issue; logout tab click hit a visibility issue) are the same as iter13 and are not regressions — the primary flows were re-verified via direct SPA pushState tests.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/tests/frontend_p11_offline.py",
+    "/app/test_reports/pytest/pytest_p11_p7_iter13.xml",
+    "/app/test_reports/pytest/pytest_full_regression_iter13.xml"
+  ],
+  "action_items": [
+    "No functional action items; the previously flagged offline never-opened error-message bug is resolved. Fix (moving default options into _layout.tsx and checking fetchStatus === 'paused' in both app/job/[id].tsx:25 and app/project/[id].tsx:100) is working as designed.",
+    "(Optional, test-script hardening only) /app/tests/frontend_p11_offline.py uses page.reload() and page.goto() while offline, which cannot work on Expo web preview since the Metro JS bundle is network-served. Consider switching those steps to SPA pushState + popstate (see this iteration's inline script) so the test file passes without manual verification. Also, the sync-now click and the Account tab click currently use ElementHandle.click without scrolling; prefer page.click('[data-testid=\"sync-now-button\"]', force=True) and page.click('[data-testid=\"tab-account\"]', force=True).",
+    "Device-only (NOT testable on web preview): native camera + GPS stamping, airplane-mode queueing, backgrounding/foreground AppState rescue, Picture-in-Picture video, iOS/Android gallery EXIF parsing."
+  ],
+  "critical_code_review_comments": [
+    "query-client defaults are now set in app/_layout.tsx on the shared queryClient instance (not replacing with setDefaultOptions) and include networkMode:'offlineFirst' + retry policy that skips offline-sentinel and 4xx. Verified live: offline never-opened does not retry, online 404 for fake id shows PROJECT NOT FOUND without retry, cached offline reads render.",
+    "Both app/job/[id].tsx:25 and app/project/[id].tsx:100 now short-circuit on q.fetchStatus === 'paused' to show the correct 'Not available offline…' copy; otherwise fall through to the real error message. Clean, symmetric handling for installer and staff.",
+    "No change to offlineCache.ts user-scoped key format (oc:{uid}:…); isolation across installer accounts remains intact. Not re-tested in this iteration since no code touched this path."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "unchanged from iter13 (199/200 full regression, 24/24 target Phase 11 + Phase 7 PDF)",
+    "frontend": "6/6 primary scenarios green — (A) installer login + cache job A online, (B) offline SPA-nav job A renders from cache, (C) offline SPA-nav never-opened job shows 'NOT AVAILABLE OFFLINE. OPEN THIS JOB ONCE WHILE CONNECTED.', (D) back-online jobs list + unknown project 'PROJECT NOT FOUND' fast-fail, (E) staff regression (review, tracker, project detail, 404 handling), (F) sync-bar still shows '1 PENDING UPLOAD · OFFLINE, WILL SEND WHEN CONNECTED'"
+  },
+  "seed_data_creation": "None. Reused seeded installer@/employee@ accounts and TEST-* projects.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Primary iter13 bug is fixed. If you re-run /app/tests/frontend_p11_offline.py expecting a strict pass, note that two of its steps rely on page.reload()/page.goto() while offline which cannot work on the Expo web preview (Metro bundle is network-served) — use SPA pushState + popstate instead (see this iteration's inline Playwright script). Sync-now and Account-tab clicks in the same script need force=True on the Playwright page.click and may need a scrollIntoViewIfNeeded first. Direct verification of the offline fix at /job/{000000000000000000000000} after SPA nav returns the correct ErrorBlock copy; captured screenshot /tmp/jobB_offline.jpg.",
+  "rca_of_issue": "Fix (verified working): In /app/frontend/app/_layout.tsx the default options are now applied directly on the shared queryClient instance (which /app/frontend/src/query-client.ts exports as a bare QueryClient so defaults must live in the layout) with networkMode:'offlineFirst' and a retry predicate `(n, e) => !e?.offline && !(e?.status >= 400 && e?.status < 500) && n < 1`. In both /app/frontend/app/job/[id].tsx:25 and /app/frontend/app/project/[id].tsx:100 the error branch now reads `message={q.fetchStatus === 'paused' ? 'Not available offline. Open this job once while connected.' : (q.error as Error)?.message || 'Failed to load …'}`. When offline, React Query marks the query as paused (fetchStatus==='paused') because the fetchFn would need the network, so the pause-check correctly surfaces the required copy regardless of whether the sentinel Error survived to q.error. Reproduced the failing case from iter13 (SPA pushState to /job/{24-zeros} while context.set_offline(True)) and now observed the correct message in both JSX HTML and the live screenshot."
+}

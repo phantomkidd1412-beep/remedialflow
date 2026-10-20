@@ -22,7 +22,7 @@ export default function JobDetail() {
     return (
       <View style={s.root}>
         <ScreenHeader title="JOB" back />
-        <View style={{ padding: space.lg }}><ErrorBlock message="Failed to load job data" onRetry={() => q.refetch()} /></View>
+        <View style={{ padding: space.lg }}><ErrorBlock message={q.fetchStatus === "paused" ? "Not available offline. Open this job once while connected." : (q.error as Error)?.message || "Failed to load job data"} onRetry={() => q.refetch()} /></View>
       </View>
     );
   const { project: p, ncs } = q.data;

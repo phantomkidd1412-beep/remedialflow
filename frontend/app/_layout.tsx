@@ -15,7 +15,11 @@ import { colors } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
 
-queryClient.setDefaultOptions({ queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } });
+// offlineFirst keeps the offline-cache queryFn running without a connection; offline misses and 4xx are final
+queryClient.setDefaultOptions({
+  queries: { staleTime: 30_000, refetchOnWindowFocus: false, networkMode: "offlineFirst", retry: (n, e: any) => !e?.offline && !(e?.status >= 400 && e?.status < 500) && n < 1 },
+  mutations: { networkMode: "offlineFirst" },
+});
 
 export default function RootLayout() {
   const [loaded] = useFonts({

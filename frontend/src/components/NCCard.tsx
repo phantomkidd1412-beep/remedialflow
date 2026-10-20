@@ -4,7 +4,7 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { NCItem, ProjectRow, DONE, EvidenceFile } from "@/src/projects";
-import { QueueItem, tzInfo, useQueue } from "@/src/queue";
+import { QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
@@ -26,6 +26,11 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const [view, setView] = useState<EvidenceFile | null>(null);
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [confirm, setConfirm] = useState<QueueItem | null>(null);
+  const [armed, setArmed] = useState(false);
+  const openConfirm = (q: QueueItem) => {
+    setArmed(false);
+    setConfirm(q);
+  };
 
   const done = DONE.includes(nc.status);
   const uploads = queued.filter((q) => q.type === "upload");
@@ -101,10 +106,10 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
                 {nc.video ? <Thumb f={nc.video} onPress={() => setView(nc.video)} testID={`video-thumb-${nc.number}`} /> : null}
                 {drafts.map((f, i) => <Thumb key={f.id} f={f} onPress={() => setPv({ files: drafts, i })} testID={`draft-thumb-${f.id}`} />)}
                 {uploads.map((q) => (
-                  <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? setConfirm(q) : undefined)} onLongPress={() => setConfirm(q)} testID={`queued-item-${q.id}`}>
+                  <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? openConfirm(q) : undefined)} onLongPress={() => q.status !== "uploaded" && q.status !== "uploading" && openConfirm(q)} testID={`queued-item-${q.id}`}>
                     {q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
-                    <View style={[s.localTag, q.status === "failed" && { backgroundColor: colors.error }]}>
-                      <Text style={[s.localText, q.status === "failed" && { color: colors.onError }]}>{q.status === "failed" ? "FAILED" : q.status === "uploading" ? "UPLOADING" : "QUEUED"}</Text>
+                    <View style={[s.localTag, q.status === "failed" && { backgroundColor: colors.error }, q.status === "uploaded" && { backgroundColor: colors.success }]}>
+                      <Text style={[s.localText, q.status === "failed" && { color: colors.onError }, q.status === "uploaded" && { color: colors.onSuccess }]} testID={`queued-status-${q.id}`}>{STATUS_LABEL[q.status].toUpperCase()}</Text>
                     </View>
                   </Pressable>
                 ))}
@@ -133,10 +138,11 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
       <MediaViewer f={view} onClose={() => setView(null)} />
       {pv ? <PhotoViewer files={pv.files} index={pv.i} onClose={() => setPv(null)} /> : null}
-      <Sheet visible={!!confirm} onClose={() => setConfirm(null)} title="Unsynced item" testID="queued-item-sheet">
-        <Text style={s.work}>{confirm?.error ? `Error: ${confirm.error}` : "This file is stored on this phone and has not reached the server yet."}</Text>
+      <Sheet visible={!!confirm} onClose={() => setConfirm(null)} title={confirm ? STATUS_LABEL[confirm.status] : "Unsynced item"} testID="queued-item-sheet">
+        <Text style={s.work} testID="queued-item-error">{confirm?.error ? confirm.error : "This file is stored on this phone and has not reached the server yet."}</Text>
         <Btn title="Retry upload" icon="refresh-cw" onPress={() => { if (confirm) retry(confirm.id); setConfirm(null); }} testID="queued-item-retry" />
-        <Btn title="Delete from phone" icon="trash-2" variant="danger" onPress={() => { if (confirm) discard(confirm.id); setConfirm(null); }} testID="queued-item-delete" />
+        {/* two-step delete so pending evidence is never lost by a stray tap */}
+        <Btn title={armed ? "Tap again to permanently delete" : "Delete from phone"} icon="trash-2" variant={armed ? "danger" : "outline"} onPress={() => { if (!armed) return setArmed(true); if (confirm) discard(confirm.id); setConfirm(null); }} testID="queued-item-delete" />
       </Sheet>
     </View>
   );

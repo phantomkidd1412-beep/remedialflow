@@ -28,14 +28,26 @@ export type QueueItem = {
   uri?: string;
   mime?: string;
   meta?: EvidenceMeta;
-  status: "pending" | "uploading" | "failed";
+  userId?: string; // owner: items only sync for the installer who captured them
+  status: "pending" | "uploading" | "uploaded" | "failed";
   error?: string;
   createdAt: string;
 };
 
+export const STATUS_LABEL: Record<QueueItem["status"], string> = { pending: "Pending Upload", uploading: "Uploading", uploaded: "Uploaded", failed: "Upload Failed" };
+
+/** Server refused the item: keep it on the phone and tell the installer what to do. */
+function refusal(status: number, msg: string) {
+  if (status === 403 || status === 404) return "This NC is no longer assigned to you or the project was removed. Evidence is kept on this phone - contact the office.";
+  if (status === 409) return `${msg}. Evidence is kept on this phone - contact the office.`;
+  return msg;
+}
+
 type Ctx = {
   items: QueueItem[];
   syncing: boolean;
+  progress: { done: number; total: number } | null;
+  retryFailed: () => void;
   enqueueUpload: (projectId: string, ncId: string, uri: string, mime: string, meta: EvidenceMeta) => Promise<void>;
   enqueueSubmit: (projectId: string, ncId: string) => Promise<void>;
   discard: (id: string) => Promise<void>;
@@ -76,6 +88,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
   const { user } = useAuth();
   const [items, setItems] = useState<QueueItem[]>([]);
   const [syncing, setSyncing] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const ref = useRef<QueueItem[]>([]);
   const running = useRef(false);
 
@@ -91,13 +104,17 @@ export function QueueProvider({ children }: PropsWithChildren) {
     if (running.current || !user) return;
     running.current = true;
     setSyncing(true);
+    const mine = (i: QueueItem) => !i.userId || i.userId === user.id;
+    let done = 0;
     try {
       for (;;) {
-        const blockedNcs = new Set(ref.current.filter((i) => i.type === "upload").map((i) => i.ncId));
-        const next = ref.current.find(
+        const own = ref.current.filter(mine);
+        const blockedNcs = new Set(own.filter((i) => i.type === "upload" && i.status !== "uploaded").map((i) => i.ncId));
+        const next = own.find(
           (i) => i.status === "pending" && (i.type === "upload" || !blockedNcs.has(i.ncId)),
         );
         if (!next) break;
+        setProgress({ done, total: done + own.filter((i) => i.type === "upload" && (i.status === "pending" || i.status === "uploading")).length });
         await patch(next.id, { status: "uploading", error: undefined });
         let r: Response;
         try {
@@ -119,20 +136,28 @@ export function QueueProvider({ children }: PropsWithChildren) {
           break; // offline: stop and retry later
         }
         if (r.ok) {
-          removeFile(next.uri);
-          await save(ref.current.filter((i) => i.id !== next.id));
+          // server confirmed receipt (idempotent on client_id) - only now is the local copy released
+          if (next.type === "upload") {
+            done += 1;
+            await patch(next.id, { status: "uploaded", error: undefined });
+            setTimeout(() => {
+              removeFile(next.uri);
+              save(ref.current.filter((i) => i.id !== next.id));
+            }, 4000);
+          } else await save(ref.current.filter((i) => i.id !== next.id));
           queryClient.invalidateQueries({ queryKey: ["project", next.projectId] });
           queryClient.invalidateQueries({ queryKey: ["projects"] });
         } else if (r.status >= 500 || r.status === 429) {
           await patch(next.id, { status: "pending", error: "Server busy, retrying" });
           break;
         } else {
-          await patch(next.id, { status: "failed", error: await readError(r) });
+          await patch(next.id, { status: "failed", error: refusal(r.status, await readError(r)) });
         }
       }
     } finally {
       running.current = false;
       setSyncing(false);
+      setProgress(null);
     }
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -140,7 +165,9 @@ export function QueueProvider({ children }: PropsWithChildren) {
     (async () => {
       const raw = await storage.getItem(KEY, null);
       const list: QueueItem[] = raw ? JSON.parse(String(raw)) : [];
-      await save(list.map((i) => (i.status === "uploading" ? { ...i, status: "pending" } : i)));
+      // interrupted uploads go back to pending (server de-duplicates by client_id); confirmed ones are released
+      list.filter((i) => i.status === "uploaded").forEach((i) => removeFile(i.uri));
+      await save(list.filter((i) => i.status !== "uploaded").map((i) => (i.status === "uploading" ? { ...i, status: "pending" } : i)));
       process();
     })();
     const t = setInterval(() => process(), 15000);
@@ -153,14 +180,14 @@ export function QueueProvider({ children }: PropsWithChildren) {
 
   const enqueueUpload: Ctx["enqueueUpload"] = async (projectId, ncId, uri, mime, meta) => {
     const id = uid();
-    const item: QueueItem = { id, type: "upload", projectId, ncId, uri: persistFile(uri, id, mime), mime, meta, status: "pending", createdAt: new Date().toISOString() };
+    const item: QueueItem = { id, type: "upload", projectId, ncId, uri: persistFile(uri, id, mime), mime, meta, userId: user?.id, status: "pending", createdAt: new Date().toISOString() };
     await save([...ref.current, item]);
     process();
   };
 
   const enqueueSubmit: Ctx["enqueueSubmit"] = async (projectId, ncId) => {
     if (ref.current.some((i) => i.type === "submit" && i.ncId === ncId)) return;
-    await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, status: "pending", createdAt: new Date().toISOString() }]);
+    await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, userId: user?.id, status: "pending", createdAt: new Date().toISOString() }]);
     process();
   };
 
@@ -178,8 +205,15 @@ export function QueueProvider({ children }: PropsWithChildren) {
     patch(id, { status: "pending", error: undefined }).then(process);
   };
 
+  const retryFailed = () => {
+    save(ref.current.map((i) => (i.status === "failed" && (!i.userId || i.userId === user?.id) ? { ...i, status: "pending", error: undefined } : i))).then(process);
+  };
+
+  // other users' evidence on a shared phone stays stored but is never shown or uploaded under this login
+  const visible = items.filter((i) => !i.userId || i.userId === user?.id);
+
   return (
-    <QueueCtx.Provider value={{ items, syncing, enqueueUpload, enqueueSubmit, discard, clearAll, retry, syncNow: process }}>
+    <QueueCtx.Provider value={{ items: visible, syncing, progress, retryFailed, enqueueUpload, enqueueSubmit, discard, clearAll, retry, syncNow: process }}>
       {children}
     </QueueCtx.Provider>
   );

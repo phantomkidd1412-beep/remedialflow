@@ -49,7 +49,8 @@ export default function StaffProject() {
       ["projects", "dashboard", "review-groups", "tracker"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
       qc.removeQueries({ queryKey: ["project", id] });
       toast("Project deleted");
-      router.canGoBack() ? router.back() : router.replace("/");
+      if (router.canGoBack()) router.back();
+      else router.replace("/");
     } catch (e: any) {
       setDelErr(e?.message || "Could not delete the project");
     } finally {
@@ -96,7 +97,7 @@ export default function StaffProject() {
     return (
       <View style={s.root}>
         <ScreenHeader title="PROJECT" back />
-        <View style={{ padding: space.lg }}><ErrorBlock message="Failed to load project" onRetry={() => q.refetch()} /></View>
+        <View style={{ padding: space.lg }}><ErrorBlock message={q.fetchStatus === "paused" ? "Not available offline. Open this project once while connected." : (q.error as Error)?.message || "Failed to load project"} onRetry={() => q.refetch()} /></View>
       </View>
     );
   const { project: p, ncs } = q.data;

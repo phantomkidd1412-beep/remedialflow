@@ -51,3 +51,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Recycle bin `/admin/deleted` (admin): `GET /api/admin/deleted-projects`, `POST /api/admin/projects/{pid}/restore` (atomic, same record, pushes deletion_history, recompute is idempotent).
 - Activity log `/admin/activity` (admin): `GET /api/admin/activity?search&kind=deletion|project|nc|user`; audit entries now snapshot actor_name/actor_role server-side; no edit/delete API for audit.
 - Module: backend/phase10.py; migration 008_soft_delete (additive + indexes).
+
+## P11 Offline evidence & sync (implemented, awaiting approval)
+- Existing queue (src/queue.tsx) kept: files copied to app-private Paths.document/evidence, persisted queue, sequential sync, 15s interval + AppState active resume, idempotent server dedupe by client_id, item removed only after server 2xx.
+- Added: items owned by userId (only owner's items shown/synced; shared phone safe); statuses Pending Upload / Uploading / Uploaded (4s, then released) / Upload Failed; SyncBar "Uploading X of Y", RETRY for failed; 403/404/409 on sync → failed with actionable message, evidence kept; two-step delete for local items; logout warns and KEEPS evidence (no delete option).
+- Offline project cache src/offlineCache.ts: per-user, only data previously loaded online (job list page 1 + project detail); 403/404 drops the cached copy; cleared on logout. Tokens remain in SecureStore.
+- Backend unchanged: get_nc enforces current assignment (403) and deleted project (404); approved NC upload 409; discard only drafts; evidence hide/restore/discard audited.
+- P11 fix: app/_layout.tsx setDefaultOptions now carries networkMode 'offlineFirst' + retry skipping offline/4xx (previously it overrode query-client defaults, pausing queries offline). Verified iteration 14.
