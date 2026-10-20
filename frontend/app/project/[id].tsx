@@ -4,8 +4,9 @@ import { useLocalSearchParams } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
-import { openExport, openReport, useProject } from "@/src/projects";
-import { Badge, Btn, ErrorBlock, Feather, Field, Label, Loading, Progress, Sheet, fmtDate, useToast } from "@/src/ui";
+import { RateRow, openExport, openReport, useProject } from "@/src/projects";
+import { useAuth } from "@/src/auth";
+import { Badge, Btn, ErrorBlock, Feather, Field, Label, Loading, Progress, Sheet, fmtDate, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { StaffNCCard } from "@/src/components/StaffNCCard";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
@@ -28,6 +29,29 @@ export default function StaffProject() {
   const [safety, setSafety] = useState(false);
   const toggle = useCallback((nid: string) => setOpen((o) => (o === nid ? null : nid)), []);
   const audit = useQuery({ queryKey: ["audit", id], queryFn: () => api<any[]>(`/projects/${id}/audit`), enabled: auditOpen });
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [rateFor, setRateFor] = useState<RateRow | null>(null);
+  const [rateText, setRateText] = useState("");
+  const [reason, setReason] = useState("");
+  const [savingRate, setSavingRate] = useState(false);
+  const rateValid = rateText.trim() !== "" && !isNaN(Number(rateText)) && Number(rateText) >= 0;
+
+  const saveRate = async () => {
+    if (!rateFor) return;
+    setSavingRate(true);
+    try {
+      const r = await api<{ earning_updated: boolean }>(`/projects/${id}/rates/${rateFor.installer_id}`, { method: "PUT", body: { rate: Number(rateText), reason: reason.trim() || null } });
+      setRateFor(null);
+      qc.invalidateQueries({ queryKey: ["project", id] });
+      qc.invalidateQueries({ queryKey: ["admin-payments"] });
+      toast(r.earning_updated ? "Rate saved · unpaid amount updated" : "Rate saved");
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setSavingRate(false);
+    }
+  };
 
   if (q.isLoading) return <Loading />;
   if (q.isError || !q.data)
@@ -96,6 +120,24 @@ export default function StaffProject() {
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
         ListHeaderComponent={
           <View style={{ gap: space.sm, marginBottom: space.sm }}>
+            {p.rate_rows?.length ? (
+              <View style={s.rates} testID="project-rates">
+                <Label>Installer rates</Label>
+                {p.rate_rows.map((r) => (
+                  <View key={r.installer_id} style={s.rateRow} testID={`rate-row-${r.installer_id}`}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.rateName}>{r.name}</Text>
+                      <Text style={s.rateMeta} testID={`rate-value-${r.installer_id}`}>
+                        {r.pay_type === "daily" ? "Daily wage · paid outside the app" : `${r.rate != null ? money(r.rate) : "Rate not set"} per job${r.earning ? ` · ${r.earning.status === "paid" ? "Paid" : "Earned, unpaid"} ${money(r.earning.amount)}` : " · Not yet earned"}`}
+                      </Text>
+                    </View>
+                    {isAdmin && r.pay_type !== "daily" && r.earning?.status !== "paid" ? (
+                      <Btn title="Edit" small variant="outline" onPress={() => { setRateFor(r); setRateText(r.rate != null ? String(r.rate) : ""); setReason(""); }} testID={`rate-edit-${r.installer_id}`} />
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <Label>Assign project (unassigned NCs default to this installer)</Label>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
               {(installers.data ?? []).map((i) => (
@@ -115,6 +157,13 @@ export default function StaffProject() {
         <Btn title="Audit history" icon="list" variant="outline" onPress={menu(() => setAuditOpen(true))} testID="audit-trail-button" />
         <Btn title="Add NC" icon="plus" variant="outline" onPress={menu(() => setAddOpen(true))} testID="add-nc-button" />
         {p.status === "completed" ? <Btn title="Mark TrustMark Resolved" icon="award" variant="success" onPress={resolve} testID="resolve-project-button" /> : null}
+      </Sheet>
+
+      <Sheet visible={!!rateFor} onClose={() => setRateFor(null)} title={`Agreed rate · ${rateFor?.name ?? ""}`} testID="rate-sheet">
+        <Field label="Rate per job (£)" value={rateText} onChangeText={setRateText} keyboardType="decimal-pad" testID="rate-input" />
+        <Field label="Reason (optional)" value={reason} onChangeText={setReason} maxLength={300} testID="rate-reason-input" />
+        <Text style={s.hint}>{rateFor?.earning ? "This job is earned but unpaid, so the unpaid amount will change too." : "Applies when this installer's NCs on this project are approved."} Every change is logged.</Text>
+        <Btn title="Save rate" onPress={saveRate} loading={savingRate} disabled={!rateValid} testID="rate-save" />
       </Sheet>
 
       <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="Add NC" testID="add-nc-sheet">
@@ -157,4 +206,9 @@ const useStyles = makeStyles((c) => ({
   check: { flexDirection: "row", gap: space.sm, alignItems: "center", minHeight: 44 },
   box: { width: 22, height: 22, borderWidth: BORDER, borderColor: c.border },
   auditRow: { borderBottomWidth: 1, borderColor: c.border, paddingVertical: space.sm },
+  rates: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
+  rateRow: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44 },
+  rateName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
+  rateMeta: { fontSize: 13, color: c.muted },
+  hint: { fontSize: 13, color: c.muted },
 }));

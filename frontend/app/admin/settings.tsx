@@ -8,7 +8,7 @@ import { Badge, Btn, Field, Label, Loading, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string }[] };
+type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
 type S = { auto_approve_low_risk: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
 function Choice({ value, options, onChange, testID }: { value: string; options: [string, string][]; onChange: (v: string) => void; testID: string }) {
@@ -89,7 +89,7 @@ export default function SettingsScreen() {
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={s.payName}>{g.installer_name}</Text>
               <Text style={s.mono}>Week of {g.week.split("-").reverse().join("/")} · {g.jobs.length} job(s)</Text>
-              <Text style={s.mono}>{g.jobs.map((j) => j.ref).join(", ")}</Text>
+              <Text style={s.mono}>{g.jobs.map((j) => `${j.ref} ${money(j.amount)}${j.overridden ? " (rate changed)" : ""}`).join(", ")}</Text>
               <Text style={s.mono}>Unpaid {money(g.unpaid, f.currency)} · Paid {money(g.paid, f.currency)}</Text>
             </View>
             {g.unpaid > 0 ? <Btn title="Mark week paid" small variant="success" onPress={() => payWeek(g)} testID={`pay-week-${g.installer_name.replace(/\s+/g, "-")}-${g.week}`} /> : <Badge status="paid" />}

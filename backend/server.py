@@ -596,7 +596,59 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         d["assigned_installer_name"] = names.get(d.get("assigned_installer_id") or "")
     pd["installer_name"] = names.get(p.installer_id or "")
     pd["installer_names"] = sorted({names[n.assigned_installer_id] for n in ncs if n.assigned_installer_id in names})
+    if u.role == "installer":
+        pd.pop("rate_history", None)
+        pd["rates"] = {k: v for k, v in (p.rates or {}).items() if k == u.id}
+    else:
+        pd["rate_rows"] = await rate_rows(pid, p, uids)
     return {"project": pd, "ncs": out}
+
+
+async def rate_rows(pid: str, p: Project, uids: set) -> list:
+    """One row per installer on the project: pay type, agreed rate, earning state."""
+    us = {str(d["_id"]): d for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in uids]}}, {"name": 1, "pay_type": 1}).to_list(100)}
+    earns = {e["installer_id"]: e for e in await db.earnings.find({"project_id": pid}).to_list(100)}
+    rows = []
+    for iid, d in us.items():
+        e = earns.get(iid)
+        rows.append({"installer_id": iid, "name": d["name"], "pay_type": d.get("pay_type", "per_job"),
+                     "rate": (p.rates or {}).get(iid), "earning": {"status": e["status"], "amount": e["amount"]} if e else None})
+    return sorted(rows, key=lambda r: r["name"])
+
+
+class RateIn(BaseModel):
+    rate: float = Field(ge=0, le=100000)
+    reason: Optional[str] = Field(default=None, max_length=300)
+
+
+@api.put("/projects/{pid}/rates/{iid}")
+async def override_rate(pid: str, iid: str, body: RateIn, u: User = Depends(admin)):
+    """Admin override of one installer's agreed per-job rate on a project.
+    An earned-but-unpaid amount follows the new rate; paid earnings are never changed."""
+    p = await db.projects.find_one({"_id": oid(pid)}, {"rates": 1, "ref": 1, "installer_id": 1})
+    if not p:
+        raise HTTPException(404, "Project not found")
+    inst = await db.users.find_one({"_id": oid(iid), "role": "installer"}, {"pay_type": 1, "name": 1})
+    if not inst:
+        raise HTTPException(404, "Installer not found")
+    if p.get("installer_id") != iid and not await db.ncs.find_one({"project_id": pid, "assigned_installer_id": iid}):
+        raise HTTPException(400, "Installer is not assigned to this project")
+    if inst.get("pay_type", "per_job") == "daily":
+        raise HTTPException(400, "Daily-wage installers are paid outside the app")
+    e = await db.earnings.find_one({"project_id": pid, "installer_id": iid})
+    if e and e["status"] == "paid":
+        raise HTTPException(409, "This job has already been paid; the rate can no longer be changed")
+    old = (p.get("rates") or {}).get(iid)
+    rate = round(body.rate, 2)
+    ts = now_iso()
+    await db.projects.update_one({"_id": p["_id"]}, {"$set": {f"rates.{iid}": rate}, "$push": {"rate_history": {
+        "installer_id": iid, "old": old, "new": rate, "reason": (body.reason or "").strip() or None, "by": u.id, "at": ts}}})
+    if e:
+        await db.earnings.update_one({"_id": e["_id"]}, {"$set": {"amount": rate, "overridden": True},
+                                                         "$push": {"amount_history": {"old": e["amount"], "new": rate, "by": u.id, "at": ts}}})
+    await audit("project.rate_overridden", u.id, f"project:{pid}", {"installer_id": iid, "old": old, "new": rate, "reason": body.reason, "earning_updated": bool(e)})
+    await notify(iid, "rate_changed", f"Rate updated: {p['ref']}", f"{p['ref']} · your agreed rate is now £{rate:g}", pid)
+    return {"ok": True, "rate": rate, "earning_updated": bool(e)}
 
 
 @api.get("/projects/{pid}/report-link")
@@ -1000,7 +1052,7 @@ async def payments(u: User = Depends(admin)):
         g = groups.setdefault((e["installer_id"], wk), {"installer_id": e["installer_id"], "installer_name": names.get(e["installer_id"], "?"),
                                                           "week": wk, "unpaid": 0, "paid": 0, "jobs": []})
         g["unpaid" if e["status"] == "earned" else "paid"] += e["amount"]
-        g["jobs"].append({"ref": e["ref"], "amount": e["amount"], "status": e["status"]})
+        g["jobs"].append({"ref": e["ref"], "amount": e["amount"], "status": e["status"], "overridden": bool(e.get("overridden"))})
     return sorted(groups.values(), key=lambda g: (g["unpaid"] == 0, g["week"]), reverse=False)
 
 

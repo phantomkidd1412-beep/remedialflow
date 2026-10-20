@@ -85,6 +85,7 @@ class Project(BaseDocument):
     resolution_history: List[dict] = []
     source_report: Optional[dict] = None
     rates: dict = {}  # installer_id -> agreed per-job rate (frozen at assignment)
+    rate_history: List[dict] = []  # admin overrides {installer_id, old, new, reason, by, at}
     rate_override: bool = False
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
