@@ -137,6 +137,8 @@ class TestMigrationPreservation:
         pd = requests.get(f"{API}/projects/{pid}",
                           headers=_bearer(employee_token), timeout=10).json()
         for n in pd["ncs"]:
+            if any(h.get("from") for h in n.get("assignment_history", [])):
+                continue  # individually reassigned later (P2) - inheritance no longer applies
             assert n.get("assigned_installer_id") == installer_id, \
                 f"NC {n['number']} assigned_installer_id={n.get('assigned_installer_id')} vs project {installer_id}"
 

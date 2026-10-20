@@ -107,9 +107,9 @@ class TestImportPhotoStatsAndDuplicate:
         _, info = p419977_import
         ps = info.get("photo_stats")
         assert ps and ps.get("filtered", 0) >= 1, f"expected at least some filtered banners, got {ps}"
-        # banner/graphic/repeated reasons expected
+        # rules changed: decorations are 'repeated' (running header) or 'known_logo' (learned fingerprint)
         reasons = ps.get("reasons") or {}
-        assert any(r in reasons for r in ("banner", "graphic", "repeated"))
+        assert any(r in reasons for r in ("repeated", "known_logo")), reasons
 
 
 # ---------------- B. merge-preview: staff only, items shape ----------------

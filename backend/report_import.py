@@ -28,42 +28,75 @@ def close(a: str, b: str, dist: int = 16) -> bool:
     return bin(int(a, 16) ^ int(b, 16)).count("1") <= dist
 
 
-def decorative_reason(data: bytes) -> Optional[str]:
-    """'banner' for strips/headers, 'graphic' for flat-colour logos and icons; None for real photos."""
+def photo_like(data: bytes) -> bool:
+    """True unless the image sits on a dominant pure white/black background like a printed logo or header.
+    Photographs (incl. flat walls, annotated defect and measurement photos) never qualify as decorations."""
     img = Image.open(io.BytesIO(data)).convert("RGB")
-    w, h = img.size
-    if max(w, h) / max(1, min(w, h)) > 3:
-        return "banner"
     px = [(r // 16, g // 16, b // 16) for r, g, b in img.resize((64, 64)).getdata()]
-    counts = Counter(px)
-    top4 = sum(c for _, c in counts.most_common(4)) / len(px)
-    if top4 > 0.6 and len(counts) < 60:
-        return "graphic"
-    return None
+    (top, n), = Counter(px).most_common(1)
+    background = all(v >= 14 for v in top) or all(v <= 1 for v in top)
+    return not (background and n / len(px) > 0.5)
 
 
-def classify(items: List[Tuple[str, int, bytes]]) -> dict:
-    """items: (key, page, bytes). Returns {key: reason} for images to exclude (decorative, or a running header/footer)."""
-    out, hashes = {}, []
+def aspect(data: bytes) -> float:
+    w, h = Image.open(io.BytesIO(data)).size
+    return round(w / max(1, h), 3)
+
+
+def same_shape(a: float, b: float) -> bool:
+    return abs(a - b) / max(a, b) < 0.12
+
+
+def classify(items: List[Tuple[str, int, bytes]], known: Optional[List[Tuple[str, float]]] = None) -> Tuple[dict, List[Tuple[str, float]]]:
+    """items: (key, page, bytes). Returns ({key: reason}, new_logo_hashes).
+
+    Conservative by design - an image is only hidden when it is a page decoration:
+      * 'repeated'  : the same non-photographic image on 3+ pages and at least half the pages with images
+                      (running logo / header / footer), or
+      * 'known_logo': it matches a logo fingerprint learned from an earlier report.
+    Anything appearing once - technical diagrams, annotated defect photos, measurement close-ups - is kept,
+    whatever its shape or colours. Staff can still hide/restore manually.
+    """
+    known = known or []
+    hashes = []
     for key, page, data in items:
         try:
-            reason = decorative_reason(data)
-            h = hex_hash(data)
+            hashes.append((key, page, hex_hash(data), photo_like(data), aspect(data)))
         except Exception:
             continue
-        if reason:
-            out[key] = reason
-        hashes.append((key, page, h))
-    pages = len({p for _, p, _ in hashes})
-    for key, page, h in hashes:  # running header/footer: on 3+ pages AND at least half the pages with images
-        n = len({page} | {p for _, p, oh in hashes if close(h, oh)})
-        if key not in out and n >= 3 and n * 2 >= pages:
+    pages = len({x[1] for x in hashes})
+    out, learned = {}, []
+    for key, page, h, photo, ar in hashes:
+        if photo:
+            continue
+        # strict match + same shape: plain walls/ceilings also have near-flat hashes, so shape must agree too
+        if any(close(h, k, 10) and same_shape(ar, ka) for k, ka in known):
+            out[key] = "known_logo"
+            continue
+        n = len({page} | {p for _, p, oh, _, oa in hashes if close(h, oh) and same_shape(ar, oa)})
+        if n >= 3 and n * 2 >= pages:
             out[key] = "repeated"
-    return out
+            if not any(close(h, x) for x, _ in learned):
+                learned.append((h, ar))
+    return out, learned
 
 
-async def clean_project_report_photos(pid: str) -> int:
-    """Re-applies the filter to a project's existing PDF photos. Files stay in storage; manual choices are kept."""
+async def known_logos() -> List[Tuple[str, float]]:
+    return [(d["_id"], d["aspect"]) for d in await db.decorations.find({"aspect": {"$exists": True}}).to_list(500)]
+
+
+async def learn_logos(hashes: List[Tuple[str, float]]):
+    """Logo fingerprints learned from running headers, so a logo printed once in a later report is still skipped."""
+    for h, ar in hashes:
+        await db.decorations.update_one({"_id": h}, {"$set": {"aspect": ar}, "$setOnInsert": {"learned_at": __import__("core").now_iso()}}, upsert=True)
+
+
+async def clean_project_report_photos(pid: str, reset: bool = False) -> int:
+    """Re-applies the filter to a project's existing PDF photos. Files stay in storage; manual choices are kept.
+    reset=True first un-hides earlier automatic exclusions (used when the rules change)."""
+    if reset:
+        await db.files.update_many({"project_id": pid, "kind": "trustmark", "source": "pdf_import", "exclude_reason": {"$nin": ["manual", None]}},
+                                   {"$set": {"excluded": False, "exclude_reason": None}})
     files = await db.files.find({"project_id": pid, "kind": "trustmark", "source": "pdf_import"}).to_list(2000)
     items = []
     for f in files:
@@ -89,7 +122,8 @@ async def clean_project_report_photos(pid: str) -> int:
         if k not in seen:
             seen.add(k)
             uniq.append((key, page, data))
-    flagged = classify(uniq)
+    flagged, learned = classify(uniq, await known_logos())
+    await learn_logos(learned)
     by_hash = {}
     for key, page, data in items:
         by_hash.setdefault((page, hex_hash(data)), []).append(key)

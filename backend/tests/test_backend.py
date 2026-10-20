@@ -138,11 +138,9 @@ class TestAuth:
         r = requests.post(f"{API}/auth/forgot", json={"email": EMPLOYEE[0]}, timeout=10)
         assert r.status_code == 200
         j = r.json()
-        assert "dev_reset_code" in j, j
-        code = j["dev_reset_code"]
-        new_pw = "EmployeeDemo!2026"  # reset to same password to keep test idempotent
-        rr = requests.post(f"{API}/auth/reset", json={"token": code, "password": new_pw}, timeout=10)
-        assert rr.status_code == 200
+        # P0 security fix: the public endpoint must never reveal a reset code
+        assert "dev_reset_code" not in j and "code" not in j, j
+        assert "message" in j
         # Login still works
         assert login(*EMPLOYEE).status_code == 200
 
@@ -160,7 +158,17 @@ class TestRBAC:
         assert r.status_code == 200
         pid = r.json()["items"][0]["id"]
         r2 = requests.get(f"{API}/projects/{pid}", headers=bearer(installer2_token), timeout=10)
-        assert r2.status_code == 403
+        # P2: access is per NC. Installer 2 may hold an individually reassigned NC here; then they must see ONLY theirs.
+        me = requests.get(f"{API}/auth/me", headers=bearer(installer2_token), timeout=10).json()
+        if r2.status_code == 200:
+            ncs = r2.json()["ncs"]
+            assert ncs and all(n["assigned_installer_id"] == me["id"] for n in ncs)
+            other = next(n for n in requests.get(f"{API}/projects/{pid}", headers=bearer(installer_token), timeout=10).json()["ncs"])
+            r3 = requests.post(f"{API}/ncs/{other['id']}/evidence", headers=bearer(installer2_token),
+                               files={"file": ("x.jpg", b"x", "image/jpeg")}, data={"meta": "{}"}, timeout=10)
+            assert r3.status_code == 403
+        else:
+            assert r2.status_code == 403
 
     def test_employee_cannot_write_settings(self, employee_token):
         body = {"default_job_rate": 150, "currency": "GBP", "payment_terms": "weekly",
@@ -217,7 +225,8 @@ class TestDashboardProjects:
         r = requests.get(f"{API}/dashboard", headers=bearer(employee_token), timeout=10)
         assert r.status_code == 200
         j = r.json()
-        for k in ("active_projects", "outstanding_ncs", "awaiting_review", "completed_projects"):
+        # P1 counters (replaced the original active/outstanding/completed keys)
+        for k in ("unassigned", "in_progress", "awaiting_review", "completed", "trustmark_resolved"):
             assert k in j and isinstance(j[k], int)
 
     def test_projects_search_and_filter(self, employee_token):
@@ -371,6 +380,7 @@ class TestVideo:
         pid = pr["items"][0]["id"]
         pd = requests.get(f"{API}/projects/{pid}", headers=bearer(installer_token), timeout=10).json()
         nc = next(n for n in pd["ncs"] if n["status"] not in ("approved", "ai_verified"))
+        base = nc["video_versions"]  # earlier runs leave retained versions (never deleted)
         vb = self._mp4_bytes()
         meta = {"kind": "video", "source": "in_app_camera", "lat": 51.87, "lng": -0.41,
                 "accuracy_m": 10, "duration_s": 2, "client_id": str(uuid.uuid4())}
@@ -384,7 +394,7 @@ class TestVideo:
         pd2 = requests.get(f"{API}/projects/{pid}", headers=bearer(installer_token), timeout=10).json()
         nc2 = next(n for n in pd2["ncs"] if n["id"] == nc["id"])
         assert nc2["active_video_id"] == v1_id
-        assert nc2["video_versions"] == 1
+        assert nc2["video_versions"] == base + 1
 
         # upload second video -> supersedes first
         meta2 = {**meta, "client_id": str(uuid.uuid4())}
@@ -396,7 +406,7 @@ class TestVideo:
         pd3 = requests.get(f"{API}/projects/{pid}", headers=bearer(installer_token), timeout=10).json()
         nc3 = next(n for n in pd3["ncs"] if n["id"] == nc["id"])
         assert nc3["active_video_id"] == v2_id
-        assert nc3["video_versions"] == 2
+        assert nc3["video_versions"] == base + 2
 
 
 # ---------------------- SUBMIT + AI ----------------------
@@ -450,7 +460,11 @@ class TestExport:
         assert rz.status_code == 200
         import zipfile
         z = zipfile.ZipFile(io.BytesIO(rz.content))
-        assert "manifest.json" in z.namelist()
+        # P8 Evidence Pack: one PDF per NC + Videos/ folder (manifest.json replaced; JSON export is separate)
+        names = z.namelist()
+        assert names and all(n.endswith(".pdf") or n.startswith("Videos/") for n in names), names
+        assert any(n.startswith("NC-01_") and n.endswith(".pdf") for n in names)
+        assert rz.headers["content-disposition"].endswith('_Evidence_Pack.zip"')
 
     def test_export_all_admin_only(self, admin_token, employee_token):
         r_emp = requests.get(f"{API}/export/link", headers=bearer(employee_token), timeout=10)

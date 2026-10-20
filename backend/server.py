@@ -21,7 +21,7 @@ from auth import router as auth_router, current_user, require, ph, revoke_all, c
 from storage import storage, evidence_path, APP_NAME
 from media import process_photo, video_frames, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
-from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos
+from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 log = logging.getLogger("server")
@@ -306,7 +306,8 @@ class ProjectIn(BaseModel):
 async def _parse_pdf(import_id: str, data: bytes):
     import tempfile
     try:
-        text, images, photo_stats = await run_in_threadpool(pdf_text_and_images, data)
+        text, images, photo_stats = await run_in_threadpool(pdf_text_and_images, data, 60, await known_logos())
+        await learn_logos(photo_stats.pop("learned", []))
         page_images = {}
         for page, imgs in images.items():
             paths = []

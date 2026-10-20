@@ -47,10 +47,20 @@ async def m004_pdf_photo_cleanup():
             log.info("project %s: %d decorative PDF images hidden", pid, n)
 
 
+async def m005_pdf_filter_keep_diagrams():
+    # stricter filter: un-hide earlier shape/colour-based exclusions (diagrams etc.), keep only page decorations
+    from report_import import clean_project_report_photos
+    for pid in await db.files.distinct("project_id", {"kind": "trustmark", "source": "pdf_import"}):
+        await clean_project_report_photos(pid, reset=True)
+
+
 MIGRATIONS = [("001_status_model_and_nc_assignment", m001_status_model_and_nc_assignment),
               ("002_project_lifecycle", m002_project_lifecycle),
               ("003_rates_and_policies", m003_rates_and_policies),
-              ("004_pdf_photo_cleanup", m004_pdf_photo_cleanup)]
+              ("004_pdf_photo_cleanup", m004_pdf_photo_cleanup),
+              ("005_pdf_filter_keep_diagrams", m005_pdf_filter_keep_diagrams),
+              ("006_pdf_filter_logo_shape", m005_pdf_filter_keep_diagrams),
+              ("007_pdf_filter_photo_guard", m005_pdf_filter_keep_diagrams)]
 
 
 async def run_migrations():

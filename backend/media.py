@@ -104,7 +104,7 @@ def video_frames(data: bytes, duration: Optional[float], count: int = 4) -> List
     return frames
 
 
-def pdf_text_and_images(data: bytes, max_pages: int = 60) -> tuple:
+def pdf_text_and_images(data: bytes, max_pages: int = 60, known_logos: Optional[list] = None) -> tuple:
     """Returns (text, {page_no: [jpeg bytes]}, stats) – embedded photos >= 200px; logos/decorations filtered out."""
     import pymupdf
     from report_import import classify
@@ -135,14 +135,14 @@ def pdf_text_and_images(data: bytes, max_pages: int = 60) -> tuple:
                 continue
             if len(raw.get(i + 1, [])) >= 12:
                 break
-    flagged = classify([(f"{p}-{k}", p, b) for p, imgs in raw.items() for k, b in enumerate(imgs)])
+    flagged, learned = classify([(f"{p}-{k}", p, b) for p, imgs in raw.items() for k, b in enumerate(imgs)], known_logos)
     images = {}
     for p, imgs in raw.items():
         kept = [b for k, b in enumerate(imgs) if f"{p}-{k}" not in flagged][:6]
         if kept:
             images[p] = kept
     stats = {"found": sum(len(v) for v in raw.values()), "kept": sum(len(v) for v in images.values()),
-             "filtered": len(flagged), "reasons": dict(__import__("collections").Counter(flagged.values()))}
+             "filtered": len(flagged), "reasons": dict(__import__("collections").Counter(flagged.values())), "learned": learned}
     return "\n".join(text_parts), images, stats
 
 
