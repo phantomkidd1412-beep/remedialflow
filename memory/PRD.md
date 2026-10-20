@@ -86,3 +86,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Installer Gallery picker: photos + videos (multi-select), iOS passthrough/original representation, MP4/MOV (server byte-sniffed), one active video per NC (first selected used). Uses existing offline queue/retry/client_id dedupe. Per-item upload % (XHR on web, expo-file-system createUploadTask on native).
 - Gallery stamps never claim GPS; missing EXIF date -> "DATE TAKEN: NOT AVAILABLE"; EXIF date marked "FROM FILE, NOT VERIFIED".
 - NC PDF: address, Project/NC reference, NON-COMPLIANCE (original wording), original TrustMark photos, remediation photos, optional staff "PDF remediation note" (PUT /api/ncs/{id}/export-note). No approval/AI/status info. Corrupt images skipped. ZIP + Videos/ unchanged.
+
+## Video evidence fixes (iteration 21, agent-tested)
+- Root cause: no HTTP Range support on file serving (iOS AVPlayer needs 206) + iPhone HEVC .MOV not decodable on web/many Android + UI showed only one "active" video.
+- Server builds universal H.264/AAC faststart "playback" copy (lossless remux when already H.264; transcode otherwise), originals untouched; startup backfill; byte-range streaming with disk cache; GET /api/evidence/{fid}/play returns fresh signed URLs (authz via get_nc).
+- No duration limit; MAX_VIDEO_MB env (default 500) via GET /api/config/media shown in UI; size_bytes integrity check (422 -> auto retry).
+- Multiple videos per NC (nc.videos), never superseded; all in ZIP Videos/. Simplified video viewer (player + Close only).
+- Note: headless test Chromium lacks H.264, so web playback is verified only in real browsers.

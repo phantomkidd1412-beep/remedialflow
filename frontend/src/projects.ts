@@ -44,14 +44,20 @@ export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
   captured_at?: string | null; server_received_at: string; tz?: string | null; lat?: number | null; lng?: number | null;
   accuracy_m?: number | null; location_verified: boolean; duration_s?: number | null; processing: string;
-  exclude_reason?: string | null;
+  exclude_reason?: string | null; playback?: string | null;
 };
+
+/** Server-configured per-video size limit (shown before recording/selection). */
+export function useMediaConfig() {
+  const q = useQuery({ queryKey: ["media-config"], queryFn: () => api<{ max_video_mb: number }>("/config/media"), staleTime: Infinity });
+  return { maxVideoMb: q.data?.max_video_mb ?? 500 };
+}
 
 export type NCItem = {
   id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
   assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null; reopen_history?: { at: string; source: string; note?: string }[];
   ai?: { outcome: string; confidence: number; feedback: string; concerns: string[]; model: string; at: string } | null;
-  review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
+  review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; videos?: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
   text_history?: { original_text: string; replaced_at: string }[];
 };
 

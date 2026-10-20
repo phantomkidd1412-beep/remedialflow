@@ -6,11 +6,14 @@ import zipfile
 import hashlib
 import asyncio
 import logging
+import secrets
+import tempfile
+from pathlib import Path
 from typing import Optional, List
 
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from starlette.concurrency import run_in_threadpool
@@ -20,7 +23,7 @@ from core import (db, client, User, Project, NC, EvidenceFile, Submission, AIRes
                   now_iso, oid, file_url, signed_query, verify_signed, audit, clean)
 from auth import router as auth_router, current_user, require, ph, revoke_all, create_reset_token
 from storage import storage, evidence_path, APP_NAME
-from media import process_photo, video_frames, demo_trustmark_image, pdf_text_and_images
+from media import process_photo, video_frames, make_playback, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -40,7 +43,10 @@ admin = require("admin")
 DONE = {"approved"}
 REVIEW = {"employee_review", "admin_review"}
 LIFECYCLE = {"unassigned", "in_progress", "completed", "trustmark_resolved"}
-MAX_UPLOAD = 300 * 1024 * 1024
+MAX_UPLOAD = 300 * 1024 * 1024  # photos / reference images
+MAX_VIDEO_MB = int(os.environ.get("MAX_VIDEO_MB", "500"))  # configurable per-video size limit (no duration limit)
+MEDIA_CACHE = Path(os.environ.get("MEDIA_CACHE_DIR", "/tmp/rf_media"))
+_transcode_lock = asyncio.Semaphore(1)  # one video conversion at a time keeps the API responsive
 
 
 @app.get("/health", include_in_schema=False)
@@ -624,10 +630,10 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         trust = [file_public(f) for f in fs if f.kind == "trustmark" and not f.excluded]
         hidden = [file_public(f) for f in fs if f.kind == "trustmark" and f.excluded] if u.role != "installer" else []
         photos = [file_public(f) for f in fs if f.kind == "photo" and f.status != "superseded"]
-        video = next((file_public(f) for f in fs if f.id == n.active_video_id), None)
+        videos = [file_public(f) for f in fs if f.kind == "video"]  # every video, incl. ones previously marked superseded
         d = n.model_dump()
-        d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, video=video,
-                 video_versions=sum(1 for f in fs if f.kind == "video"),
+        d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
+                 video_versions=len(videos),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
         out.append(d)
     pd = p.model_dump()
@@ -733,10 +739,45 @@ async def _process_file(fid: str, data: bytes, meta: Optional[dict]):
         for variant, b in outs.items():
             paths[variant] = await storage.aput(
                 evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, variant, "jpg"), b, "image/jpeg")
-        await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"paths": paths, "processing": "ready"}})
+        await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {f"paths.{k}": v for k, v in paths.items()} | {"processing": "ready"}})
     except Exception as e:
         log.exception("processing failed %s", fid)
         await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"processing": "failed", "processing_error": str(e)[:200]}})
+    if f.kind == "video":
+        await _make_playback(fid, data)
+
+
+async def _make_playback(fid: str, data: bytes):
+    """Builds the universal H.264 playback copy. Original stays untouched (export + audit use the original)."""
+    f = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(fid)}))
+    async with _transcode_lock:
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                src, dst = os.path.join(td, "src"), os.path.join(td, "play.mp4")
+                with open(src, "wb") as fh:
+                    fh.write(data)
+                info = await run_in_threadpool(make_playback, src, dst)
+                with open(dst, "rb") as fh:
+                    out = fh.read()
+            path = await storage.aput(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, "playback", "mp4"), out, "video/mp4")
+            upd = {"paths.playback": path, "playback": "ready", "video_codec": info["video"], "playback_mode": info["mode"]}
+            if not f.duration_s and info.get("duration"):
+                upd["duration_s"] = round(info["duration"], 1)
+            await db.files.update_one({"_id": ObjectId(fid)}, {"$set": upd})
+        except Exception as e:
+            log.warning("playback copy failed %s: %s", fid, e)
+            await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"playback": "failed", "playback_error": str(e)[:200]}})
+
+
+async def backfill_playback():
+    """One-off: videos uploaded before playback copies existed get one (originals untouched)."""
+    async for d in db.files.find({"kind": "video", "playback": None, "status": {"$ne": "discarded"}}, {"paths": 1}):
+        try:
+            await db.files.update_one({"_id": d["_id"]}, {"$set": {"playback": "pending"}})
+            data, _ = await storage.aget(d["paths"]["original"])
+            await _make_playback(str(d["_id"]), data)
+        except Exception:
+            log.exception("playback backfill failed %s", d["_id"])
 
 
 def _sniff(b: bytes) -> Optional[str]:
@@ -759,8 +800,13 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file")
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "File too large")
+    limit = MAX_VIDEO_MB * 1024 * 1024 if kind == "video" else MAX_UPLOAD
+    if len(data) > limit:
+        raise HTTPException(413, f"File too large (maximum {MAX_VIDEO_MB} MB per video)" if kind == "video" else "File too large")
+    expected = meta.get("size_bytes")
+    if isinstance(expected, (int, float)) and expected > 0 and int(expected) != len(data):
+        # interrupted transfer: never store/mark a partial file as uploaded; the device keeps it and retries
+        raise HTTPException(422, "Upload incomplete - will retry")
     # validate the real file type from its bytes (client content-type/filename are not trusted)
     sniff = _sniff(data)
     allowed = {"video": {"mp4", "mov"}, "photo": {"jpg", "png", "heic", "webp"}, "trustmark": {"jpg", "png", "heic", "webp"}}.get(kind, {"jpg", "png"})
@@ -777,7 +823,7 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
                      paths={"original": path}, sha256=sha, size=len(data), mime=mime, original_name=file.filename or "",
                      captured_at=meta.get("captured_at"), tz=meta.get("tz"), tz_offset_min=meta.get("tz_offset_min"),
                      lat=lat, lng=lng, accuracy_m=acc, location_verified=loc_ok, duration_s=meta.get("duration_s"),
-                     uploaded_by=u.id, client_id=meta.get("client_id"),
+                     uploaded_by=u.id, client_id=meta.get("client_id"), playback="pending" if kind == "video" else None,
                      status="submitted" if kind == "trustmark" else "draft")
     await db.files.insert_one(f.to_mongo())
     stamp_meta = None
@@ -815,9 +861,7 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
         sub_id = str(r.inserted_id)
         await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"draft_submission_id": sub_id}})
     f = await store_upload(nc, p, u, file, m, kind, source, sub_id, bg)
-    if kind == "video":
-        if nc.active_video_id:
-            await db.files.update_one({"_id": oid(nc.active_video_id)}, {"$set": {"status": "superseded"}})
+    if kind == "video":  # multiple videos per NC: a new video never replaces or hides an earlier one
         await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"active_video_id": f.id}})
     return file_public(f)
 
@@ -854,7 +898,9 @@ async def discard_evidence(fid: str, u: User = Depends(current_user)):
     # Soft-remove from the submission; the original object and audit record are retained.
     await db.files.update_one({"_id": oid(fid)}, {"$set": {"status": "discarded"}})
     if f.kind == "video":
-        await db.ncs.update_one({"_id": oid(f.nc_id), "active_video_id": fid}, {"$set": {"active_video_id": None}})
+        latest = await db.files.find_one({"nc_id": f.nc_id, "kind": "video", "status": {"$in": ["draft", "submitted", "superseded"]}},
+                                         {"_id": 1}, sort=[("server_received_at", -1)])
+        await db.ncs.update_one({"_id": oid(f.nc_id), "active_video_id": fid}, {"$set": {"active_video_id": str(latest["_id"]) if latest else None}})
     await audit("evidence.discarded", u.id, f"nc:{f.nc_id}", {"file_id": fid})
     return {"ok": True}
 
@@ -965,7 +1011,8 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
         raise HTTPException(400, "No new evidence to submit")
     drafts = await db.files.find({"submission_id": nc.draft_submission_id, "status": "draft"}).to_list(500)
     photo_ids = [str(d["_id"]) for d in drafts if d["kind"] == "photo"]
-    if not photo_ids and not nc.active_video_id:
+    video_ids = [str(d["_id"]) for d in drafts if d["kind"] == "video"]
+    if not photo_ids and not video_ids and not nc.active_video_id:
         raise HTTPException(400, "Add at least one photo or video")
     sid = nc.draft_submission_id
     # atomic claim: two concurrent submits for the same draft cannot both start an assessment
@@ -976,7 +1023,7 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
         return {"ok": True, "submission_id": sid, "status": "assessing", "duplicate": True}
     await db.files.update_many({"submission_id": sid, "status": "draft"}, {"$set": {"status": "submitted"}})
     await db.submissions.update_one({"_id": oid(sid)}, {"$set": {"status": "submitted", "photo_ids": photo_ids, "submit_client_id": body.client_id,
-                                    "video_id": nc.active_video_id, "submitted_at": now_iso()}})
+                                    "video_id": video_ids[-1] if video_ids else nc.active_video_id, "video_ids": video_ids, "submitted_at": now_iso()}})
     await recompute_project(p.id)
     await audit("evidence.submitted", u.id, f"nc:{nc_id}", {"submission_id": sid, "photos": len(photo_ids), "video": nc.active_video_id})
     bg.add_task(run_assessment, nc_id, sid)
@@ -1185,8 +1232,62 @@ async def mark_paid(eid: str, u: User = Depends(admin)):
 
 
 # ---------------- files (signed, temporary URLs) ----------------
+async def _local_copy(fid: str, variant: str, spath: str) -> Path:
+    """Disk cache of a stored video so range requests don't re-download the whole object each time."""
+    MEDIA_CACHE.mkdir(parents=True, exist_ok=True)
+    p = MEDIA_CACHE / f"{fid}_{variant}"
+    if not p.exists():
+        data, _ = await storage.aget(spath)
+        tmp = MEDIA_CACHE / f"{fid}_{variant}.{secrets.token_hex(4)}.part"
+        tmp.write_bytes(data)
+        tmp.replace(p)
+        files = sorted((x for x in MEDIA_CACHE.iterdir() if not x.name.endswith(".part")), key=lambda x: x.stat().st_mtime)
+        total = sum(x.stat().st_size for x in files)
+        while files and total > 3 * 1024 ** 3:  # keep the cache under ~3 GB
+            old = files.pop(0)
+            total -= old.stat().st_size
+            if old != p:
+                old.unlink(missing_ok=True)
+    return p
+
+
+def _range_response(path: Path, ct: str, range_header: Optional[str]):
+    """HTTP byte ranges (206) - required by iOS AVPlayer and used by Android/web players for seeking/streaming."""
+    size = path.stat().st_size
+    start, end, status = 0, size - 1, 200
+    if range_header:
+        m = re.match(r"bytes=(\d*)-(\d*)$", range_header.strip())
+        if not m or (not m.group(1) and not m.group(2)):
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+        if m.group(1):
+            start = int(m.group(1))
+            end = min(int(m.group(2)), size - 1) if m.group(2) else size - 1
+        else:  # suffix range: last N bytes
+            start = max(0, size - int(m.group(2)))
+        if start >= size or start > end:
+            return Response(status_code=416, headers={"Content-Range": f"bytes */{size}"})
+        status = 206
+    length = end - start + 1
+
+    def body():
+        with open(path, "rb") as fh:
+            fh.seek(start)
+            left = length
+            while left > 0:
+                chunk = fh.read(min(1024 * 1024, left))
+                if not chunk:
+                    break
+                left -= len(chunk)
+                yield chunk
+
+    headers = {"Accept-Ranges": "bytes", "Content-Length": str(length), "Cache-Control": "private, max-age=3600"}
+    if status == 206:
+        headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+    return StreamingResponse(body(), status_code=status, media_type=ct, headers=headers)
+
+
 @api.get("/files/{fid}/{variant}")
-async def serve_file(fid: str, variant: str, exp: int, sig: str):
+async def serve_file(fid: str, variant: str, exp: int, sig: str, request: Request):
     if not verify_signed(f"{fid}:{variant}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     f = await db.files.find_one({"_id": oid(fid)}, {"paths": 1, "mime": 1, "project_id": 1})
@@ -1194,10 +1295,32 @@ async def serve_file(fid: str, variant: str, exp: int, sig: str):
         raise HTTPException(404, "Not found")
     if f.get("project_id") and await db.projects.find_one({"_id": oid(f["project_id"]), "deleted": True}, {"_id": 1}):
         raise HTTPException(404, "Not found")  # links stop working as soon as a project is deleted
+    if variant == "playback" or (variant == "original" and (f.get("mime") or "").startswith("video/")):
+        ct = "video/mp4" if variant == "playback" else f["mime"]
+        path = await _local_copy(fid, variant, f["paths"][variant])
+        return _range_response(path, ct, request.headers.get("range"))
     data, ct = await storage.aget(f["paths"][variant])
     if variant == "original":
         ct = f.get("mime") or ct
     return Response(data, media_type=ct, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@api.get("/evidence/{fid}/play")
+async def play_video(fid: str, u: User = Depends(current_user)):
+    """Fresh, short-lived playback URL for an authorised viewer (installers: only their own NCs)."""
+    d = await db.files.find_one({"_id": oid(fid), "kind": "video", "status": {"$ne": "discarded"}})
+    if not d:
+        raise HTTPException(404, "Video not found")
+    await get_nc(d["nc_id"], u)
+    f = EvidenceFile.from_mongo(d)
+    ready = "playback" in f.paths
+    return {"state": "ready" if ready else (f.playback or "pending"), "url": file_url(fid, "playback") if ready else None,
+            "original_url": file_url(fid, "original"), "original_mime": f.mime, "codec": f.video_codec, "duration_s": f.duration_s}
+
+
+@api.get("/config/media")
+async def media_config(u: User = Depends(current_user)):
+    return {"max_video_mb": MAX_VIDEO_MB}
 
 
 # ---------------- export ----------------
@@ -1349,6 +1472,7 @@ async def startup():
     await run_migrations()
     if os.environ.get("DEMO_SEED") == "true":
         asyncio.create_task(_seed_safe())
+    asyncio.create_task(backfill_playback())
 
 
 async def _seed_safe():

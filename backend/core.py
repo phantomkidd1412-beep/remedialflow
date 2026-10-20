@@ -153,6 +153,8 @@ class EvidenceFile(BaseDocument):
     status: str = "draft"  # draft | submitted | superseded
     client_id: Optional[str] = None  # idempotency key from device queue
     processing: str = "pending"  # pending | ready | failed
+    playback: Optional[str] = None  # videos only: pending | ready | failed (universal H.264 copy for in-app playback)
+    video_codec: Optional[str] = None
     excluded: bool = False  # hidden logo/decoration from a PDF import (file kept in storage)
     exclude_reason: Optional[str] = None  # banner | graphic | repeated | manual
     manual_keep: bool = False  # staff restored it; automatic cleanup leaves it alone

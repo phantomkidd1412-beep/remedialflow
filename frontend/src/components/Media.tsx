@@ -1,9 +1,9 @@
-import { useState } from "react";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, Modal, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { Image } from "expo-image";
 import { useVideoPlayer, VideoView } from "expo-video";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { absUrl } from "@/src/api";
+import { absUrl, api } from "@/src/api";
 import { EvidenceFile } from "@/src/projects";
 import { Badge, Feather, fmtDate } from "@/src/ui";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
@@ -25,9 +25,69 @@ export function Thumb({ f, size = 72, onPress, onLongPress, testID }: { f: Evide
   );
 }
 
-function VideoPlayer({ uri }: { uri: string }) {
+type Play = { state: string; url: string | null; original_url: string; original_mime: string; codec?: string | null };
+
+function Player({ uri, onError }: { uri: string; onError: () => void }) {
   const player = useVideoPlayer(uri, (p) => (p.loop = false));
-  return <VideoView player={player} style={{ width: "100%", aspectRatio: 9 / 12 }} contentFit="contain" nativeControls />;
+  useEffect(() => {
+    const sub = player.addListener("statusChange", (e) => e.status === "error" && onError());
+    return () => sub.remove();
+  }, [player, onError]);
+  return <VideoView player={player} style={{ width: "100%", flex: 1 }} contentFit="contain" nativeControls fullscreenOptions={{ enable: true }} allowsPictureInPicture={false} />;
+}
+
+/** Plays through a freshly signed URL (never a stale cached one). Prefers the universal H.264 copy; iOS can play the
+ *  original (HEVC/MOV) while that copy is still being prepared. Clear message instead of a broken player. */
+function VideoPlayer({ f }: { f: EvidenceFile }) {
+  const s = useStyles();
+  const { colors } = useTheme();
+  const [info, setInfo] = useState<Play | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [failedUri, setFailedUri] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    let alive = true;
+    api<Play>(`/evidence/${f.id}/play`)
+      .then((r) => alive && (setInfo(r), setErr(null)))
+      .catch((e) => alive && setErr(e.message || "Could not load video"));
+    return () => {
+      alive = false;
+    };
+  }, [f.id, tick]);
+
+  // still preparing the playback copy: poll until ready
+  useEffect(() => {
+    if (info?.state !== "pending") return;
+    const t = setTimeout(() => setTick((n) => n + 1), 4000);
+    return () => clearTimeout(t);
+  }, [info]);
+
+  const originalOk = Platform.OS === "ios" || /h264|avc/i.test(info?.codec ?? "");
+  const uri = info?.url ? absUrl(info.url) : info && originalOk ? absUrl(info.original_url) : null;
+  const onError = useCallback(() => setFailedUri(uri), [uri]);
+  // web only: a few stripped-down browsers can't decode standard MP4 (H.264) at all
+  const webNoMp4 = Platform.OS === "web" && typeof document !== "undefined" && !document.createElement("video").canPlayType('video/mp4; codecs="avc1.42E01E"');
+
+  let msg: string | null = err;
+  if (!msg && webNoMp4) msg = "This browser can't play MP4 video. Open RemedialFlow in Chrome, Safari, Edge or Firefox, or on your phone.";
+  if (!msg && info && !uri) msg = info.state === "failed" ? "This video can't be played in the app. The original file is kept and included in the export." : "Preparing video for playback…";
+  if (!msg && uri && failedUri === uri) msg = "Playback failed. Check your connection and try again. The original file is kept and included in the export.";
+
+  if (!info && !err) return <View style={s.vidBox}><ActivityIndicator color={colors.onSurfaceInverse} /></View>;
+  if (msg)
+    return (
+      <View style={s.vidBox} testID="video-message">
+        {info?.state === "pending" && !err ? <ActivityIndicator color={colors.onSurfaceInverse} /> : <Feather name="alert-circle" size={22} color={colors.onSurfaceInverse} />}
+        <Text style={s.vidMsg}>{msg}</Text>
+        {info?.state !== "pending" ? (
+          <Pressable onPress={() => (setFailedUri(null), setInfo(null), setErr(null), setTick((n) => n + 1))} style={s.retry} testID="video-retry">
+            <Text style={s.vidMsg}>TRY AGAIN</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    );
+  return <Player key={uri!} uri={uri!} onError={onError} />;
 }
 
 const SOURCE: Record<string, string> = { in_app_camera: "Captured in app", gallery: "Uploaded from phone gallery", employee_upload: "Uploaded by employee", pdf_import: "Imported from inspection PDF", system: "System / TrustMark import" };
@@ -38,7 +98,21 @@ export function MediaViewer({ f, onClose }: { f: EvidenceFile | null; onClose: (
   const { colors } = useTheme();
   const [variant, setVariant] = useState<"stamped" | "original">("stamped");
   if (!f) return null;
-  const img = f.kind === "video" ? null : absUrl(f.urls[variant] ? f.urls[variant] : f.urls.display || f.urls.original);
+  if (f.kind === "video")
+    // simple player only: playback area, native play/pause/seek/fullscreen, Close. Metadata stays server-side.
+    return (
+      <Modal visible animationType="fade" onRequestClose={onClose}>
+        <View style={[s.root, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="media-viewer">
+          <View style={s.top}>
+            <Pressable onPress={onClose} style={s.close} testID="media-viewer-close" hitSlop={8} accessibilityLabel="Close video">
+              <Feather name="x" size={22} color={colors.onSurfaceInverse} />
+            </Pressable>
+          </View>
+          <VideoPlayer f={f} />
+        </View>
+      </Modal>
+    );
+  const img = absUrl(f.urls[variant] ? f.urls[variant] : f.urls.display || f.urls.original);
   const rows: [string, string][] = [
     ["Source", SOURCE[f.source] ?? f.source],
     ["Device capture", f.captured_at ? `${fmtDate(f.captured_at)} ${f.tz ?? ""}` : "Not reported"],
@@ -54,17 +128,13 @@ export function MediaViewer({ f, onClose }: { f: EvidenceFile | null; onClose: (
     <Modal visible animationType="fade" onRequestClose={onClose}>
       <View style={[s.root, { paddingTop: insets.top }]} testID="media-viewer">
         <View style={s.top}>
-          <Text style={s.title}>{f.kind === "video" ? "VIDEO EVIDENCE" : "PHOTO EVIDENCE"}</Text>
+          <Text style={s.title}>PHOTO EVIDENCE</Text>
           <Pressable onPress={onClose} style={s.close} testID="media-viewer-close" hitSlop={8}>
             <Feather name="x" size={22} color={colors.onSurfaceInverse} />
           </Pressable>
         </View>
         <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom + space.xl }}>
-          {f.kind === "video" ? (
-            <VideoPlayer uri={absUrl(f.urls.original)} />
-          ) : (
-            <Image source={{ uri: img!, cacheKey: `${f.id}-${variant}` }} style={s.img} contentFit="contain" transition={120} />
-          )}
+          <Image source={{ uri: img!, cacheKey: `${f.id}-${variant}` }} style={s.img} contentFit="contain" transition={120} />
           {f.kind === "photo" && f.urls.stamped ? (
             <View style={s.toggle}>
               {(["stamped", "original"] as const).map((v) => (
@@ -107,4 +177,7 @@ const useStyles = makeStyles((c) => ({
   k: { width: 110, fontFamily: fonts.mono, fontSize: 11, color: c.muted, textTransform: "uppercase" },
   v: { flex: 1, fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
   note: { fontFamily: fonts.mono, fontSize: 11, color: c.muted, marginTop: space.sm },
+  vidBox: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.md, padding: space.xl },
+  vidMsg: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurfaceInverse, textAlign: "center" },
+  retry: { borderWidth: BORDER, borderColor: c.onSurfaceInverse, paddingHorizontal: space.lg, height: 44, justifyContent: "center" },
 }));

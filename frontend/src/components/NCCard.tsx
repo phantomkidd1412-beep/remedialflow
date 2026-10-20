@@ -3,7 +3,7 @@ import { Image } from "expo-image";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { NCItem, ProjectRow, DONE, EvidenceFile } from "@/src/projects";
+import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
@@ -39,6 +39,9 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const submitQueued = !!sub && sub.status !== "failed";
   const drafts = nc.photos.filter((p) => p.status === "draft");
   const submitted = nc.photos.filter((p) => p.status === "submitted");
+  const draftVideos = (nc.videos ?? []).filter((v) => v.status === "draft");
+  const submittedVideos = (nc.videos ?? []).filter((v) => v.status !== "draft");
+  const { maxVideoMb } = useMediaConfig();
   const canSubmit = !done && nc.status !== "assessing" && !submitQueued && (nc.draft_count > 0 || uploads.length > 0);
   const badge = ev
     ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
@@ -60,21 +63,22 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     const photos = r.assets.filter((a) => a.type !== "video");
     const videos = r.assets.filter((a) => a.type === "video");
     const bad = videos.filter((a) => a.mimeType && !/mp4|quicktime|mov/i.test(a.mimeType));
-    const video = videos.find((a) => !bad.includes(a));
+    const big = videos.filter((a) => !bad.includes(a) && a.fileSize && a.fileSize > maxVideoMb * 1024 * 1024);
+    const okVideos = videos.filter((a) => !bad.includes(a) && !big.includes(a));
     for (const a of photos) {
       await enqueueUpload(project.id, nc.id, a.uri, a.mimeType || "image/jpeg", {
         // captured_at only from the file's own EXIF; GPS is never claimed for gallery media
         kind: "photo", source: "gallery", captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       });
     }
-    if (video) {
+    for (const video of okVideos) {
       await enqueueUpload(project.id, nc.id, video.uri, video.mimeType || (/\.mov$/i.test(video.uri) ? "video/quicktime" : "video/mp4"), {
         kind: "video", source: "gallery", captured_at: null, ...tzInfo(), lat: null, lng: null, accuracy_m: null,
         duration_s: video.duration ? Math.round(video.duration / 100) / 10 : null,
       });
     }
-    const parts = [photos.length ? `${photos.length} photo(s)` : "", video ? "1 video" : ""].filter(Boolean).join(" + ");
-    const notes = [videos.length - bad.length > 1 ? "only one video per NC, first one used" : "", bad.length ? "unsupported video skipped (MP4/MOV only)" : ""].filter(Boolean).join(" · ");
+    const parts = [photos.length ? `${photos.length} photo(s)` : "", okVideos.length ? `${okVideos.length} video(s)` : ""].filter(Boolean).join(" + ");
+    const notes = [big.length ? `${big.length} video(s) over ${maxVideoMb} MB skipped` : "", bad.length ? "unsupported video skipped (MP4/MOV only)" : ""].filter(Boolean).join(" · ");
     toast(parts ? `${parts} queued · marked as gallery upload${notes ? ` · ${notes}` : ""}` : notes || "Nothing selected");
   };
 
@@ -130,15 +134,16 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           {!done ? (
             <View style={s.actions}>
               <Btn title="Take photos" icon="camera" onPress={() => router.push({ pathname: "/camera", params })} style={{ flex: 1.4 }} testID={`take-photos-${nc.number}`} disabled={nc.status === "assessing"} />
-              <Btn title={nc.video ? "Replace" : "Video"} icon="video" variant="outline" onPress={() => router.push({ pathname: "/video", params })} style={{ flex: 1 }} testID={`record-video-${nc.number}`} disabled={nc.status === "assessing"} />
+              <Btn title="Video" icon="video" variant="outline" onPress={() => router.push({ pathname: "/video", params })} style={{ flex: 1 }} testID={`record-video-${nc.number}`} disabled={nc.status === "assessing"} />
             </View>
           ) : null}
+          {!done ? <Text style={s.muted} testID={`video-limit-${nc.number}`}>Videos: any length, up to {maxVideoMb} MB each. Add as many as needed.</Text> : null}
 
-          {drafts.length || uploads.length || nc.video ? (
+          {drafts.length || uploads.length || draftVideos.length ? (
             <>
               <Label>New evidence {nc.status === "assessing" ? "" : "(not yet submitted)"}</Label>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-                {nc.video ? <Thumb f={nc.video} onPress={() => setView(nc.video)} testID={`video-thumb-${nc.number}`} /> : null}
+                {draftVideos.map((v) => <Thumb key={v.id} f={v} onPress={() => setView(v)} testID={`video-thumb-${v.id}`} />)}
                 {drafts.map((f, i) => <Thumb key={f.id} f={f} onPress={() => setPv({ files: drafts, i })} testID={`draft-thumb-${f.id}`} />)}
                 {uploads.map((q) => (
                   <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? openConfirm(q) : undefined)} onLongPress={() => q.status !== "uploaded" && q.status !== "uploading" && openConfirm(q)} testID={`queued-item-${q.id}`}>
@@ -149,14 +154,14 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
                   </Pressable>
                 ))}
               </ScrollView>
-              {nc.video_versions > 1 ? <Text style={s.muted}>{nc.video_versions - 1} previous video version(s) kept for audit</Text> : null}
             </>
           ) : null}
 
-          {submitted.length ? (
+          {submitted.length || submittedVideos.length ? (
             <>
               <Label>Submitted evidence</Label>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
+                {submittedVideos.map((v) => <Thumb key={v.id} f={v} size={56} onPress={() => setView(v)} testID={`submitted-video-${v.id}`} />)}
                 {submitted.map((f, i) => <Thumb key={f.id} f={f} size={56} onPress={() => setPv({ files: submitted, i })} testID={`submitted-thumb-${f.id}`} />)}
               </ScrollView>
             </>

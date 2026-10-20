@@ -181,9 +181,19 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           ) : null}
           <Text style={s.muted}>Long-press a reference photo to hide it. Hidden files stay in storage.</Text>
 
-          <Label>Evidence ({nc.photos.length} photo{nc.photos.length === 1 ? "" : "s"}{nc.video ? " + video" : ""})</Label>
+          {nc.videos?.length ? <Label>Videos ({nc.videos.length})</Label> : null}
+          {nc.videos?.length ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
+              {nc.videos.map((v) => (
+                <View key={v.id} style={{ gap: 2 }}>
+                  <Thumb f={v} size={88} onPress={() => setView(v)} testID={`staff-video-${v.id}`} />
+                  <Text style={s.tag}>{v.source === "in_app_camera" ? "APP" : v.source === "gallery" ? "GALLERY" : "STAFF"}{v.status === "draft" ? "·DRAFT" : ""}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+          <Label>Evidence ({nc.photos.length} photo{nc.photos.length === 1 ? "" : "s"})</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-            {nc.video ? <Thumb f={nc.video} size={88} onPress={() => setView(nc.video)} testID={`staff-video-${nc.number}`} /> : null}
             {nc.photos.map((f, i) => (
               <View key={f.id} style={{ gap: 2 }}>
                 <Thumb f={f} size={88} onPress={() => setPv({ files: nc.photos, i })} testID={`staff-photo-${f.id}`} />
@@ -194,7 +204,6 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
               <Feather name="upload" size={20} color={colors.onSurface} />
             </Pressable>
           </ScrollView>
-          {nc.video_versions > 1 ? <Text style={s.muted}>{nc.video_versions - 1} superseded video version(s) retained</Text> : null}
 
           <ExportNote nc={nc} projectId={projectId} />
 

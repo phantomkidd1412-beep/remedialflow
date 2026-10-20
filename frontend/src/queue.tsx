@@ -53,6 +53,20 @@ export function evidenceState(queued: QueueItem[]): EvidenceState | null {
 
 const SUBMIT_TIMEOUT = 45_000;
 const UPLOAD_TIMEOUT = 10 * 60_000;
+const VIDEO_UPLOAD_TIMEOUT = 90 * 60_000; // long videos on slow site connections
+
+/** On-device byte size, sent with the upload so the server can reject a truncated transfer (native only). */
+function sizeOf(uri: string): number | undefined {
+  if (Platform.OS === "web") return undefined;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { File } = require("expo-file-system");
+    const n = new File(uri).size;
+    return typeof n === "number" && n > 0 ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
 /** A hung request must never leave an item stuck on Uploading/Submitting: treat it like a dropped connection. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise((res, rej) => {
@@ -153,7 +167,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
             r = await withTimeout(authed((t) =>
               uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
                 headers: t ? { Authorization: `Bearer ${t}` } : {},
-                fields: { meta: JSON.stringify({ ...next.meta, client_id: next.id }) },
+                fields: { meta: JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(next.uri!) }) },
                 files: { file: { uri: next.uri!, name: next.mime!.includes("video") ? (next.mime!.includes("quicktime") ? "video.mov" : "video.mp4") : "photo.jpg", mimeType: next.mime } },
                 onProgress: (f) => {
                   // throttle re-renders: only on >=2% change
@@ -162,7 +176,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
                   setPct((m) => ({ ...m, [next.id]: f }));
                 },
               }),
-            ), UPLOAD_TIMEOUT).finally(() => {
+            ), next.mime?.includes("video") ? VIDEO_UPLOAD_TIMEOUT : UPLOAD_TIMEOUT).finally(() => {
               lastPct.current = 0;
               setPct((m) => {
                 const { [next.id]: _, ...rest } = m;
@@ -201,7 +215,13 @@ export function QueueProvider({ children }: PropsWithChildren) {
           await patch(next.id, { status: "pending", error: "Server busy, retrying" });
           break;
         } else {
-          await patch(next.id, { status: "failed", error: refusal(r.status, await readError(r)) });
+          const msg = await readError(r);
+          if (r.status === 422 && /incomplete/i.test(msg)) {
+            // transfer was cut off: file is still on the phone, send it again automatically
+            await patch(next.id, { status: "pending", error: "Upload interrupted, retrying" });
+            break;
+          }
+          await patch(next.id, { status: "failed", error: refusal(r.status, msg) });
         }
       }
     } finally {

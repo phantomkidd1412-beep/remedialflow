@@ -8,10 +8,12 @@ import { tzInfo, useQueue } from "@/src/queue";
 import { Btn, Feather, useToast } from "@/src/ui";
 import { freshFix, useGeo } from "@/src/components/useGeo";
 import { PermissionGate, StampBlock } from "@/src/components/CameraParts";
+import { useMediaConfig } from "@/src/projects";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type P = { projectId: string; ncId: string; ref: string; postcode: string; nc: string };
 type Clip = { uri: string; captured: Date; duration: number; lat: number | null; lng: number | null; acc: number | null };
+const fmtElapsed = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 function Preview({ clip, onRetake, onUse }: { clip: Clip; onRetake: () => void; onUse: () => void }) {
   const s = useStyles();
@@ -21,7 +23,7 @@ function Preview({ clip, onRetake, onUse }: { clip: Clip; onRetake: () => void; 
     <View style={[s.root, { paddingTop: insets.top }]} testID="video-preview">
       <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls />
       <View style={[s.bottom, { paddingBottom: insets.bottom + space.md }]}>
-        <Text style={s.stampText}>PREVIEW · {Math.round(clip.duration)}s · {clip.lat != null ? "GPS RECORDED" : "LOCATION NOT VERIFIED"}</Text>
+        <Text style={s.stampText}>PREVIEW · {fmtElapsed(Math.round(clip.duration))}</Text>
         <View style={{ flexDirection: "row", gap: space.sm }}>
           <Btn title="Retake" icon="rotate-ccw" variant="outline" onPress={onRetake} style={{ flex: 1 }} testID="video-retake-button" />
           <Btn title="Use video" icon="check" onPress={onUse} style={{ flex: 1 }} testID="video-use-button" />
@@ -42,6 +44,7 @@ export default function VideoScreen() {
   const [mperm, reqM] = useMicrophonePermissions();
   const geo = useGeo(!!cperm?.granted);
   const { enqueueUpload } = useQueue();
+  const { maxVideoMb } = useMediaConfig();
   const cam = useRef<CameraView>(null);
   const [recording, setRecording] = useState(false);
   const [ready, setReady] = useState(false);
@@ -65,11 +68,11 @@ export default function VideoScreen() {
         clip={clip}
         onRetake={() => setClip(null)}
         onUse={async () => {
-          await enqueueUpload(p.projectId, p.ncId, clip.uri, "video/mp4", {
+          await enqueueUpload(p.projectId, p.ncId, clip.uri, clip.uri.toLowerCase().endsWith(".mov") ? "video/quicktime" : "video/mp4", {
             kind: "video", source: "in_app_camera", captured_at: clip.captured.toISOString(), ...tzInfo(),
             lat: clip.lat, lng: clip.lng, accuracy_m: clip.acc, duration_s: clip.duration,
           });
-          toast("Video queued · replaces the active video for this NC");
+          toast("Video queued · added to this NC");
           router.back();
         }}
       />
@@ -86,7 +89,8 @@ export default function VideoScreen() {
     setStartedAt(started.current.getTime());
     const pos = freshFix(geo.pos);
     try {
-      const r = await cam.current.recordAsync({ maxDuration: 120 });
+      // no duration limit; size capped by the server-configured maximum (recording stops cleanly at the cap)
+      const r = await cam.current.recordAsync({ maxFileSize: maxVideoMb * 1024 * 1024 });
       if (r?.uri) {
         const duration = (Date.now() - started.current!.getTime()) / 1000;
         setClip({ uri: r.uri, captured: started.current, duration, lat: pos?.coords.latitude ?? null, lng: pos?.coords.longitude ?? null, acc: pos?.coords.accuracy ?? null });
@@ -107,7 +111,11 @@ export default function VideoScreen() {
         <Pressable onPress={() => router.back()} style={s.iconBtn} testID="video-close-button" hitSlop={6}>
           <Feather name="x" size={24} color="#FFFFFF" />
         </Pressable>
-        {recording ? <View style={[s.rec, { backgroundColor: colors.error }]}><Text style={s.recText} testID="video-timer">● REC {elapsed}s / 120s</Text></View> : null}
+        {recording ? (
+          <View style={[s.rec, { backgroundColor: colors.error }]}><Text style={s.recText} testID="video-timer">● REC {fmtElapsed(elapsed)}</Text></View>
+        ) : (
+          <View style={s.rec}><Text style={s.stampText} testID="video-limit">MAX {maxVideoMb} MB</Text></View>
+        )}
       </View>
       <View style={[s.bottom, { paddingBottom: insets.bottom + space.md }]}>
         <StampBlock geo={geo} p={p} now={now} />

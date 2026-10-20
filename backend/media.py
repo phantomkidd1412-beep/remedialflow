@@ -85,6 +85,45 @@ def process_photo(data: bytes, meta: Optional[dict]) -> dict:
     return out
 
 
+def probe_video(path: str) -> dict:
+    """Codec/duration of a video file (parsed from ffmpeg's stream info). Never raises."""
+    import re
+    info = {"video": None, "audio": None, "duration": None}
+    if not FFMPEG:
+        return info
+    try:
+        err = subprocess.run([FFMPEG, "-hide_banner", "-i", path], capture_output=True, text=True, timeout=60).stderr
+    except Exception:
+        return info
+    if m := re.search(r"Stream #\S+.*?: Video: (\w+)", err):
+        info["video"] = m.group(1)
+    if m := re.search(r"Stream #\S+.*?: Audio: (\w+)", err):
+        info["audio"] = m.group(1)
+    if m := re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", err):
+        info["duration"] = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    return info
+
+
+def make_playback(src: str, dst: str) -> dict:
+    """Universal playback copy (H.264/AAC MP4, moov atom first so it streams). The original is never modified.
+    H.264 sources are remuxed losslessly; others (e.g. iPhone HEVC) are transcoded at high quality."""
+    info = probe_video(src)
+    if not FFMPEG or not info["video"]:
+        raise RuntimeError("No playable video stream found")
+    copy = info["video"] == "h264" and info["audio"] in (None, "aac")
+    if copy:
+        cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c", "copy", "-movflags", "+faststart", dst]
+    else:
+        cmd = [FFMPEG, "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+               "-pix_fmt", "yuv420p", "-vf", "scale='if(gt(iw,ih),min(1920,iw),-2)':'if(gt(iw,ih),-2,min(1920,ih))'",
+               "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", dst]
+    timeout = max(600, int((info["duration"] or 60) * 6))
+    r = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=timeout)
+    if r.returncode != 0 or not os.path.exists(dst) or os.path.getsize(dst) == 0:
+        raise RuntimeError(f"ffmpeg failed: {(r.stderr or '')[-200:]}")
+    return {**info, "mode": "copy" if copy else "transcode"}
+
+
 def video_frames(data: bytes, duration: Optional[float], count: int = 4) -> List[bytes]:
     if not FFMPEG:
         return []
