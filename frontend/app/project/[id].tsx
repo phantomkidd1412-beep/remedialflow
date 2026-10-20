@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { FlatList, Keyboard, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
@@ -17,6 +17,7 @@ export default function StaffProject() {
   const insets = useSafeAreaInsets();
   const toast = useToast();
   const qc = useQueryClient();
+  const router = useRouter();
   const { id, nc } = useLocalSearchParams<{ id: string; nc?: string }>();
   const q = useProject(id);
   const installers = useQuery({ queryKey: ["installers"], queryFn: () => api<{ id: string; name: string }[]>("/installers"), staleTime: 300000 });
@@ -36,6 +37,25 @@ export default function StaffProject() {
   const [reason, setReason] = useState("");
   const [savingRate, setSavingRate] = useState(false);
   const [rateErr, setRateErr] = useState("");
+  const [delOpen, setDelOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [delErr, setDelErr] = useState("");
+  const doDelete = async () => {
+    setDeleting(true);
+    setDelErr("");
+    try {
+      await api(`/projects/${id}`, { method: "DELETE" });
+      setDelOpen(false);
+      ["projects", "dashboard", "review-groups", "tracker"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      qc.removeQueries({ queryKey: ["project", id] });
+      toast("Project deleted");
+      router.canGoBack() ? router.back() : router.replace("/");
+    } catch (e: any) {
+      setDelErr(e?.message || "Could not delete the project");
+    } finally {
+      setDeleting(false);
+    }
+  };
   const closeRate = () => {
     if (savingRate) return;
     Keyboard.dismiss();
@@ -175,6 +195,16 @@ export default function StaffProject() {
         <Btn title="Audit history" icon="list" variant="outline" onPress={menu(() => setAuditOpen(true))} testID="audit-trail-button" />
         <Btn title="Add NC" icon="plus" variant="outline" onPress={menu(() => setAddOpen(true))} testID="add-nc-button" />
         {p.status === "completed" ? <Btn title="Mark TrustMark Resolved" icon="award" variant="success" onPress={resolve} testID="resolve-project-button" /> : null}
+        <Btn title="Delete project" icon="trash-2" variant="danger" onPress={menu(() => { setDelErr(""); setDelOpen(true); })} testID="delete-project-button" />
+      </Sheet>
+
+      <Sheet visible={delOpen} onClose={() => !deleting && setDelOpen(false)} title="Delete this project?" testID="delete-sheet" dismissOnBackdrop={false}>
+        <Text style={s.rateName} testID="delete-ref">{p.ref}</Text>
+        <Text style={s.hint} testID="delete-address">{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
+        <Text style={s.hint}>It will be hidden from dashboards, searches, review queues and installer jobs. Nothing is erased; an admin can restore it from Deleted projects.</Text>
+        {delErr ? <Text style={s.err} testID="delete-error">{delErr}</Text> : null}
+        <Btn title="Delete project" icon="trash-2" variant="danger" onPress={doDelete} loading={deleting} testID="delete-confirm" />
+        <Btn title="Cancel" variant="outline" onPress={() => setDelOpen(false)} disabled={deleting} testID="delete-cancel" />
       </Sheet>
 
       <Sheet visible={!!rateFor} onClose={closeRate} title={`Agreed rate · ${rateFor?.name ?? ""}`} testID="rate-sheet" dismissOnBackdrop={false}>

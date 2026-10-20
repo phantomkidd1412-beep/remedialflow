@@ -29,6 +29,13 @@ export async function openExport(projectId?: string) {
   await openSigned(r.url, projectId ? "project-evidence.zip" : "remedialflow-metadata.json");
 }
 
+/** Work Tracker export (CSV/Excel) with the current filters. */
+export async function openTrackerExport(fmt: "csv" | "xlsx", params: Record<string, string>) {
+  const qs = new URLSearchParams({ fmt, ...params }).toString();
+  const r = await api<{ url: string }>(`/tracker/export-link?${qs}`);
+  await openSigned(r.url, `work-tracker.${fmt}`);
+}
+
 export type RateRow = { installer_id: string; name: string; pay_type: string; rate: number | null; earning: { status: string; amount: number } | null };
 export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; rate_rows?: RateRow[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 

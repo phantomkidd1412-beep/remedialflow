@@ -8,11 +8,16 @@ export default function StaffAccount() {
   const router = useRouter();
   const toast = useToast();
   const { user } = useAuth();
-  const menu: MenuItem[] = [{ label: "New project", icon: "plus-square", onPress: () => router.push("/project/new"), testID: "menu-new-project" }];
+  const menu: MenuItem[] = [
+    { label: "New project", icon: "plus-square", onPress: () => router.push("/project/new"), testID: "menu-new-project" },
+    { label: "Work tracker", icon: "bar-chart-2", onPress: () => router.push("/tracker"), testID: "menu-tracker" },
+  ];
   if (user?.role === "admin") {
     menu.push(
       { label: "Users & access", icon: "users", onPress: () => router.push("/admin/users"), testID: "menu-users" },
       { label: "Evidence rules & payments", icon: "sliders", onPress: () => router.push("/admin/settings"), testID: "menu-settings" },
+      { label: "Deleted projects", icon: "trash-2", onPress: () => router.push("/admin/deleted"), testID: "menu-deleted" },
+      { label: "Activity log", icon: "activity", onPress: () => router.push("/admin/activity"), testID: "menu-activity" },
       { label: "Export all metadata (JSON)", icon: "download", onPress: () => openExport().catch((e) => toast(e.message)), testID: "menu-export-all" },
     );
   }

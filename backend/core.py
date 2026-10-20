@@ -87,6 +87,8 @@ class Project(BaseDocument):
     rates: dict = {}  # installer_id -> agreed per-job rate (frozen at assignment)
     rate_history: List[dict] = []  # admin overrides {installer_id, old, new, reason, by, at}
     rate_override: bool = False
+    deleted: Optional[dict] = None  # soft delete {at, by, by_name, by_role}; data is never erased
+    deletion_history: List[dict] = []
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)
 
@@ -209,12 +211,16 @@ _audit_lock = asyncio.Lock()
 
 
 async def audit(event: str, actor_id: Optional[str], target: str, data: Optional[dict] = None):
+    # actor identity comes from the authenticated user id; name/role are snapshotted server-side
+    actor = await db.users.find_one({"_id": ObjectId(actor_id)}, {"name": 1, "role": 1}) if actor_id and ObjectId.is_valid(actor_id) else None
     async with _audit_lock:
         last = await db.audit.find_one(sort=[("seq", -1)])
         seq = (last["seq"] + 1) if last else 1
         prev = last["hash"] if last else "GENESIS"
         entry = {"seq": seq, "event": event, "actor_id": actor_id, "target": target,
                  "data": data or {}, "at": now_iso(), "prev_hash": prev}
+        if actor:
+            entry["actor_name"], entry["actor_role"] = actor.get("name"), actor.get("role")
         entry["hash"] = hashlib.sha256((prev + json.dumps(entry, sort_keys=True, default=str)).encode()).hexdigest()
         await db.audit.insert_one(entry)
 

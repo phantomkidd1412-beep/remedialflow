@@ -45,7 +45,7 @@ async def health():
 # ---------------- helpers ----------------
 async def get_project(pid: str, u: User) -> Project:
     p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
-    if not p:
+    if not p or p.deleted:
         raise HTTPException(404, "Project not found")
     if u.role == "installer" and not await db.ncs.find_one({"project_id": pid, "assigned_installer_id": u.id}, {"_id": 1}):
         raise HTTPException(403, "Not assigned to this project")
@@ -92,10 +92,20 @@ async def recompute_project(pid: str):
     await settle_earnings(pid)
 
 
+async def live_project(pid: str) -> dict:
+    """Raw project doc; deleted (recycle bin) projects behave as not found for normal operations."""
+    p = await db.projects.find_one({"_id": oid(pid)})
+    if not p or p.get("deleted"):
+        raise HTTPException(404, "Project not found")
+    return p
+
+
 async def notify(user_id: Optional[str], kind: str, title: str, body: str, project_id: str, nc_id: Optional[str] = None):
     """In-app notification; an unread one with the same key is refreshed instead of duplicated."""
     if not user_id:
         return
+    if project_id and await db.projects.find_one({"_id": oid(project_id), "deleted": {"$ne": None}}, {"_id": 1}):
+        return  # deleted projects never notify
     key = f"{kind}:{project_id}:{nc_id or ''}"
     await db.notifications.update_one(
         {"user_id": user_id, "key": key, "read": False},
@@ -129,7 +139,9 @@ async def settle_earnings(pid: str):
     for n in ncs:
         if n.get("assigned_installer_id"):
             scope.setdefault(n["assigned_installer_id"], []).append(n["status"])
-    p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1})
+    p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1, "deleted": 1})
+    if not p or p.get("deleted"):
+        return  # deleted projects never generate earnings
     s = await get_settings()
     for iid, sts in scope.items():
         if not all(x in DONE for x in sts):
@@ -228,14 +240,14 @@ async def write_settings(body: Settings, u: User = Depends(admin)):
 @api.get("/dashboard")
 async def dashboard(u: User = Depends(staff)):
     # Lifecycle counters are mutually exclusive; awaiting_review is the attention flag (projects, not NCs).
-    out = {k: await db.projects.count_documents({"status": k}) for k in LIFECYCLE}
-    out["awaiting_review"] = await db.projects.count_documents({"needs_review": True})
+    out = {k: await db.projects.count_documents({"status": k, "deleted": None}) for k in LIFECYCLE}
+    out["awaiting_review"] = await db.projects.count_documents({"needs_review": True, "deleted": None})
     return out
 
 
 @api.post("/projects/{pid}/resolve")
 async def resolve_project(pid: str, u: User = Depends(staff)):
-    p = Project.from_mongo(await db.projects.find_one({"_id": oid(pid)}))
+    p = Project.from_mongo(await live_project(pid))
     if not p:
         raise HTTPException(404, "Project not found")
     if p.status != "completed":
@@ -250,7 +262,7 @@ async def resolve_project(pid: str, u: User = Depends(staff)):
 @api.get("/projects")
 async def list_projects(search: str = "", status: str = "", page: int = 1, limit: int = Query(20, le=100),
                         u: User = Depends(current_user)):
-    q: dict = {}
+    q: dict = {"deleted": None}
     if u.role == "installer":
         q["_id"] = {"$in": [ObjectId(x) for x in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id})]}
     if status == "awaiting_review":
@@ -409,7 +421,7 @@ async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: Us
 @api.post("/projects")
 async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends(staff)):
     if await db.projects.find_one({"ref": body.ref}):
-        raise HTTPException(409, "Project reference already exists")
+        raise HTTPException(409, "Project reference already exists (check the Deleted Projects bin)")
     s = await get_settings()
     p = Project(ref=body.ref, address=body.address, postcode=body.postcode.upper(), installer_id=body.installer_id or None,
                 rate=body.rate if body.rate is not None else s.default_job_rate, rate_override=body.rate is not None)
@@ -439,6 +451,7 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
 
 @api.patch("/projects/{pid}")
 async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
+    await live_project(pid)
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if "installer_id" in upd and upd["installer_id"] == "":
         upd["installer_id"] = None
@@ -488,9 +501,7 @@ async def merge_import(pid: str, body: MergeIn, bg: BackgroundTasks, u: User = D
     """Applies a re-imported report: updates matched NCs (old wording kept in text_history), adds new NCs.
     Existing NCs, statuses, evidence and history are never removed."""
     imp = await _ready_import(body.import_id)
-    proj = await db.projects.find_one({"_id": oid(pid)})
-    if not proj:
-        raise HTTPException(404, "Project not found")
+    proj = await live_project(pid)
     drafts = imp["draft"]["ncs"]
     if any(it.index < 0 or it.index >= len(drafts) for it in body.items):
         raise HTTPException(400, "Unknown NC in report")
@@ -625,7 +636,7 @@ class RateIn(BaseModel):
 async def override_rate(pid: str, iid: str, body: RateIn, u: User = Depends(admin)):
     """Admin override of one installer's agreed per-job rate on a project.
     An earned-but-unpaid amount follows the new rate; paid earnings are never changed."""
-    p = await db.projects.find_one({"_id": oid(pid)}, {"rates": 1, "ref": 1, "installer_id": 1})
+    p = await db.projects.find_one({"_id": oid(pid), "deleted": None}, {"rates": 1, "ref": 1, "installer_id": 1})
     if not p:
         raise HTTPException(404, "Project not found")
     inst = await db.users.find_one({"_id": oid(iid), "role": "installer"}, {"pay_type": 1, "name": 1})
@@ -653,7 +664,7 @@ async def override_rate(pid: str, iid: str, body: RateIn, u: User = Depends(admi
 
 @api.get("/projects/{pid}/report-link")
 async def report_link(pid: str, u: User = Depends(staff)):
-    p = await db.projects.find_one({"_id": oid(pid)}, {"source_report": 1})
+    p = await db.projects.find_one({"_id": oid(pid), "deleted": None}, {"source_report": 1})
     if not p or not p.get("source_report"):
         raise HTTPException(404, "No source report")
     return {"url": f"/api/reports/{pid}?{signed_query(f'report:{pid}', 1)}"}
@@ -948,7 +959,7 @@ async def assign_nc(nc_id: str, body: AssignIn, u: User = Depends(staff)):
 # ---------------- notifications ----------------
 @api.get("/notifications")
 async def notifications(u: User = Depends(current_user)):
-    items = clean(await db.notifications.find({"user_id": u.id}).sort("created_at", -1).to_list(100))
+    items = clean(await db.notifications.find({"user_id": u.id, "hidden": {"$ne": True}}).sort("created_at", -1).to_list(100))
     return {"items": items, "unread": sum(1 for i in items if not i["read"])}
 
 
@@ -971,7 +982,7 @@ def _review_statuses(u: User) -> List[str]:
 @api.get("/review-groups")
 async def review_groups(search: str = "", u: User = Depends(staff)):
     """Pending reviews grouped by project (admin: Admin Review queue; employee: Employee Review)."""
-    pipe = [{"$match": {"status": {"$in": _review_statuses(u)}}},
+    pipe = [{"$match": {"status": {"$in": _review_statuses(u)}, "project_deleted": {"$ne": True}}},
             {"$group": {"_id": "$project_id", "pending": {"$sum": 1}, "safety": {"$max": "$safety_critical"}, "oldest": {"$min": "$updated_at"}}}]
     groups = await db.ncs.aggregate(pipe).to_list(2000)
     projs = {str(d["_id"]): d for d in await db.projects.find({"_id": {"$in": [ObjectId(g["_id"]) for g in groups]}}, {"ref": 1, "address": 1, "postcode": 1}).to_list(2000)}
@@ -988,13 +999,13 @@ async def review_groups(search: str = "", u: User = Depends(staff)):
 
 @api.get("/review-groups/{pid}")
 async def review_group(pid: str, u: User = Depends(staff)):
-    ids = [str(d["_id"]) for d in await db.ncs.find({"project_id": pid, "status": {"$in": _review_statuses(u)}}, {"_id": 1}).sort("number", 1).to_list(500)]
+    ids = [str(d["_id"]) for d in await db.ncs.find({"project_id": pid, "status": {"$in": _review_statuses(u)}, "project_deleted": {"$ne": True}}, {"_id": 1}).sort("number", 1).to_list(500)]
     return {"nc_ids": ids}
 
 
 @api.get("/review-queue")
 async def review_queue(u: User = Depends(staff)):
-    ncs = await db.ncs.find({"status": {"$in": ["employee_review", "admin_review", "assessing"]}}).sort("updated_at", 1).to_list(200)
+    ncs = await db.ncs.find({"status": {"$in": ["employee_review", "admin_review", "assessing"]}, "project_deleted": {"$ne": True}}).sort("updated_at", 1).to_list(200)
     pids = list({n["project_id"] for n in ncs})
     projs = {str(d["_id"]): d for d in await db.projects.find({"_id": {"$in": [ObjectId(i) for i in pids]}}).to_list(500)}
     return [{**NC.from_mongo(n).model_dump(), "project_ref": projs.get(n["project_id"], {}).get("ref"),
@@ -1012,7 +1023,7 @@ async def earnings(u: User = Depends(current_user)):
     pending = []
     if u.role == "installer":
         paid_pids = {i["project_id"] for i in items}
-        for pid in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id}):
+        for pid in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id, "project_deleted": {"$ne": True}}):
             if pid in paid_pids:
                 continue
             p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1, "rates": 1})
@@ -1098,6 +1109,7 @@ async def serve_file(fid: str, variant: str, exp: int, sig: str):
 @api.get("/export/link")
 async def export_link(project_id: Optional[str] = None, u: User = Depends(staff)):
     if project_id:
+        await live_project(project_id)
         return {"url": f"/api/export/project/{project_id}.zip?{signed_query(f'export:{project_id}', 1)}"}
     if u.role != "admin":
         raise HTTPException(403, "Admin only")
@@ -1261,6 +1273,8 @@ async def shutdown():
 
 app.include_router(auth_router)
 app.include_router(api)
+from phase10 import router as p10_router  # noqa: E402  (imports server helpers lazily)
+app.include_router(p10_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
                    allow_methods=["*"], allow_headers=["*"])

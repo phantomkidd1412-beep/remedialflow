@@ -54,13 +54,24 @@ async def m005_pdf_filter_keep_diagrams():
         await clean_project_report_photos(pid, reset=True)
 
 
+async def m008_soft_delete():
+    # additive only: explicit "not deleted" markers + indexes for filters; no data removed
+    await db.projects.update_many({"deleted": {"$exists": False}}, {"$set": {"deleted": None}})
+    await db.ncs.update_many({"project_deleted": {"$exists": False}}, {"$set": {"project_deleted": False}})
+    await db.projects.create_index("deleted")
+    await db.projects.create_index("completed_at")
+    await db.ncs.create_index([("project_deleted", 1), ("status", 1)])
+    await db.audit.create_index("target")
+
+
 MIGRATIONS = [("001_status_model_and_nc_assignment", m001_status_model_and_nc_assignment),
               ("002_project_lifecycle", m002_project_lifecycle),
               ("003_rates_and_policies", m003_rates_and_policies),
               ("004_pdf_photo_cleanup", m004_pdf_photo_cleanup),
               ("005_pdf_filter_keep_diagrams", m005_pdf_filter_keep_diagrams),
               ("006_pdf_filter_logo_shape", m005_pdf_filter_keep_diagrams),
-              ("007_pdf_filter_photo_guard", m005_pdf_filter_keep_diagrams)]
+              ("007_pdf_filter_photo_guard", m005_pdf_filter_keep_diagrams),
+              ("008_soft_delete", m008_soft_delete)]
 
 
 async def run_migrations():

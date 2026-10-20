@@ -44,3 +44,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Existing: per-user pay_type per_job|daily + default_rate (Admin → Users); rate frozen per installer at first assignment; daily-wage = paid outside the app (user choice), no job earnings.
 - New: admin-only PUT /api/projects/{pid}/rates/{iid} {rate, reason?} overrides one installer's agreed rate; unpaid earned amount follows (amount_history, overridden flag); paid → 409; daily → 400; unassigned installer → 400. rate_history on project, audit project.rate_overridden, installer notified (rate_changed).
 - Project detail (staff) returns rate_rows; installers only see their own rate. UI: "Installer rates" card with Edit sheet (admin); payments view shows per-job amounts and "(rate changed)".
+
+## P10 (implemented, awaiting approval)
+- Work Tracker `/tracker` (admin+employee; Account → Work tracker): views completed (keyed on first `completed_at`) / resolved (keyed on first `resolution_history` entry) → one row per project, reopened flagged, never double counted. Ranges week/month (prev/next) /custom/all; search ref/address/installer; sort newest/oldest/longest outstanding (days from creation to resolution, still counting if unresolved). CSV + Excel via signed `/api/tracker/export-link` → `/api/tracker/export` (openpyxl).
+- Soft delete: `DELETE /api/projects/{pid}` (admin+employee) sets `project.deleted {at,by,by_name,by_role}`, `ncs.project_deleted=true`, notifications hidden. Hidden from dashboard, lists/search, review queues, installer jobs/pending earnings; get_project/live_project 404; notify() and settle_earnings() skip deleted projects. Nothing erased.
+- Recycle bin `/admin/deleted` (admin): `GET /api/admin/deleted-projects`, `POST /api/admin/projects/{pid}/restore` (atomic, same record, pushes deletion_history, recompute is idempotent).
+- Activity log `/admin/activity` (admin): `GET /api/admin/activity?search&kind=deletion|project|nc|user`; audit entries now snapshot actor_name/actor_role server-side; no edit/delete API for audit.
+- Module: backend/phase10.py; migration 008_soft_delete (additive + indexes).
