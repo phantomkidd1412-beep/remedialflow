@@ -7,6 +7,7 @@ import { api } from "@/src/api";
 import { RateRow, openExport, openReport, useProject } from "@/src/projects";
 import { useAuth } from "@/src/auth";
 import { Badge, Btn, ErrorBlock, Feather, Field, Label, Loading, Progress, Sheet, fmtDate, money, useToast } from "@/src/ui";
+import { DatePickerSheet } from "@/src/components/DatePickerSheet";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { StaffNCCard } from "@/src/components/StaffNCCard";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
@@ -18,52 +19,38 @@ function ScheduleRows({ pid, rows }: { pid: string; rows: SchedRow[] }) {
   const s = useStyles();
   const qc = useQueryClient();
   const toast = useToast();
-  const [vals, setVals] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<string | null>(null);
-  const save = async (r: SchedRow) => {
-    const raw = (vals[r.installer_id] ?? r.date ?? "").trim();
-    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    const date = raw === "" ? null : m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : raw;
-    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      toast("Use DD/MM/YYYY");
-      return;
-    }
+  const [pick, setPick] = useState<SchedRow | null>(null);
+  const save = async (r: SchedRow, date: string | null) => {
+    setPick(null);
     setBusy(r.installer_id);
     try {
       await api(`/projects/${pid}/schedule/${r.installer_id}`, { method: "PUT", body: { date } });
       qc.invalidateQueries({ queryKey: ["project", pid] });
-      setVals((v) => {
-        const { [r.installer_id]: _, ...rest } = v;
-        return rest;
-      });
-      toast(date ? `${r.name} scheduled` : `${r.name} schedule cleared`);
+      toast(date ? `${r.name} scheduled ${show(date)}` : `${r.name} schedule cleared`);
     } catch (e: any) {
       toast(e.message);
     } finally {
       setBusy(null);
     }
   };
-  const show = (d: string | null) => (d ? d.split("-").reverse().join("/") : "");
   return (
     <View style={s.rates} testID="project-schedules">
       <Label>Scheduled visits</Label>
-      {rows.map((r) => {
-        const v = vals[r.installer_id] ?? show(r.date);
-        return (
-          <View key={r.installer_id} style={s.rateRow}>
-            <Text style={[s.rateName, { flex: 1 }]}>{r.name}</Text>
-            <View style={{ width: 130 }}>
-              <Field placeholder="DD/MM/YYYY" value={v} onChangeText={(t) => setVals((x) => ({ ...x, [r.installer_id]: t }))} keyboardType="numbers-and-punctuation" testID={`schedule-input-${r.installer_id}`} />
-            </View>
-            {vals[r.installer_id] !== undefined && vals[r.installer_id] !== show(r.date) ? (
-              <Btn title="Save" small onPress={() => save(r)} loading={busy === r.installer_id} testID={`schedule-save-${r.installer_id}`} />
-            ) : null}
-          </View>
-        );
-      })}
+      {rows.map((r) => (
+        <View key={r.installer_id} style={s.rateRow}>
+          <Text style={[s.rateName, { flex: 1 }]}>{r.name}</Text>
+          <Btn title={r.date ? show(r.date) : "Pick date"} icon="calendar" variant="outline" small onPress={() => setPick(r)} loading={busy === r.installer_id} testID={`schedule-pick-${r.installer_id}`} />
+        </View>
+      ))}
+      {pick ? (
+        <DatePickerSheet visible value={pick.date} title={`Visit date · ${pick.name}`} onPick={(d) => save(pick, d)} onClose={() => setPick(null)} testID="schedule-picker" />
+      ) : null}
     </View>
   );
 }
+
+const show = (d: string) => d.split("-").reverse().join("/");
 
 export default function StaffProject() {
   const s = useStyles();

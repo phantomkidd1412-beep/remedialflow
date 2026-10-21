@@ -1,0 +1,28 @@
+{
+  "summary": "Tap-to-pick calendar for Scheduled visits on staff project screen verified end-to-end in Expo web preview at 390x844. All testIDs from the request are present and work: schedule-pick-<iid>, schedule-picker, schedule-picker-month, schedule-picker-prev/next, schedule-picker-day-YYYY-MM-DD, schedule-picker-today, schedule-picker-clear. Picking a day closes the sheet, fires toast '<name> scheduled dd/mm/yyyy', updates the button label, and persists on reload (GET /api/projects/<id>.project.schedule_rows date updated). Reopening highlights the selected cell with the brand colour (rgb(255,90,0)). Today sets today, Clear reverts to 'Pick date' and persists null. Monday-first grid confirmed (header row M T W T F S S). Installer Jobs tab reflects the schedule (job-schedule-<REF> shows 'Scheduled 21/10/2026' and the card appears under 'This week' section when today is picked). Dark theme: calendar is readable - sheet bg rgb(10,10,10), month+day text rgb(242,242,242), today orange highlight visible. Light theme restored.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Sheet (ui.tsx)", "issue": "Console warning on every open: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking RN-web deprecation surfaced when the schedule-picker Sheet opens. Reference: /app/frontend/src/ui.tsx:159-196"}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Non-blocking: migrate the Sheet (and any other components) to style.pointerEvents to clear the react-native-web deprecation warning.",
+    "Pre-existing demo-data note (NOT part of this change): Installer 'Ian' (installer@remedialflow.dev) does NOT see EF-1024 in his Installer Jobs tab even though /app/memory/test_credentials.md states Ian is on EF-1024/EF-1025. The job-schedule flow was still proved on a project Ian is really assigned to (TEST-P10-35E86F, which showed 'Scheduled 21/10/2026' under This week). Worth re-aligning the seed script with the credentials file."
+  ],
+  "critical_code_review_comments": [
+    "DatePickerSheet is clean and self-contained (72 lines): pure RN, Monday-first grid, today/selected states, testIDs follow the agreed pattern. No ObjectId leakage; no hardcoded URLs.",
+    "project/[id].tsx ScheduleRows PUTs /projects/{pid}/schedule/{iid} and invalidates ['project', pid] correctly; toast uses show() helper to render dd/mm/yyyy."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only scope)", "frontend": "100% (6/6 scenarios)"},
+  "seed_data_creation": "None. Picker was exercised on EF-1024 (project id 6ad6335a4535baee71105ba3, installer Ian id 6ad6335a4535baee71105ba1); schedule left cleared at end of run (toast 'Ian Installer schedule cleared' captured).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "To reach the picker: login via [data-testid=demo-employee-button] then [data-testid=login-submit-button]; search 'EF-1024' in /dashboard, open the project row [data-testid=project-row-EF-1024]; the Scheduled visits block has testID 'project-schedules' and buttons 'schedule-pick-<installer_id>'. Note: the RN Modal that backs Sheet renders at position:fixed but its DOM y-coordinate is below the viewport so Playwright's regular click reports 'outside of viewport'. Use page.evaluate(... .click()) OR scrollIntoView to interact with schedule-picker-next/prev/today/clear. Screenshots show the sheet correctly covers the viewport for real users.",
+  "rca_of_issue": "N/A - feature verification pass."
+}
