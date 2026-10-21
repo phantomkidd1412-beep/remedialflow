@@ -9,7 +9,7 @@ import { Btn, Feather, useToast } from "@/src/ui";
 import { freshFix, useGeo } from "@/src/components/useGeo";
 import { PermissionGate, StampBlock } from "@/src/components/CameraParts";
 import { useMediaConfig } from "@/src/projects";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type P = { projectId: string; ncId: string; ref: string; postcode: string; nc: string };
 type Clip = { uri: string; captured: Date; duration: number; lat: number | null; lng: number | null; acc: number | null };
@@ -132,13 +132,13 @@ export default function VideoScreen() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: "#000000" },
   topBar: { position: "absolute", left: space.lg, right: space.lg, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  iconBtn: { width: 48, height: 48, backgroundColor: "#0A0A0A", borderWidth: BORDER, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  rec: { paddingHorizontal: space.sm, paddingVertical: 4, borderWidth: BORDER, borderColor: c.border },
-  recText: { fontFamily: fonts.mono, fontSize: 12, color: c.onError },
+  iconBtn: { width: 48, height: 48, backgroundColor: "#0A0A0A", borderWidth: BORDER, borderRadius: radius.md, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  rec: { paddingHorizontal: space.sm, paddingVertical: 4, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
+  recText: { fontFamily: fonts.text, fontSize: 12, color: c.onError },
   bottom: { backgroundColor: "#0A0A0A", paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
-  stampText: { fontFamily: fonts.mono, fontSize: 13, color: "#FFFFFF" },
+  stampText: { fontFamily: fonts.text, fontSize: 13, color: "#FFFFFF" },
   controls: { alignItems: "center", height: 88, justifyContent: "center" },
-  shutter: { width: 80, height: 80, borderRadius: 40, backgroundColor: c.error, borderWidth: 4, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  shutterRec: { backgroundColor: "#FFFFFF", borderColor: c.error },
+  shutter: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#E5484D", borderWidth: 4, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  shutterRec: { backgroundColor: "#FFFFFF", borderColor: "#E5484D" },
   stopSquare: { width: 28, height: 28, backgroundColor: c.error },
 }));

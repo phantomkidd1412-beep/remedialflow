@@ -115,6 +115,10 @@ async def recompute_project(pid: str):
         await queue_auto_pack(pid, len(upd["completion_history"]))
     if notify_ready:
         await notify_project_ready(pid)
+    await refresh_notifications(pid)
+    if "completion_history" in upd:
+        async for st in db.users.find({"role": {"$in": ["employee", "admin"]}, "active": True}, {"_id": 1}):
+            await notify(str(st["_id"]), "completed", pid)
     await settle_earnings(pid)
 
 
@@ -123,8 +127,7 @@ async def notify_project_ready(pid: str):
     if not p or p.get("deleted"):
         return
     async for st in db.users.find({"role": {"$in": ["employee", "admin"]}, "active": True}, {"_id": 1}):
-        await notify(str(st["_id"]), "project_ready", f"Project {p['ref']} — All NC evidence submitted. Ready for review.",
-                     f"Project {p['ref']} — All NC evidence submitted. Ready for review.", pid)
+        await notify(str(st["_id"]), "project_ready", pid)
     await audit("project.ready_for_review", None, f"project:{pid}", {"ref": p["ref"]})
 
 
@@ -136,36 +139,101 @@ async def live_project(pid: str) -> dict:
     return p
 
 
-async def notify(user_id: Optional[str], kind: str, title: str, body: str, project_id: str, nc_id: Optional[str] = None):
-    """In-app notification; an unread one with the same key is refreshed instead of duplicated."""
+# ---------------- project-level notifications ----------------
+# One entry per (user, project, category). Further NCs of the same category update that entry (never a new row);
+# its summary is recomputed from live NC data whenever the project changes, so counts stay accurate.
+LIVE_CATS = {"review", "escalated", "action", "approved", "assigned"}  # summaries derived from current NC states
+CAT_TITLE = {"review": "Awaiting review", "escalated": "Escalated to Admin", "action": "Work rejected - action needed",
+             "approved": "Work approved", "assigned": "New work assigned", "project_ready": "Ready for review",
+             "completed": "Project completed", "rate_changed": "Rate updated"}
+
+
+def _n(k: int, word: str = "NC") -> str:
+    return f"{k} {word}{'' if k == 1 else 's'}"
+
+
+async def _summary(cat: str, pid: str, uid: str, ncs: list) -> tuple:
+    """(active, summary text) for one user's notification in one category on one project."""
+    mine = [n for n in ncs if n.get("assigned_installer_id") == uid]
+    if cat == "review":
+        k = sum(1 for n in ncs if n["status"] == "employee_review")
+        return k > 0, f"{_n(k)} awaiting review"
+    if cat == "escalated":
+        k = sum(1 for n in ncs if n["status"] == "admin_review")
+        return k > 0, f"{_n(k)} awaiting Admin review"
+    if cat == "action":
+        k = sum(1 for n in mine if n["status"] in ("rejected", "more_evidence"))
+        return k > 0, f"{_n(k)} need more work"
+    if cat == "approved":
+        k = sum(1 for n in mine if n["status"] in DONE)
+        return k > 0, f"{k} of {_n(len(mine))} approved"
+    if cat == "assigned":
+        k = sum(1 for n in mine if n["status"] not in DONE)
+        return k > 0, f"{_n(k)} assigned to you"
+    if cat == "project_ready":
+        return True, "All NC evidence submitted. Ready for review."
+    if cat == "completed":
+        return True, "All NCs approved. Evidence pack is being saved."
+    return True, ""
+
+
+async def notify(user_id: Optional[str], cat: str, project_id: str, extra: str = ""):
+    """Creates or updates the user's single notification for this project + category and marks it unread."""
     if not user_id:
         return
-    if not await db.users.find_one({"_id": oid(user_id), "active": True}, {"_id": 1}):
+    u = await db.users.find_one({"_id": oid(user_id), "active": True}, {"role": 1})
+    if not u:
         return  # disabled accounts receive nothing new
-    if project_id and await db.projects.find_one({"_id": oid(project_id), "deleted": {"$ne": None}}, {"_id": 1}):
+    p = await db.projects.find_one({"_id": oid(project_id)}, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1})
+    if not p or p.get("deleted"):
         return  # deleted projects never notify
-    key = f"{kind}:{project_id}:{nc_id or ''}"
-    res = await db.notifications.update_one(
-        {"user_id": user_id, "key": key, "read": False},
-        {"$set": {"kind": kind, "title": title, "body": body, "project_id": project_id, "nc_id": nc_id, "created_at": now_iso()},
-         "$setOnInsert": {"user_id": user_id, "key": key, "read": False}}, upsert=True)
-    if res.upserted_id:  # only a NEW unread notification pushes (refreshes of an unread one stay silent)
+    ncs = await db.ncs.find({"project_id": project_id}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
+    if u["role"] == "installer" and not any(n.get("assigned_installer_id") == user_id for n in ncs):
+        return  # installers only hear about projects they are assigned to
+    active, summary = await _summary(cat, project_id, user_id, ncs)
+    if not active:
+        return
+    key = f"{cat}:{project_id}"
+    addr = f"{p['address']}{', ' + p['postcode'] if p.get('postcode') else ''}"
+    body = summary + (f"\n{extra}" if extra else "")
+    prev = await db.notifications.find_one_and_update(
+        {"user_id": user_id, "key": key},
+        {"$set": {"kind": cat, "title": CAT_TITLE.get(cat, cat), "address": addr, "ref": p["ref"], "summary": summary, "body": body,
+                  "project_id": project_id, "nc_id": None, "read": False, "hidden": False, "created_at": now_iso()},
+         "$setOnInsert": {"user_id": user_id, "key": key}}, upsert=True)
+    if not prev or prev.get("read"):  # push only when it newly becomes unread (updates of an unread one stay silent)
         from push import push_for
-        asyncio.create_task(push_for(user_id, kind, f"{key}:{res.upserted_id}"))
+        asyncio.create_task(push_for(user_id, cat, f"{key}:{now_iso()}"))
+
+
+async def refresh_notifications(pid: str):
+    """Keeps every project notification's summary true after approvals, rejections, reopening or reassignment.
+    Entries whose condition no longer applies are marked read; installers no longer on the project lose theirs."""
+    rows = await db.notifications.find({"project_id": pid, "kind": {"$in": list(LIVE_CATS)}, "hidden": {"$ne": True}}).to_list(1000)
+    if not rows:
+        return
+    ncs = await db.ncs.find({"project_id": pid}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
+    roles = {str(d["_id"]): d["role"] for d in await db.users.find({"_id": {"$in": [ObjectId(r["user_id"]) for r in rows]}}, {"role": 1}).to_list(1000)}
+    for r in rows:
+        uid = r["user_id"]
+        if roles.get(uid) == "installer" and not any(n.get("assigned_installer_id") == uid for n in ncs):
+            await db.notifications.update_one({"_id": r["_id"]}, {"$set": {"hidden": True, "read": True}})
+            continue
+        active, summary = await _summary(r["kind"], pid, uid, ncs)
+        upd = {"summary": summary, "body": summary + (r["body"][len(r.get("summary") or ""):] if r.get("summary") and r["body"].startswith(r["summary"]) else "")}
+        if not active:
+            upd["read"] = True
+        await db.notifications.update_one({"_id": r["_id"]}, {"$set": upd})
 
 
 async def notify_reviewers(nc_id: str):
-    """Employees get one (deduplicated) review alert per project while unread."""
-    nc = await db.ncs.find_one({"_id": oid(nc_id)}, {"project_id": 1, "number": 1})
-    p = await db.projects.find_one({"_id": oid(nc["project_id"])}, {"ref": 1})
+    nc = await db.ncs.find_one({"_id": oid(nc_id)}, {"project_id": 1})
     async for e in db.users.find({"role": "employee", "active": True}, {"_id": 1}):
-        await notify(str(e["_id"]), "review_needed", f"Review needed: {p['ref']}", f"{p['ref']} · {nc['number']} is waiting for review", nc["project_id"])
+        await notify(str(e["_id"]), "review", nc["project_id"])
 
 
-async def nc_notify(nc: dict, user_id: Optional[str], kind: str, title: str, extra: str = ""):
-    p = await db.projects.find_one({"_id": oid(nc["project_id"])}, {"ref": 1, "address": 1})
-    body = f"{p['ref']} · {p['address']}\n{nc['number']}: {nc['description']}" + (f"\nWork: {nc['required_work']}" if kind == "assigned" else "") + (f"\n{extra}" if extra else "")
-    await notify(user_id, kind, title, body, nc["project_id"], str(nc["_id"]))
+async def nc_notify(nc: dict, user_id: Optional[str], cat: str, extra: str = ""):
+    await notify(user_id, cat, nc["project_id"], f"Latest: {nc['number']}" + (f" - {extra}" if extra else ""))
 
 
 async def agreed_rate(pid: str, installer_id: str) -> float:
@@ -207,6 +275,7 @@ async def settle_earnings(pid: str):
         except DuplicateKeyError:
             continue
         await audit("earning.created", None, f"project:{pid}", {"installer_id": iid, "amount": amount})
+
 
 
 # ---------------- admin: users ----------------
@@ -479,7 +548,7 @@ async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: Us
     if ncs:
         await agreed_rate(pid, installer_id)
         p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1})
-        await notify(installer_id, "project_assigned", f"New job: {p['ref']}", f"{p['ref']} · {p['address']}\n{len(ncs)} NC(s) assigned to you", pid)
+        await notify(installer_id, "assigned", pid)
     for n in ncs:
         await db.ncs.update_one({"_id": n["_id"]}, {"$set": {"assigned_installer_id": installer_id},
                                 "$push": {"assignment_history": {"to": installer_id, "from": None, "by": actor.id, "at": now_iso()}}})
@@ -509,7 +578,7 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
             nc_pages.append((nid, n.pages))
     if p.installer_id:
         await agreed_rate(pid, p.installer_id)
-        await notify(p.installer_id, "project_assigned", f"New job: {p.ref}", f"{p.ref} · {p.address}\n{len(body.ncs)} NC(s) assigned to you", pid)
+        await notify(p.installer_id, "assigned", pid)
     await recompute_project(pid)
     if body.import_id:
         await db.imports.update_one({"_id": oid(body.import_id)}, {"$set": {"project_id": pid}})
@@ -608,7 +677,7 @@ async def merge_import(pid: str, body: MergeIn, bg: BackgroundTasks, u: User = D
     await db.projects.update_one({"_id": oid(pid)}, upd)
     await db.imports.update_one({"_id": oid(body.import_id)}, {"$set": {"project_id": pid, "merged_at": ts}})
     if counts["new"] and proj.get("installer_id"):
-        await notify(proj["installer_id"], "project_assigned", f"New NCs: {proj['ref']}", f"{proj['ref']} · {counts['new']} new NC(s) added from updated report", pid)
+        await notify(proj["installer_id"], "assigned", pid, f"{counts['new']} new NC(s) added from updated report")
     await recompute_project(pid)
     if nc_pages:
         bg.add_task(_attach_pdf_photos, body.import_id, nc_pages)
@@ -761,7 +830,7 @@ async def override_rate(pid: str, iid: str, body: RateIn, u: User = Depends(admi
         await db.earnings.update_one({"_id": e["_id"]}, {"$set": {"amount": rate, "overridden": True},
                                                          "$push": {"amount_history": {"old": e["amount"], "new": rate, "by": u.id, "at": ts}}})
     await audit("project.rate_overridden", u.id, f"project:{pid}", {"installer_id": iid, "old": old, "new": rate, "reason": body.reason, "earning_updated": bool(e)})
-    await notify(iid, "rate_changed", f"Rate updated: {p['ref']}", f"{p['ref']} · your agreed rate is now £{rate:g}", pid)
+    await notify(iid, "rate_changed", pid, f"Your agreed rate is now £{rate:g}")
     return {"ok": True, "rate": rate, "earning_updated": bool(e)}
 
 
@@ -1157,14 +1226,14 @@ async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
     raw = await db.ncs.find_one({"_id": oid(nc_id)})
     if status == "rejected":
         src = "TrustMark" if body.action == "trustmark_reject" else u.role.capitalize()
-        await nc_notify(raw, nc.assigned_installer_id, f"rejected_{st['rejection_source']}", f"Action required: {nc.number} rejected by {src}", body.note)
+        await nc_notify(raw, nc.assigned_installer_id, "action", f"rejected by {src}" + (f": {body.note}" if body.note else ""))
     elif status == "more_evidence":
-        await nc_notify(raw, nc.assigned_installer_id, "more_evidence", f"More evidence needed: {nc.number}", body.note)
+        await nc_notify(raw, nc.assigned_installer_id, "action", "more evidence needed" + (f": {body.note}" if body.note else ""))
     elif status == "approved":
-        await nc_notify(raw, nc.assigned_installer_id, "approved", f"{nc.number} internally approved")
+        await nc_notify(raw, nc.assigned_installer_id, "approved")
     elif status == "admin_review":
         for a in await db.users.find({"role": "admin", "active": True}, {"_id": 1}).to_list(50):
-            await nc_notify(raw, str(a["_id"]), "escalated", f"Escalated by {u.name}: {nc.number}", body.note)
+            await nc_notify(raw, str(a["_id"]), "escalated", f"escalated by {u.name}" + (f": {body.note}" if body.note else ""))
     await recompute_project(p.id)
     await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note, "role": u.role})
     return {"ok": True, "status": status}
@@ -1186,7 +1255,7 @@ async def assign_nc(nc_id: str, body: AssignIn, u: User = Depends(staff)):
                             "$push": {"assignment_history": {"from": nc.assigned_installer_id, "to": to, "by": u.id, "at": now_iso()}}})
     if to:
         await agreed_rate(p.id, to)
-        await nc_notify(await db.ncs.find_one({"_id": oid(nc_id)}), to, "assigned", f"New NC assigned: {nc.number}")
+        await nc_notify(await db.ncs.find_one({"_id": oid(nc_id)}), to, "assigned")
     await recompute_project(p.id)
     await audit("nc.reassigned", u.id, f"nc:{nc_id}", {"from": nc.assigned_installer_id, "to": to})
     return {"ok": True}
@@ -1638,6 +1707,7 @@ async def startup():
     await db.earnings.create_index([("project_id", 1), ("installer_id", 1)], unique=True)
     await db.audit.create_index("seq", unique=True)
     await db.audit.create_index("target")
+    await db.notifications.create_index([("user_id", 1), ("key", 1)], unique=True)
     await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
     from migrations import run_migrations
     await run_migrations()

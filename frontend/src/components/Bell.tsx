@@ -3,9 +3,9 @@ import { useRouter } from "expo-router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/src/api";
 import { Feather } from "@/src/ui";
-import { BORDER, makeStyles, useTheme } from "@/src/theme";
+import { radius, makeStyles, useTheme } from "@/src/theme";
 
-export type Notif = { id: string; kind: string; title: string; body: string; project_id: string; nc_id?: string | null; read: boolean; created_at: string };
+export type Notif = { id: string; kind: string; title: string; body: string; address?: string; ref?: string; summary?: string; project_id: string; read: boolean; created_at: string };
 
 export function useNotifications() {
   return useQuery({ queryKey: ["notifications"], queryFn: () => api<{ items: Notif[]; unread: number }>("/notifications"), refetchInterval: 30000 });
@@ -28,7 +28,7 @@ export function Bell() {
 }
 
 const useStyles = makeStyles((c) => ({
-  btn: { width: 44, height: 44, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
-  badge: { position: "absolute", top: -6, right: -6, minWidth: 20, height: 20, paddingHorizontal: 4, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
+  btn: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: c.surfaceSecondary, alignItems: "center", justifyContent: "center" },
+  badge: { position: "absolute", top: -6, right: -6, minWidth: 20, height: 20, paddingHorizontal: 4, backgroundColor: c.brandPrimary, borderRadius: radius.pill, borderWidth: 2, borderColor: c.surface, alignItems: "center", justifyContent: "center" },
   badgeText: { fontSize: 11, fontWeight: "800", color: c.onBrandPrimary },
 }));

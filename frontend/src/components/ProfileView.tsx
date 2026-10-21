@@ -9,7 +9,7 @@ import { useQueue } from "@/src/queue";
 import { usesNativeTabs } from "@/src/navigation";
 import { Btn, ErrorBlock, Feather, Field, IconName, Label, Sheet, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, setThemePref, space, ThemePref, useTheme, useThemePref } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, setThemePref, space, ThemePref, useTheme, useThemePref } from "@/src/theme";
 
 export type MenuItem = { label: string; icon: IconName; onPress: () => void; testID: string };
 
@@ -118,16 +118,16 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { padding: space.lg, gap: space.sm },
-  idBox: { borderWidth: BORDER, borderColor: c.border, padding: space.lg, gap: 4, backgroundColor: c.surfaceSecondary, marginBottom: space.md },
-  name: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: c.onSurface },
-  mono: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
-  role: { fontFamily: fonts.mono, fontSize: 12, color: c.onBrandTertiary, marginTop: 4 },
-  queueBox: { flexDirection: "row", gap: space.sm, alignItems: "center", backgroundColor: c.warning, borderWidth: BORDER, borderColor: c.border, padding: space.md, marginBottom: space.md },
-  queueText: { fontFamily: fonts.mono, fontSize: 12, color: c.onWarning, flex: 1 },
-  row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 56, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.lg, marginBottom: -BORDER },
+  idBox: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.lg, gap: 4, backgroundColor: c.surfaceSecondary, marginBottom: space.md },
+  name: { fontFamily: fonts.display, fontWeight: "800", fontSize: 22, color: c.onSurface },
+  mono: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface },
+  role: { fontFamily: fonts.text, fontSize: 12, color: c.onBrandTertiary, marginTop: 4 },
+  queueBox: { flexDirection: "row", gap: space.sm, alignItems: "center", backgroundColor: c.warning, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, marginBottom: space.md },
+  queueText: { fontFamily: fonts.text, fontSize: 12, color: c.onWarning, flex: 1 },
+  row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 56, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.lg, marginBottom: -BORDER },
   rowText: { flex: 1, fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onSurface },
-  seg: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border },
+  seg: { flexDirection: "row", borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   segBtn: { flex: 1, minHeight: 48, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center" },
   segText: { fontFamily: fonts.display, fontWeight: "700", fontSize: 14, color: c.onSurface },
-  hint: { fontFamily: fonts.mono, fontSize: 11, color: c.muted, marginBottom: space.sm },
+  hint: { fontFamily: fonts.text, fontSize: 11, color: c.muted, marginBottom: space.sm },
 }));

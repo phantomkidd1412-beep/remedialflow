@@ -1,40 +1,74 @@
 {
   "app_name": "RemedialFlow",
-  "personality": "5 Brutalist Mobile",
-  "personality_one_liner": "A high-performance, raw, operational field tool focused on speed, dense data, and uncompromised utility.",
+  "personality": "1 iOS-Native Clean (Adapted for Enterprise & Productivity)",
+  "personality_one_liner": "A modern, professional, and accessible construction management dashboard with clean hierarchy, subtle rounding, and optimal readability.",
   "color": {
-    "surface": "#FFFFFF",
-    "onSurface": "#0A0A0A",
-    "surfaceSecondary": "#F5F5F5",
-    "onSurfaceSecondary": "#0A0A0A",
-    "surfaceTertiary": "#E0E0E0",
-    "onSurfaceTertiary": "#0A0A0A",
-    "surfaceInverse": "#0A0A0A",
-    "onSurfaceInverse": "#FFFFFF",
-    "brand": "#FF5A00",
-    "brandPrimary": "#FF5A00",
-    "onBrandPrimary": "#0A0A0A",
-    "brandSecondary": "#0A0A0A",
-    "onBrandSecondary": "#FFFFFF",
-    "brandTertiary": "#FFDCC2",
-    "onBrandTertiary": "#FF5A00",
-    "success": "#00E676",
-    "onSuccess": "#0A0A0A",
-    "warning": "#FFEA00",
-    "onWarning": "#0A0A0A",
-    "error": "#FF1744",
-    "onError": "#FFFFFF",
-    "info": "#E0E0E0",
-    "onInfo": "#0A0A0A",
-    "border": "#0A0A0A",
-    "borderStrong": "#0A0A0A",
-    "divider": "#0A0A0A",
-    "muted": "#757575",
-    "onBrand": "#0A0A0A"
+    "light": {
+      "surface": "#FFFFFF",
+      "onSurface": "#1A1A1A",
+      "surfaceSecondary": "#F5F5F7",
+      "onSurfaceSecondary": "#333333",
+      "surfaceTertiary": "#EBEBEF",
+      "onSurfaceTertiary": "#4A4A4A",
+      "surfaceInverse": "#1A1A1A",
+      "onSurfaceInverse": "#FFFFFF",
+      "brand": "#FF5A00",
+      "onBrand": "#FFFFFF",
+      "brandPrimary": "#FF5A00",
+      "onBrandPrimary": "#1A1A1A",
+      "brandSecondary": "#FFF0E5",
+      "onBrandSecondary": "#CC4800",
+      "brandTertiary": "#FFE1CC",
+      "onBrandTertiary": "#993600",
+      "success": "#E5F5E9",
+      "onSuccess": "#0F5132",
+      "warning": "#FFF4E5",
+      "onWarning": "#663C00",
+      "error": "#FDEAEA",
+      "onError": "#842029",
+      "info": "#E5F0FF",
+      "onInfo": "#004085",
+      "border": "#E5E5EA",
+      "borderStrong": "#C7C7CC",
+      "divider": "#E5E5EA",
+      "muted": "#666666",
+      "overlay": "rgba(0,0,0,0.4)"
+    },
+    "dark": {
+      "surface": "#121212",
+      "onSurface": "#F2F2F2",
+      "surfaceSecondary": "#1E1E1E",
+      "onSurfaceSecondary": "#E0E0E0",
+      "surfaceTertiary": "#2C2C2E",
+      "onSurfaceTertiary": "#CCCCCC",
+      "surfaceInverse": "#F5F5F7",
+      "onSurfaceInverse": "#121212",
+      "brand": "#FF5A00",
+      "onBrand": "#FFFFFF",
+      "brandPrimary": "#FF5A00",
+      "onBrandPrimary": "#1A1A1A",
+      "brandSecondary": "#331200",
+      "onBrandSecondary": "#FFD1B3",
+      "brandTertiary": "#4D1B00",
+      "onBrandTertiary": "#FFB885",
+      "success": "#143324",
+      "onSuccess": "#75B798",
+      "warning": "#332701",
+      "onWarning": "#FFDA6A",
+      "error": "#3A1A1C",
+      "onError": "#EA868F",
+      "info": "#032850",
+      "onInfo": "#6EA8FE",
+      "border": "#38383A",
+      "borderStrong": "#545456",
+      "divider": "#2C2C2E",
+      "muted": "#A0A0A0",
+      "overlay": "rgba(0,0,0,0.6)"
+    }
   },
   "typography": {
     "displayFontFamily": "Archivo",
-    "textFontFamily": "SpaceMono",
+    "textFontFamily": "System",
     "scale": {
       "sm": 12,
       "base": 14,
@@ -44,7 +78,7 @@
     }
   },
   "spacing": {
-    "rule": "Intentional whitespace imbalance. Exposed structural spacing. Elements touch edges intentionally or use thick borders.",
+    "rule": "Generous intentional padding around content to improve scannability without relying on harsh borders.",
     "xs": 4,
     "sm": 8,
     "md": 12,
@@ -54,96 +88,63 @@
     "3xl": 48
   },
   "radius_tokens": {
-    "sm": 0,
-    "md": 0,
-    "lg": 0,
-    "pill": 0
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
   },
-  "shadow_tier": 0,
+  "shadow_tier": "1",
   "navigation": "bottom_tabs",
-  "icon_set": "Phosphor",
+  "icon_set": "Feather",
   "glassmorphism": {
-    "enabled": false,
+    "enabled": "false",
     "do's": [],
     "dont's": [
-      "No blur, no translucency. Use solid color fills and harsh borders per Brutalist personality."
+      "Do not introduce blur or glass libraries as per the performance and dependency constraints."
     ]
   },
   "platform_libraries": {
     "glass": {
-      "ios": "Solid Fill",
-      "android": "Solid Fill",
-      "low_end_android_fallback": "Solid Fill"
+      "ios": "none",
+      "android": "none",
+      "low_end_android_fallback": "solid surfaceSecondary"
     },
     "image": "expo-image",
-    "blur": "expo-blur",
-    "bottom_sheet": "@gorhom/bottom-sheet",
-    "animation": "react-native-reanimated",
-    "gesture": "react-native-gesture-handler"
+    "blur": "none",
+    "bottom_sheet": "none",
+    "animation": "none",
+    "gesture": "none"
   },
   "screens": [
     {
-      "name": "Installer Jobs",
-      "purpose": "A hyper-glanceable list of properties needing remedial work, ordered by schedule or route.",
-      "states": {
-        "loading": "Full-screen white with an oversized, chunky loading indicator.",
-        "empty": "Stark empty state: large geometric icon (clipboard) + 'NO ACTIVE JOBS' in mono caps.",
-        "error": "Signal red background section with mono error text and an aggressive black retry button."
-      },
-      "layout": "Mechanical list view. Hard 2pt black borders on each job card. Left-aligned status pill with mono text. Oversized typography for the customer address. A visible offline/sync status badge per job (synced/pending/failed). No padding inside the edge-to-edge container, just harsh dividers."
-    },
-    {
-      "name": "Installer Job Detail",
-      "purpose": "The operational hub for a single property to record evidence for NCs (Non-Compliances).",
-      "states": {
-        "loading": "Mechanical skeleton with hard borders.",
-        "empty": "No NCs present text. Usually impossible, but handled with a simple raw mono string.",
-        "error": "Error block reading 'FAILED TO LOAD JOB DATA' in large text."
-      },
-      "layout": "Header shows property details and overall progress in a thick bordered block. Below, a stack of NCs acting as accordion cards (hard borders, raw text: 'NC NUMBER + DESCRIPTION'). Inside: original photos, mandatory 'Take Photo'/'Record Video' buttons. A persistent offline draft queue indicator at the very bottom."
-    },
-    {
-      "name": "Evidence Camera",
-      "purpose": "A full-screen, un-styled utility camera that forces geotagged overlay metadata directly onto the media.",
-      "states": {
-        "loading": "Camera initialization...",
-        "empty": "N/A",
-        "error": "Camera permission denied block."
-      },
-      "layout": "Full-screen camera preview. The bottom 25% of the screen holds an immutable, high-contrast overlay block (black background, white mono text) displaying: Date, HH:MM:SS, GPS coordinates, Project Ref, and 'Location Verified' or 'Location Not Verified' based on GPS accuracy. A massive solid white circular shutter button with a 2pt black border sits at the bottom."
-    },
-    {
       "name": "Staff Dashboard",
-      "purpose": "A dense, command-center view for admins/employees to review field progress at a glance.",
+      "purpose": "Project list/cards and status counters for quick overview.",
       "states": {
-        "loading": "Grid skeleton.",
-        "empty": "Zero state with a mono system message.",
-        "error": "Error rail at the top."
+        "loading": "Skeleton loaders matching card radii.",
+        "empty": "Subtle branded illustration or system icon with soft muted text.",
+        "error": "Error banner with retry CTA."
       },
-      "layout": "Top section: 4 oversized square tiles (Active, Outstanding NCs, Awaiting Review, Completed) structured in a strict 2x2 grid with 2pt borders. Below: A dense, compact data table of projects. Scrollable horizontally if needed. Hard alignments, mono headers, and minimal white space. Clear AI assessment status badges (Pending/Verified/Referred)."
+      "layout": "Top status counter cards (2-col grid). Below, vertical list of Project cards. Clean subtle borders (1px border on surfaceSecondary)."
+    },
+    {
+      "name": "Project Detail",
+      "purpose": "Detailed NC cards, status badges, and evidence media view.",
+      "states": {
+        "loading": "Spinner centered.",
+        "empty": "No NCs logged message with 'Add NC' button.",
+        "error": "Unable to load project details with retry CTA."
+      },
+      "layout": "Sticky header. Stack of NC cards. Media thumbnails in flex row wrap. Actions prominently anchored at the bottom."
     }
   ],
-  "images": {
-    "logo": {
-      "url": "https://images.pexels.com/photos/33824537/pexels-photo-33824537.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
-      "alt": "Abstract geometric orange logo"
-    },
-    "empty_clipboard": {
-      "url": "https://images.unsplash.com/photo-1651760680066-db9d32bd0357?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDB8MHwxfHNlYXJjaHwxfHxlbXB0eSUyMGNsaXBib2FyZCUyMGlsbHVzdHJhdGlvbnxlbnwwfHx8fDE3OTI0MjIzNTl8MA&ixlib=rb-4.1.0&q=85",
-      "alt": "Empty clipboard illustration"
-    },
-    "residential_property": {
-      "url": "https://images.unsplash.com/photo-1766603636700-e9d80473f40f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NjV8MHwxfHNlYXJjaHwxfHxyZXNpZGVudGlhbCUyMHByb3BlcnR5JTIwZXh0ZXJpb3J8ZW58MHx8fHwxNzkyNDIyMzU5fDA&ixlib=rb-4.1.0&q=85",
-      "alt": "Residential property exterior"
-    }
-  },
+  "images": {},
   "instructions_to_main_agent": [
-    "Adhere strictly to the Brutalist Mobile LIGHT personality. Use 0px border radius everywhere. Employ hard 2pt borders (color: #0A0A0A) on cards, buttons, and headers.",
-    "Never use shadows, blur, or glassmorphism. Surfaces should be flat and sharply defined.",
-    "For typography, use Archivo for display and headers, and a Mono font (like SpaceMono or JetBrains Mono) for metrics, badges, and statuses.",
-    "The Evidence Camera screen must overlay GPS and timestamp metadata in an unapologetic, high-contrast mono block at the bottom of the camera view.",
-    "Ensure touch targets in the Installer Jobs list are exceptionally large (minimum 48pt) to accommodate field workers.",
-    "Represent the offline/sync queue distinctly on the job detail screen. Only show success once confirmed by the server.",
-    "Implement the Staff Dashboard with a dense, utility-first table layout. No decorative charts—just hard data and raw metrics."
+    "Update the existing token file /app/frontend/src/theme.ts to reflect the new light and dark mode hex values provided.",
+    "Ensure WCAG AA contrast on all elements. Note: To guarantee AA compliance on the #FF5A00 accent color across states, 'onBrandPrimary' text must be #1A1A1A (dark charcoal). Do not use white text on the orange buttons unless it's strictly > 18pt bold.",
+    "Remove all 2px solid black borders and brutalist styling. Replace with 1px soft 'border' or 'borderStrong' colors.",
+    "Status colors (success, warning, error, info) should be implemented as soft tinted badge backgrounds with their matching 'on*' text, ditching the previous neon colors.",
+    "Remove Archivo from body elements and labels. Fall back to standard System fonts (or whatever existing clean non-display font is bundled) for body and UI labels, keeping Archivo exclusively for Headings.",
+    "Do NOT introduce new dependencies or animation libraries. Use existing shared primitives (Btn, Badge, Field, Card) and only refine their internal stylings (borders, radius, padding, colors) to align with this minimal, modern specification.",
+    "Fix dark mode completely: do not simply invert colors. Use the provided dark mode palette that relies on lifted grays (#1E1E1E, #2C2C2E) instead of pure black, and highly readable muted text (#A0A0A0)."
   ]
 }

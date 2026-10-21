@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Btn, Feather, Sheet } from "@/src/ui";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (y: number, m: number, d: number) => `${y}-${pad(m + 1)}-${pad(d)}`;
@@ -59,13 +59,13 @@ export function DatePickerSheet({ visible, value, title, onPick, onClose, testID
 
 const useStyles = makeStyles((c) => ({
   head: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: space.sm },
-  nav: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderColor: c.border },
+  nav: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   month: { fontFamily: fonts.display, fontWeight: "800", fontSize: 16, color: c.onSurface },
   grid: { flexDirection: "row", flexWrap: "wrap" },
-  dow: { width: `${100 / 7}%`, textAlign: "center", fontFamily: fonts.mono, fontSize: 11, color: c.muted, paddingVertical: 4 },
+  dow: { width: `${100 / 7}%`, textAlign: "center", fontFamily: fonts.text, fontSize: 11, color: c.muted, paddingVertical: 4 },
   cell: { width: `${100 / 7}%`, height: 44, alignItems: "center", justifyContent: "center" },
   day: { borderWidth: 1, borderColor: "transparent" },
   today: { borderColor: c.border },
-  dayText: { fontFamily: fonts.mono, fontSize: 14, color: c.onSurface },
+  dayText: { fontFamily: fonts.text, fontSize: 14, color: c.onSurface },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.md },
 }));

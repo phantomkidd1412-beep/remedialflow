@@ -100,7 +100,7 @@ const useStyles = makeStyles((colors) => ({
     textAlign: "center",
   },
   devMessage: {
-    color: colors.error,
+    color: colors.onError,
     fontSize: 13,
     textAlign: "center",
   },

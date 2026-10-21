@@ -6,7 +6,7 @@ import { api } from "@/src/api";
 import { usesNativeTabs } from "@/src/navigation";
 import { Badge, Empty, ErrorBlock, Loading, money, fmtDate } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Earn = { id: string; project_id: string; ref: string; address: string; amount: number; currency: string; status: string; earned_at: string; paid_at?: string | null; ncs?: string[] };
 type Potential = { project_id: string; ref: string; address: string; amount: number; ncs: string[]; ncs_done: number };
@@ -109,20 +109,20 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   list: { padding: space.lg, gap: space.sm },
   cards: { flexDirection: "row", gap: space.sm },
-  card: { flex: 1, borderWidth: BORDER, borderColor: c.border, padding: space.sm, gap: 4, minHeight: 72, justifyContent: "space-between", backgroundColor: c.surfaceSecondary },
+  card: { flex: 1, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.sm, gap: 4, minHeight: 72, justifyContent: "space-between", backgroundColor: c.surfaceSecondary },
   cardOn: { backgroundColor: c.brandPrimary },
   onBrand: { color: c.onBrandPrimary },
-  cLabel: { fontFamily: fonts.mono, fontSize: 10, color: c.onSurface, textTransform: "uppercase" },
-  cVal: { fontFamily: fonts.display, fontWeight: "900", fontSize: 18, color: c.onSurface },
-  tabs: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border },
+  cLabel: { fontFamily: fonts.text, fontSize: 10, color: c.onSurface, textTransform: "uppercase" },
+  cVal: { fontFamily: fonts.display, fontWeight: "800", fontSize: 18, color: c.onSurface },
+  tabs: { flexDirection: "row", borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   tab: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center" },
   tabOn: { backgroundColor: c.brandSecondary },
   tabText: { fontFamily: fonts.display, fontWeight: "700", fontSize: 13, color: c.onSurface },
   tabTextOn: { color: c.onBrandSecondary },
-  hint: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
-  row: { flexDirection: "row", alignItems: "center", gap: space.md, borderWidth: BORDER, borderColor: c.border, padding: space.md, backgroundColor: c.surface },
+  hint: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  row: { flexDirection: "row", alignItems: "center", gap: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, backgroundColor: c.surface },
   addr: { fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface },
-  ref: { fontFamily: fonts.mono, fontSize: 12, color: c.muted },
+  ref: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   meta: { fontSize: 12, color: c.muted },
-  amt: { fontFamily: fonts.mono, fontSize: 15, color: c.onSurface },
+  amt: { fontFamily: fonts.text, fontSize: 15, color: c.onSurface },
 }));

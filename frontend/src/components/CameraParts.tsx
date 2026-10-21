@@ -3,7 +3,7 @@ import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Btn, Feather } from "@/src/ui";
 import { useGeo, stampTime } from "@/src/components/useGeo";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export type P = { projectId: string; ncId: string; ref: string; postcode: string; nc: string };
 
@@ -62,25 +62,25 @@ export const useCameraStyles = makeStyles((c) => ({
   cam: { flex: 1 },
   focus: { position: "absolute", width: 72, height: 72, borderWidth: 2, borderColor: c.brandPrimary },
   sideBar: { position: "absolute", right: space.lg, top: 140, gap: space.sm },
-  sideText: { fontFamily: fonts.mono, fontSize: 10, color: "#FFFFFF" },
+  sideText: { fontFamily: fonts.text, fontSize: 10, color: "#FFFFFF" },
   topBar: { position: "absolute", left: space.lg, right: space.lg, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  iconBtn: { width: 48, height: 48, backgroundColor: "#0A0A0A", borderWidth: BORDER, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  countTag: { backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.sm, paddingVertical: 4 },
-  countText: { fontFamily: fonts.mono, fontSize: 12, color: c.onBrandPrimary },
+  iconBtn: { width: 48, height: 48, backgroundColor: "#0A0A0A", borderWidth: BORDER, borderRadius: radius.md, borderColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  countTag: { backgroundColor: c.brandPrimary, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.sm, paddingVertical: 4 },
+  countText: { fontFamily: fonts.text, fontSize: 12, color: c.onBrandPrimary },
   bottom: { backgroundColor: "#0A0A0A", paddingHorizontal: space.lg, paddingTop: space.md, gap: space.md },
   stamp: { gap: 2 },
-  stampText: { fontFamily: fonts.mono, fontSize: 13, color: "#FFFFFF" },
+  stampText: { fontFamily: fonts.text, fontSize: 13, color: "#FFFFFF" },
   locRow: { flexDirection: "row", gap: space.sm, marginTop: 4, alignItems: "center" },
   locTag: { paddingHorizontal: 6, paddingVertical: 2 },
-  locText: { fontFamily: fonts.mono, fontSize: 11, color: "#0A0A0A" },
+  locText: { fontFamily: fonts.text, fontSize: 11, color: "#0A0A0A" },
   fixBtn: { borderWidth: 1, borderColor: "#FFFFFF", paddingHorizontal: 8, paddingVertical: 2 },
-  fixText: { fontFamily: fonts.mono, fontSize: 11, color: "#FFFFFF" },
+  fixText: { fontFamily: fonts.text, fontSize: 11, color: "#FFFFFF" },
   controls: { flexDirection: "row", alignItems: "center", gap: space.md, height: 88 },
   shutter: { width: 80, height: 80, borderRadius: 40, backgroundColor: "#FFFFFF", borderWidth: 4, borderColor: c.brandPrimary },
   mini: { width: 40, height: 40, borderWidth: 1, borderColor: "#FFFFFF" },
-  doneBtn: { height: 48, paddingHorizontal: space.lg, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: "#FFFFFF", justifyContent: "center" },
-  doneText: { fontFamily: fonts.display, fontWeight: "900", fontSize: 14, color: c.onBrandPrimary },
+  doneBtn: { height: 48, paddingHorizontal: space.lg, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderRadius: radius.md, borderColor: "#FFFFFF", justifyContent: "center" },
+  doneText: { fontFamily: fonts.display, fontWeight: "800", fontSize: 14, color: c.onBrandPrimary },
   gate: { flex: 1, backgroundColor: "#0A0A0A", padding: space.xl, justifyContent: "center", gap: space.lg },
-  gateTitle: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: "#FFFFFF" },
-  gateText: { fontFamily: fonts.mono, fontSize: 13, color: "#FFFFFF" },
+  gateTitle: { fontFamily: fonts.display, fontWeight: "800", fontSize: 22, color: "#FFFFFF" },
+  gateText: { fontFamily: fonts.text, fontSize: 13, color: "#FFFFFF" },
 }));

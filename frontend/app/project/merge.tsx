@@ -7,7 +7,7 @@ import { api } from "@/src/api";
 import { Btn, ErrorBlock, Label, Loading, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { PdfNc } from "@/src/components/PdfImport";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Item = { index: number; draft: PdfNc; score: number; kind: "match" | "ambiguous" | "new"; nc: { id: string; number: string; original_text: string; status: string } | null };
 type Preview = { project: { id: string; ref: string; address: string }; items: Item[]; untouched: { id: string; number: string; description: string }[] };
@@ -73,7 +73,7 @@ export default function MergeImport() {
           The updated report has {items.length} NC{items.length === 1 ? "" : "s"}. Existing NCs, evidence, statuses and history are never removed; replaced wording is kept in history.
         </Text>
         {items.map((it) => (
-          <View key={it.index} style={[s.card, it.kind === "ambiguous" && !choice[it.index] && { borderColor: colors.warning, borderWidth: 2 }]} testID={`merge-item-${it.index}`}>
+          <View key={it.index} style={[s.card, it.kind === "ambiguous" && !choice[it.index] && { borderColor: colors.onWarning, borderWidth: 2 }]} testID={`merge-item-${it.index}`}>
             <Text style={s.kind}>
               REPORT NC {it.index + 1} · {it.kind === "match" ? `MATCHES ${it.nc?.number}` : it.kind === "ambiguous" ? `POSSIBLE MATCH ${it.nc?.number} (${Math.round(it.score * 100)}%) · PLEASE CHOOSE` : "NEW"}
             </Text>
@@ -111,9 +111,9 @@ const useStyles = makeStyles((c) => ({
   title: { fontFamily: fonts.display, fontWeight: "700", fontSize: 22, color: c.onSurface },
   body: { fontSize: 15, lineHeight: 21, color: c.onSurface },
   muted: { fontSize: 13, color: c.muted },
-  card: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
-  kind: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: space.sm },
+  kind: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   opts: { flexDirection: "row", flexWrap: "wrap", gap: space.sm },
-  opt: { minHeight: 44, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
+  opt: { minHeight: 44, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   optText: { fontSize: 14, fontWeight: "600", color: c.onSurface },
 }));

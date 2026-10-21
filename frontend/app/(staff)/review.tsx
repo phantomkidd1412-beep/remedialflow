@@ -8,7 +8,7 @@ import { useAuth } from "@/src/auth";
 import { usesNativeTabs } from "@/src/navigation";
 import { Badge, Empty, ErrorBlock, Feather, Loading } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Group = { project_id: string; ref: string; address: string; postcode?: string; pending: number; safety: boolean; oldest: string };
 
@@ -69,10 +69,10 @@ export default function Review() {
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, height: 44 },
+  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.md, height: 44 },
   input: { flex: 1, fontSize: 15, color: c.onSurface, height: 44 },
   list: { padding: space.lg, gap: space.md },
-  card: { flexDirection: "row", alignItems: "center", gap: space.md, borderWidth: BORDER, borderColor: c.border, padding: space.md },
+  card: { flexDirection: "row", alignItems: "center", gap: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
   addr: { fontFamily: fonts.display, fontWeight: "800", fontSize: 17, lineHeight: 22, color: c.onSurface },
-  ref: { fontFamily: fonts.mono, fontSize: 13, color: c.muted },
+  ref: { fontFamily: fonts.text, fontSize: 13, color: c.muted },
 }));

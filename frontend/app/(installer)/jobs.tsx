@@ -7,7 +7,7 @@ import { Badge, Btn, Empty, ErrorBlock, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { Bell } from "@/src/components/Bell";
 import { SyncBar } from "@/src/components/SyncBar";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Row = ProjectRow & { my_statuses?: string[]; my_nc_numbers?: string[]; my_schedule?: string | null };
 type Key = "action" | "this_week" | "next_week" | "upcoming" | "unscheduled" | "completed";
@@ -43,14 +43,14 @@ const JobCard = memo(function JobCard({ p, queued, onOpen, section }: { p: Row; 
   const overdue = section === "this_week" && !!p.my_schedule && p.my_schedule < iso(new Date());
   const statusLabel = section === "completed" ? "Completed" : (p.my_statuses ?? []).some((x) => x === "assessing" || x === "employee_review" || x === "admin_review") ? "In review" : "To do";
   return (
-    <Pressable style={[s.card, section === "action" && { borderColor: colors.error, borderWidth: 3 }]} onPress={() => onOpen(p.id)} testID={`job-card-${p.ref}`}>
+    <Pressable style={[s.card, section === "action" && { borderColor: colors.onError, borderLeftWidth: 4 }]} onPress={() => onOpen(p.id)} testID={`job-card-${p.ref}`}>
       <View style={s.cardTop}>
         <Text style={s.ref}>{p.ref}</Text>
         {section === "action" ? <Badge status="rejected" label={`${attention} need action`} testID={`job-status-${p.ref}`} /> : <Badge status={section === "completed" ? "approved" : statusLabel === "In review" ? "employee_review" : "in_progress"} label={statusLabel} testID={`job-status-${p.ref}`} />}
       </View>
       <Text style={s.addr}>{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
       <Text style={s.meta} testID={`job-ncs-${p.ref}`}>{(p.my_nc_numbers ?? []).length} NC{(p.my_nc_numbers ?? []).length === 1 ? "" : "s"} assigned ({(p.my_nc_numbers ?? []).join(", ") || "—"}) · {(p.my_statuses ?? []).filter((x) => x === "approved").length}/{(p.my_statuses ?? []).length} done</Text>
-      <Text style={[s.meta, overdue && { color: colors.error, fontWeight: "700" }]} testID={`job-schedule-${p.ref}`}>
+      <Text style={[s.meta, overdue && { color: colors.onError, fontWeight: "700" }]} testID={`job-schedule-${p.ref}`}>
         {p.my_schedule ? `Scheduled ${p.my_schedule.split("-").reverse().join("/")}${overdue ? " · overdue" : ""}` : "Not yet scheduled"}
       </Text>
       <Progress value={(p.my_statuses ?? []).length ? (p.my_statuses ?? []).filter((x) => x === "approved").length / (p.my_statuses ?? []).length : 0} testID={`job-progress-${p.ref}`} />
@@ -87,9 +87,9 @@ export default function Jobs() {
           const on = filter === k;
           const alert = k === "action" && by[k].length > 0;
           return (
-            <Pressable key={k} onPress={() => setFilter(on ? "all" : (k as Filter))} style={[s.sCard, alert && { backgroundColor: colors.error }, on && { backgroundColor: colors.brandPrimary }]} testID={`jobs-card-${k}`} accessibilityState={{ selected: on }}>
-              <Text style={[s.sVal, alert && !on && { color: colors.onError }, on && { color: colors.onBrandPrimary }]}>{by[k].length}</Text>
-              <Text style={[s.sLabel, alert && !on && { color: colors.onError }, on && { color: colors.onBrandPrimary }]} numberOfLines={2}>{TITLES[k]}</Text>
+            <Pressable key={k} onPress={() => setFilter(on ? "all" : (k as Filter))} style={[s.sCard, alert && { backgroundColor: colors.error }, on && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID={`jobs-card-${k}`} accessibilityState={{ selected: on }}>
+              <Text style={[s.sVal, alert && !on && { color: colors.onError }, on && { color: colors.onBrandSecondary }]}>{by[k].length}</Text>
+              <Text style={[s.sLabel, alert && !on && { color: colors.onError }, on && { color: colors.onBrandSecondary }]} numberOfLines={2}>{TITLES[k]}</Text>
             </Pressable>
           );
         })}
@@ -104,7 +104,7 @@ export default function Jobs() {
 
   return (
     <View style={s.root}>
-      <ScreenHeader title="JOBS" sub={q.data ? `${q.data.pages[0].total} assigned` : " "} right={<Bell />} />
+      <ScreenHeader title="Jobs" sub={q.data ? `${q.data.pages[0].total} assigned` : " "} right={<Bell />} />
       {q.isLoading ? (
         <Loading />
       ) : q.isError ? (
@@ -118,7 +118,7 @@ export default function Jobs() {
           ListHeaderComponent={summary}
           renderSectionHeader={({ section }) => (
             <View style={[s.sHead, section.key === "action" && { backgroundColor: colors.error }]} testID={`jobs-section-${section.key}`}>
-              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title.toUpperCase()} · {section.data.length}</Text>
+              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title} · {section.data.length}</Text>
             </View>
           )}
           renderItem={({ item, section }) => <JobCard p={item} section={section.key as Key} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}
@@ -137,19 +137,19 @@ export default function Jobs() {
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  list: { padding: space.lg, gap: space.md, paddingBottom: space.xl },
-  sHead: { backgroundColor: c.surfaceInverse, paddingHorizontal: space.md, paddingVertical: 6, marginTop: space.sm },
-  sTitle: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurfaceInverse },
-  card: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.surface, padding: space.lg, gap: space.sm },
+  list: { padding: space.lg, gap: space.md, paddingBottom: space.xl, width: "100%", maxWidth: 820, alignSelf: "center" },
+  sHead: { backgroundColor: c.surfaceSecondary, borderRadius: radius.sm, paddingHorizontal: space.md, paddingVertical: 6, marginTop: space.md },
+  sTitle: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700", color: c.onSurfaceSecondary },
+  card: { borderWidth: BORDER, borderRadius: radius.lg, borderColor: c.border, backgroundColor: c.surface, padding: space.lg, gap: space.sm },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  ref: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
-  addr: { fontFamily: fonts.display, fontWeight: "800", fontSize: 18, lineHeight: 23, color: c.onSurface },
+  ref: { fontFamily: fonts.text, fontSize: 13, fontWeight: "600", color: c.muted, letterSpacing: 0.3 },
+  addr: { fontFamily: fonts.display, fontWeight: "700", fontSize: 18, lineHeight: 24, color: c.onSurface },
   meta: { fontSize: 13, color: c.muted },
   cardBottom: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: space.sm },
   cards: { flexDirection: "row", gap: 6 },
-  sCard: { flex: 1, borderWidth: BORDER, borderColor: c.border, backgroundColor: c.surfaceSecondary, paddingVertical: space.sm, paddingHorizontal: 4, minHeight: 64, alignItems: "center", justifyContent: "center", gap: 2 },
-  sVal: { fontFamily: fonts.display, fontWeight: "900", fontSize: 20, color: c.onSurface },
-  sLabel: { fontFamily: fonts.mono, fontSize: 9, color: c.onSurface, textAlign: "center", textTransform: "uppercase" },
+  sCard: { flex: 1, borderWidth: BORDER, borderRadius: radius.lg, borderColor: c.border, backgroundColor: c.surfaceSecondary, paddingVertical: space.sm, paddingHorizontal: 4, minHeight: 64, alignItems: "center", justifyContent: "center", gap: 2 },
+  sVal: { fontFamily: fonts.display, fontWeight: "800", fontSize: 20, color: c.onSurface },
+  sLabel: { fontFamily: fonts.text, fontSize: 11, fontWeight: "600", color: c.onSurfaceSecondary, textAlign: "center" },
   clear: { minHeight: 36, justifyContent: "center" },
-  clearText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface, textDecorationLine: "underline" },
+  clearText: { fontFamily: fonts.text, fontSize: 13, color: c.onBrandSecondary, fontWeight: "600" },
 }));

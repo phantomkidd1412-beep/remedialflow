@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@/src/ui";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export function ScreenHeader({ title, sub, back, right, children }: { title: string; sub?: string; back?: boolean; right?: ReactNode; children?: ReactNode }) {
   const s = useStyles();
@@ -30,10 +30,10 @@ export function ScreenHeader({ title, sub, back, right, children }: { title: str
 }
 
 const useStyles = makeStyles((c) => ({
-  wrap: { backgroundColor: c.surface, borderBottomWidth: BORDER, borderColor: c.border, paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.md },
+  wrap: { backgroundColor: c.surface, borderBottomWidth: BORDER, borderColor: c.divider, paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.md },
   row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 44 },
-  back: { width: 44, height: 44, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
+  back: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: c.surfaceSecondary, alignItems: "center", justifyContent: "center" },
   titles: { flex: 1 },
-  title: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: c.onSurface, letterSpacing: -0.5 },
-  sub: { fontFamily: fonts.mono, fontSize: 12, color: c.muted },
+  title: { fontFamily: fonts.display, fontWeight: "700", fontSize: 22, color: c.onSurface, letterSpacing: -0.3 },
+  sub: { fontFamily: fonts.text, fontSize: 13, color: c.muted, marginTop: 2 },
 }));

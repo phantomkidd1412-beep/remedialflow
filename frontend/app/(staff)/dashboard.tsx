@@ -9,7 +9,7 @@ import { usesNativeTabs } from "@/src/navigation";
 import { Badge, Empty, ErrorBlock, Feather, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { Bell } from "@/src/components/Bell";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, CONTENT_MAX, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Counts = { unassigned: number; in_progress: number; awaiting_review: number; completed: number; trustmark_resolved: number };
 const COUNTERS: [keyof Counts, string][] = [
@@ -80,9 +80,9 @@ export default function Dashboard() {
   const header = (
     <View style={s.counters}>
       {COUNTERS.map(([k, label]) => (
-        <Pressable key={k} style={[s.counter, status === k && { backgroundColor: colors.brandPrimary }]} onPress={() => setStatus(status === k ? "" : k)} testID={`tile-${k}`}>
-          <Text style={s.cVal}>{counts.data?.[k] ?? "–"}</Text>
-          <Text style={s.cLabel} numberOfLines={1} adjustsFontSizeToFit>{label}</Text>
+        <Pressable key={k} style={[s.counter, status === k && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} onPress={() => setStatus(status === k ? "" : k)} testID={`tile-${k}`}>
+          <Text style={[s.cVal, status === k && { color: colors.onBrandSecondary }]}>{counts.data?.[k] ?? "–"}</Text>
+          <Text style={[s.cLabel, status === k && { color: colors.onBrandSecondary }]} numberOfLines={1} adjustsFontSizeToFit>{label}</Text>
         </Pressable>
       ))}
     </View>
@@ -97,20 +97,20 @@ export default function Dashboard() {
           <Bell />
           <Pressable style={s.newBtn} onPress={() => router.push("/project/new")} testID="new-project-button">
             <Feather name="plus" size={20} color={colors.onBrandPrimary} />
-            <Text style={s.newText}>NEW</Text>
+            <Text style={s.newText}>New</Text>
           </Pressable>
           </View>
         }
       >
         <View style={s.search}>
-          <Feather name="search" size={18} color={colors.onSurface} />
+          <Feather name="search" size={18} color={colors.muted} />
           <TextInput value={text} onChangeText={setText} placeholder="Search address or reference" placeholderTextColor={colors.muted} style={s.searchInput} testID="project-search-input" autoCapitalize="none" />
         </View>
       </ScreenHeader>
       <View style={s.chipRow}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
           {FILTERS.map(([v, l]) => (
-            <Pressable key={l} onPress={() => setStatus(v)} style={[s.chip, status === v && { backgroundColor: colors.brandSecondary }]} testID={`filter-chip-${v || "all"}`}>
+            <Pressable key={l} onPress={() => setStatus(v)} style={[s.chip, status === v && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID={`filter-chip-${v || "all"}`}>
               <Text style={[s.chipText, status === v && { color: colors.onBrandSecondary }]}>{l}</Text>
             </Pressable>
           ))}
@@ -140,28 +140,28 @@ export default function Dashboard() {
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  newBtn: { flexDirection: "row", alignItems: "center", gap: 4, height: 44, paddingHorizontal: space.md, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border },
-  newText: { fontFamily: fonts.display, fontWeight: "900", fontSize: 14, color: c.onBrandPrimary },
-  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, height: 44 },
+  newBtn: { flexDirection: "row", alignItems: "center", gap: 4, height: 44, paddingHorizontal: space.lg, backgroundColor: c.brandPrimary, borderRadius: radius.pill },
+  newText: { fontFamily: fonts.text, fontWeight: "700", fontSize: 15, color: c.onBrandPrimary },
+  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderRadius: radius.md, backgroundColor: c.surfaceSecondary, paddingHorizontal: space.md, height: 44 },
   searchInput: { flex: 1, fontSize: 15, color: c.onSurface, height: 44 },
-  chipRow: { height: 56, justifyContent: "center", borderBottomWidth: BORDER, borderColor: c.border },
+  chipRow: { height: 56, justifyContent: "center", borderBottomWidth: BORDER, borderColor: c.divider },
   chips: { gap: space.sm, paddingHorizontal: space.lg, alignItems: "center" },
-  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center", backgroundColor: c.surface },
+  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.lg, borderWidth: BORDER, borderRadius: radius.pill, borderColor: c.border, justifyContent: "center", backgroundColor: c.surface },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
-  list: { padding: space.lg, gap: space.md },
-  counters: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border, marginBottom: space.xs },
-  counter: { flex: 1, minHeight: 60, paddingVertical: space.sm, alignItems: "center", justifyContent: "center", borderRightWidth: 1, borderColor: c.border },
-  cVal: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: c.onSurface },
-  cLabel: { fontSize: 11, fontWeight: "600", color: c.onSurface },
-  card: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 6, backgroundColor: c.surface },
+  list: { padding: space.lg, gap: space.md, width: "100%", maxWidth: CONTENT_MAX, alignSelf: "center" },
+  counters: { flexDirection: "row", gap: space.sm, marginBottom: space.sm },
+  counter: { flex: 1, minHeight: 68, paddingVertical: space.sm, alignItems: "center", justifyContent: "center", borderRadius: radius.lg, borderWidth: BORDER, borderColor: c.border, backgroundColor: c.surfaceSecondary },
+  cVal: { fontFamily: fonts.display, fontWeight: "800", fontSize: 22, color: c.onSurface },
+  cLabel: { fontSize: 12, fontWeight: "600", color: c.muted },
+  card: { borderWidth: BORDER, borderRadius: radius.lg, borderColor: c.border, padding: space.lg, gap: space.sm, backgroundColor: c.surface },
   pressed: { backgroundColor: c.surfaceSecondary },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: space.sm },
   badges: { flexDirection: "row", gap: 4, flexShrink: 1, flexWrap: "wrap", justifyContent: "flex-end" },
-  ref: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
-  addr: { fontFamily: fonts.display, fontWeight: "800", fontSize: 17, lineHeight: 22, color: c.onSurface },
+  ref: { fontFamily: fonts.text, fontSize: 13, fontWeight: "600", color: c.muted, letterSpacing: 0.3 },
+  addr: { fontFamily: fonts.display, fontWeight: "700", fontSize: 17, lineHeight: 23, color: c.onSurface },
   meta: { fontSize: 13, color: c.muted },
   progRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
   progText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
-  row: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.md, minHeight: 56, borderBottomWidth: 1, borderColor: c.border, gap: space.md },
+  row: { flexDirection: "row", alignItems: "center", paddingHorizontal: space.lg, minHeight: 60, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.surface, gap: space.md },
   cell: { fontSize: 14, color: c.onSurface },
 }));

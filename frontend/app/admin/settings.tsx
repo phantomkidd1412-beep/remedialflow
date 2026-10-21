@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { Badge, Btn, Feather, Field, Label, Loading, Sheet, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
 type S = { auto_approve_low_risk: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
@@ -87,7 +87,7 @@ function InstallerRate({ currency, fallback }: { currency: string; fallback: num
           <>
             <Field label={`Default rate per job (${currency})`} value={val} onChangeText={(t) => { setVal(t); setErr(""); setSaved(false); }} keyboardType="decimal-pad" placeholder={`Uses company default ${money(fallback, currency)}`} testID="installer-rate-input" />
             <Text style={s.mono}>Applies to newly assigned jobs. Already earned or paid amounts and project-specific overrides are not changed.</Text>
-            {err ? <Text style={[s.mono, { color: colors.error }]} testID="installer-rate-error">{err}</Text> : null}
+            {err ? <Text style={[s.mono, { color: colors.onError }]} testID="installer-rate-error">{err}</Text> : null}
             <Btn title={saved ? "Saved" : "Save rate"} icon={saved ? "check" : "save"} variant={saved ? "success" : "primary"} onPress={save} loading={saving} disabled={saving} testID="installer-rate-save" />
           </>
         )
@@ -232,13 +232,13 @@ export default function SettingsScreen() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { padding: space.lg, gap: space.md },
-  section: { fontFamily: fonts.display, fontWeight: "900", fontSize: 16, color: c.onSurface, marginTop: space.md, borderBottomWidth: BORDER, borderColor: c.border, paddingBottom: 4 },
-  choices: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border },
+  section: { fontFamily: fonts.display, fontWeight: "800", fontSize: 16, color: c.onSurface, marginTop: space.md, borderBottomWidth: BORDER, borderColor: c.border, paddingBottom: 4 },
+  choices: { flexDirection: "row", borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   choice: { flex: 1, minHeight: 44, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
-  choiceText: { fontFamily: fonts.mono, fontSize: 11, color: c.onSurface, textAlign: "center" },
-  payRow: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, padding: space.md },
-  mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  choiceText: { fontFamily: fonts.text, fontSize: 11, color: c.onSurface, textAlign: "center" },
+  payRow: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
+  mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   payName: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSurface },
-  dropdown: { minHeight: 48, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  dropdown: { minHeight: 48, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   option: { paddingVertical: space.sm, paddingHorizontal: space.md, borderBottomWidth: 1, borderColor: c.border, minHeight: 48, justifyContent: "center" },
 }));

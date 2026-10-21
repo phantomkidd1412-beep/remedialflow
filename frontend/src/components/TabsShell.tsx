@@ -25,11 +25,11 @@ export function TabsShell({ tabs }: { tabs: TabDef[] }) {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.onSurface,
+        tabBarActiveTintColor: colors.brandPrimary,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: { backgroundColor: colors.surface, borderTopWidth: BORDER, borderTopColor: colors.border, ...(Platform.OS === "web" ? { height: 64 } : {}) },
+        tabBarStyle: { backgroundColor: colors.surface, borderTopWidth: BORDER, borderTopColor: colors.divider, ...(Platform.OS === "web" ? { height: 64 } : {}) },
         tabBarItemStyle: { alignSelf: "center" },
-        tabBarLabelStyle: { fontFamily: fonts.mono, fontSize: 11, textTransform: "uppercase" },
+        tabBarLabelStyle: { fontFamily: fonts.text, fontSize: 12, fontWeight: "600" },
       }}
     >
       {tabs.map((t) => (

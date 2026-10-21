@@ -63,5 +63,5 @@ export default function ReviewProject() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { padding: space.lg, gap: space.md },
-  hint: { fontFamily: fonts.mono, fontSize: 13, color: c.muted },
+  hint: { fontFamily: fonts.text, fontSize: 13, color: c.muted },
 }));

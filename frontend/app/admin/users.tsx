@@ -6,7 +6,7 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth";
 import { Badge, Btn, ErrorBlock, Field, Label, Loading, Sheet, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type U = { id: string; email: string; name: string; role: string; active: boolean; pay_type?: string; default_rate?: number | null };
 const ROLES = ["installer", "employee", "admin"];
@@ -149,10 +149,10 @@ export default function Users() {
 
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
-  row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 64, borderWidth: BORDER, borderColor: c.border, padding: space.md, marginBottom: -BORDER },
+  row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 64, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, marginBottom: -BORDER },
   name: { fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface },
-  mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  chip: { height: 36, flex: 1, borderWidth: BORDER, borderColor: c.border, justifyContent: "center", alignItems: "center" },
-  chipText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface, textTransform: "uppercase" },
-  code: { fontFamily: fonts.mono, fontSize: 28, color: c.onSurface, backgroundColor: c.warning, padding: space.md, borderWidth: BORDER, borderColor: c.border, textAlign: "center", letterSpacing: 2 },
+  mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
+  chip: { height: 36, flex: 1, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center", alignItems: "center" },
+  chipText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface, textTransform: "uppercase" },
+  code: { fontFamily: fonts.text, fontSize: 28, color: c.onSurface, backgroundColor: c.warning, padding: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, textAlign: "center", letterSpacing: 2 },
 }));

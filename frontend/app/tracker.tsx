@@ -7,7 +7,7 @@ import { api } from "@/src/api";
 import { openTrackerExport } from "@/src/projects";
 import { Badge, Btn, Empty, ErrorBlock, Feather, Field, Loading, fmtDate, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Row = { id: string; ref: string; address: string; installers: string[]; nc_total: number; nc_done: number; completed_at: string | null; resolved_at: string | null; status: string; reopened: boolean; days_outstanding: number | null };
 type Resp = { items: Row[]; count: number; start: string | null; end: string | null };
@@ -140,18 +140,18 @@ const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   list: { padding: space.lg, gap: space.sm },
   chips: { gap: space.sm },
-  chip: { minHeight: 40, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
+  chip: { minHeight: 40, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
   period: { flexDirection: "row", alignItems: "center", gap: space.sm },
-  arrow: { width: 44, height: 44, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
+  arrow: { width: 44, height: 44, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center" },
   periodText: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "700", color: c.onSurface },
   dates: { flexDirection: "row", gap: space.sm },
-  err: { fontSize: 13, color: c.error },
-  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, minHeight: 48 },
+  err: { fontSize: 13, color: c.onError },
+  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.md, minHeight: 48 },
   searchInput: { flex: 1, fontSize: 15, color: c.onSurface, minHeight: 44 },
   exportRow: { flexDirection: "row", alignItems: "center", gap: space.sm },
   count: { flex: 1, fontSize: 14, fontWeight: "700", color: c.onSurface },
-  card: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 4 },
+  card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: 4 },
   cardTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.sm },
   ref: { fontFamily: fonts.display, fontWeight: "800", fontSize: 16, color: c.onSurface },
   addr: { fontSize: 14, color: c.onSurface },

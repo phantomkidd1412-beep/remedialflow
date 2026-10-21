@@ -74,7 +74,6 @@ queryClient.setDefaultOptions({
 export default function RootLayout() {
   const [loaded] = useFonts({
     Archivo: require("../assets/fonts/Archivo-Bold.ttf"),
-    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     Feather: require("@react-native-vector-icons/feather/fonts/Feather.ttf"),
   });
   const [prefReady, setPrefReady] = useState(false);

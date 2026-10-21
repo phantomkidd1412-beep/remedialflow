@@ -7,75 +7,76 @@ export type ColorScheme = "light" | "dark";
 
 const light = {
   surface: "#FFFFFF",
-  onSurface: "#0A0A0A",
-  surfaceSecondary: "#F5F5F5",
-  onSurfaceSecondary: "#0A0A0A",
-  surfaceTertiary: "#E0E0E0",
-  onSurfaceTertiary: "#0A0A0A",
-  surfaceInverse: "#0A0A0A",
+  onSurface: "#1A1A1A",
+  surfaceSecondary: "#F5F5F7",
+  onSurfaceSecondary: "#333333",
+  surfaceTertiary: "#EBEBEF",
+  onSurfaceTertiary: "#4A4A4A",
+  surfaceInverse: "#1A1A1A",
   onSurfaceInverse: "#FFFFFF",
-  muted: "#757575",
+  muted: "#5F5F66",
 
   brand: "#FF5A00",
-  onBrand: "#0A0A0A",
+  onBrand: "#1A1A1A",
   brandPrimary: "#FF5A00",
-  onBrandPrimary: "#0A0A0A",
-  brandSecondary: "#0A0A0A",
-  onBrandSecondary: "#FFFFFF",
-  brandTertiary: "#FFDCC2",
-  onBrandTertiary: "#B33F00",
+  onBrandPrimary: "#1A1A1A",
+  brandSecondary: "#FFF0E5",
+  onBrandSecondary: "#A33A00",
+  brandTertiary: "#FFE1CC",
+  onBrandTertiary: "#8A3000",
 
-  success: "#00E676",
-  onSuccess: "#0A0A0A",
-  warning: "#FFEA00",
-  onWarning: "#0A0A0A",
-  error: "#FF1744",
-  onError: "#FFFFFF",
-  info: "#E0E0E0",
-  onInfo: "#0A0A0A",
+  // status colours are soft tints; the matching on* colour is the readable (AA) text/icon colour
+  success: "#E5F5E9",
+  onSuccess: "#0F5132",
+  warning: "#FFF4E5",
+  onWarning: "#663C00",
+  error: "#FDEAEA",
+  onError: "#842029",
+  info: "#E5F0FF",
+  onInfo: "#004085",
 
-  border: "#0A0A0A",
-  borderStrong: "#0A0A0A",
-  divider: "#0A0A0A",
-  overlay: "rgba(10,10,10,0.72)",
+  border: "#E5E5EA",
+  borderStrong: "#C7C7CC",
+  divider: "#E5E5EA",
+  overlay: "rgba(0,0,0,0.4)",
 };
 
 export type ThemeColors = typeof light;
 
-// Dark: same brutalist language inverted (near-black surfaces, light borders/text); brand/status colours unchanged.
+// Dark: lifted greys (not inverted), same brand orange, tinted status colours with light AA text.
 const dark: ThemeColors = {
-  surface: "#0A0A0A",
+  surface: "#121212",
   onSurface: "#F2F2F2",
-  surfaceSecondary: "#1A1A1A",
-  onSurfaceSecondary: "#F2F2F2",
-  surfaceTertiary: "#2A2A2A",
-  onSurfaceTertiary: "#F2F2F2",
-  surfaceInverse: "#F2F2F2",
-  onSurfaceInverse: "#0A0A0A",
-  muted: "#A6A6A6",
+  surfaceSecondary: "#1E1E1E",
+  onSurfaceSecondary: "#E0E0E0",
+  surfaceTertiary: "#2C2C2E",
+  onSurfaceTertiary: "#CCCCCC",
+  surfaceInverse: "#F5F5F7",
+  onSurfaceInverse: "#121212",
+  muted: "#A8A8AE",
 
   brand: "#FF5A00",
-  onBrand: "#0A0A0A",
-  brandPrimary: "#FF5A00",
-  onBrandPrimary: "#0A0A0A",
-  brandSecondary: "#F2F2F2",
-  onBrandSecondary: "#0A0A0A",
-  brandTertiary: "#3D1E0A",
-  onBrandTertiary: "#FFB48A",
+  onBrand: "#1A1A1A",
+  brandPrimary: "#FF6A1A",
+  onBrandPrimary: "#1A1A1A",
+  brandSecondary: "#3A1A08",
+  onBrandSecondary: "#FFC9A6",
+  brandTertiary: "#4D1B00",
+  onBrandTertiary: "#FFB885",
 
-  success: "#00E676",
-  onSuccess: "#0A0A0A",
-  warning: "#FFEA00",
-  onWarning: "#0A0A0A",
-  error: "#FF4569",
-  onError: "#FFFFFF",
-  info: "#2A2A2A",
-  onInfo: "#F2F2F2",
+  success: "#143324",
+  onSuccess: "#8FD3B0",
+  warning: "#3A2E05",
+  onWarning: "#FFDA6A",
+  error: "#3A1A1C",
+  onError: "#F4A3AA",
+  info: "#0B2A4A",
+  onInfo: "#9CC3FF",
 
-  border: "#E0E0E0",
-  borderStrong: "#F2F2F2",
-  divider: "#E0E0E0",
-  overlay: "rgba(0,0,0,0.8)",
+  border: "#38383A",
+  borderStrong: "#545456",
+  divider: "#2C2C2E",
+  overlay: "rgba(0,0,0,0.6)",
 };
 
 export const defaultScheme = "light" satisfies ColorScheme;
@@ -137,6 +138,13 @@ export function makeStyles<T extends StyleSheet.NamedStyles<T> | StyleSheet.Name
   };
 }
 
-export const fonts = { display: "Archivo", mono: "SpaceMono" };
+// Archivo for headings only; body/UI text uses the platform system font (no extra font downloads).
+export const fonts = {
+  display: "Archivo",
+  text: Platform.select({ ios: "System", android: "sans-serif", default: "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" }) as string,
+};
 export const space = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
-export const BORDER = 2;
+export const BORDER = 1;
+export const radius = { sm: 6, md: 10, lg: 14, pill: 999 };
+/** Centred max width so web layouts use space well without over-long lines. */
+export const CONTENT_MAX = 1200;

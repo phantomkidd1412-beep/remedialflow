@@ -56,6 +56,6 @@ export default function JobDetail() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   prog: { flexDirection: "row", alignItems: "center", gap: space.md },
-  progText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  progText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   list: { padding: space.lg, gap: space.md, paddingBottom: space.xxl },
 }));

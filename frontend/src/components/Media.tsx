@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { absUrl, api } from "@/src/api";
 import { EvidenceFile } from "@/src/projects";
 import { Badge, Feather, fmtDate } from "@/src/ui";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export function Thumb({ f, size = 72, onPress, onLongPress, testID }: { f: EvidenceFile; size?: number; onPress?: () => void; onLongPress?: () => void; testID?: string }) {
   const s = useStyles();
@@ -161,23 +161,23 @@ export function MediaViewer({ f, onClose }: { f: EvidenceFile | null; onClose: (
 }
 
 const useStyles = makeStyles((c) => ({
-  thumb: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  thumb: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.surfaceTertiary, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   play: { position: "absolute", bottom: 0, left: 0, backgroundColor: c.surfaceInverse, padding: 3 },
   flag: { position: "absolute", top: 0, right: 0, backgroundColor: c.warning, padding: 3 },
   root: { flex: 1, backgroundColor: c.surfaceInverse },
   top: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: space.lg, height: 56 },
-  title: { fontFamily: fonts.mono, color: c.onSurfaceInverse, fontSize: 13 },
-  close: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderColor: c.onSurfaceInverse },
+  title: { fontFamily: fonts.text, color: c.onSurfaceInverse, fontSize: 13 },
+  close: { width: 44, height: 44, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderRadius: radius.md, borderColor: c.onSurfaceInverse },
   img: { width: "100%", aspectRatio: 3 / 4, backgroundColor: c.surfaceInverse },
-  toggle: { flexDirection: "row", margin: space.lg, borderWidth: BORDER, borderColor: c.onSurfaceInverse },
+  toggle: { flexDirection: "row", margin: space.lg, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.onSurfaceInverse },
   tBtn: { flex: 1, height: 40, alignItems: "center", justifyContent: "center" },
-  tText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurfaceInverse },
-  meta: { backgroundColor: c.surface, margin: space.lg, padding: space.lg, gap: space.sm, borderWidth: BORDER, borderColor: c.border },
+  tText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurfaceInverse },
+  meta: { backgroundColor: c.surface, margin: space.lg, padding: space.lg, gap: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   row: { flexDirection: "row", gap: space.md },
-  k: { width: 110, fontFamily: fonts.mono, fontSize: 11, color: c.muted, textTransform: "uppercase" },
-  v: { flex: 1, fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  note: { fontFamily: fonts.mono, fontSize: 11, color: c.muted, marginTop: space.sm },
+  k: { width: 110, fontFamily: fonts.text, fontSize: 11, color: c.muted, textTransform: "uppercase" },
+  v: { flex: 1, fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
+  note: { fontFamily: fonts.text, fontSize: 11, color: c.muted, marginTop: space.sm },
   vidBox: { flex: 1, alignItems: "center", justifyContent: "center", gap: space.md, padding: space.xl },
-  vidMsg: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurfaceInverse, textAlign: "center" },
-  retry: { borderWidth: BORDER, borderColor: c.onSurfaceInverse, paddingHorizontal: space.lg, height: 44, justifyContent: "center" },
+  vidMsg: { fontFamily: fonts.text, fontSize: 13, color: c.onSurfaceInverse, textAlign: "center" },
+  retry: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.onSurfaceInverse, paddingHorizontal: space.lg, height: 44, justifyContent: "center" },
 }));

@@ -8,7 +8,7 @@ import { api } from "@/src/api";
 import { Btn, ErrorBlock, Feather, Field, Label } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { Duplicate, ImportInfo, PdfDraft, PdfImport } from "@/src/components/PdfImport";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type NcDraft = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages?: number[]; photo_count?: number };
 
@@ -155,17 +155,17 @@ export default function NewProject() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { padding: space.lg, gap: space.md },
-  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
-  chipText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  nc: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
-  ncTitle: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
+  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
+  chipText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
+  nc: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: space.sm },
+  ncTitle: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface },
   check: { flexDirection: "row", gap: space.sm, alignItems: "center", minHeight: 44 },
-  box: { width: 22, height: 22, borderWidth: BORDER, borderColor: c.border },
-  mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  warn: { fontFamily: fonts.mono, fontSize: 12, color: c.onWarning, backgroundColor: c.warning, borderWidth: BORDER, borderColor: c.border, padding: space.md },
-  muted: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
-  summary: { fontSize: 14, fontWeight: "600", color: c.onSurface, borderWidth: BORDER, borderColor: c.border, padding: space.md },
-  dup: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.warning, padding: space.md, gap: space.sm },
+  box: { width: 22, height: 22, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
+  mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
+  warn: { fontFamily: fonts.text, fontSize: 12, color: c.onWarning, backgroundColor: c.warning, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
+  muted: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  summary: { fontSize: 14, fontWeight: "600", color: c.onSurface, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
+  dup: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.warning, padding: space.md, gap: space.sm },
   dupTitle: { fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onWarning },
   dupBody: { fontSize: 14, color: c.onWarning },
 }));

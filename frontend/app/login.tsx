@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
 import { Btn, ErrorBlock, Field, H1 } from "@/src/ui";
-import { BORDER, fonts, makeStyles, space } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space } from "@/src/theme";
 
 // Development-only quick fill. Remove before production deployment.
 const DEMO = __DEV__
@@ -120,17 +120,17 @@ export default function Login() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   content: { paddingHorizontal: space.xl, gap: space.sm },
-  logo: { width: 56, height: 56, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center", marginBottom: space.lg },
-  logoText: { fontFamily: fonts.display, fontWeight: "900", fontSize: 22, color: c.onBrandPrimary },
-  sub: { fontFamily: fonts.mono, fontSize: 12, color: c.muted },
+  logo: { width: 56, height: 56, backgroundColor: c.brandPrimary, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center", marginBottom: space.lg },
+  logoText: { fontFamily: fonts.display, fontWeight: "800", fontSize: 22, color: c.onBrandPrimary },
+  sub: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   form: { gap: space.lg, marginTop: space.xl },
-  info: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface, backgroundColor: c.warning, padding: space.md, borderWidth: BORDER, borderColor: c.border },
+  info: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface, backgroundColor: c.warning, padding: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   links: { flexDirection: "row", justifyContent: "space-between" },
-  link: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface, textDecorationLine: "underline" },
+  link: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface, textDecorationLine: "underline" },
   demo: { marginTop: space.xxl, borderTopWidth: BORDER, borderColor: c.border, paddingTop: space.md, gap: space.sm },
-  demoLabel: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
+  demoLabel: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
   demoRow: { flexDirection: "row", gap: space.sm },
-  demoChip: { flex: 1, height: 40, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
-  demoText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
-  foot: { fontFamily: fonts.mono, fontSize: 11, color: c.muted, marginTop: space.lg },
+  demoChip: { flex: 1, height: 40, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center", backgroundColor: c.surfaceSecondary },
+  demoText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
+  foot: { fontFamily: fonts.text, fontSize: 11, color: c.muted, marginTop: space.lg },
 }));

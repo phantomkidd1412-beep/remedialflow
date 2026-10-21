@@ -4,7 +4,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { api, authed, BASE, readError } from "@/src/api";
 import { uploadForm } from "@/src/utils/upload";
 import { Btn, Feather } from "@/src/ui";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 export type PdfNc = { description: string; original_text?: string; required_work: string; safety_critical: boolean; pages: number[]; photo_count?: number };
 export type PdfDraft = { ref: string | null; address: string | null; postcode: string | null; nc_count_stated: number | null; ncs: PdfNc[]; confidence: number; notes: string };
@@ -81,7 +81,7 @@ export function PdfImport({ onResult }: { onResult: (draft: PdfDraft, importId: 
 }
 
 const useStyles = makeStyles((c) => ({
-  box: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.brandTertiary, padding: space.md, gap: space.md },
+  box: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.brandTertiary, padding: space.md, gap: space.md },
   row: { flexDirection: "row", gap: space.sm, alignItems: "center" },
-  text: { flex: 1, fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  text: { flex: 1, fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
 }));

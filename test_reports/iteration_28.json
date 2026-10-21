@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 28 focused verification of project-level notifications (one entry per user+project+category) + UI refresh + regression smoke. 13/13 new backend tests passed, 1 skipped (optional /api/notifications/unread-count endpoint not implemented; frontend reads unread via GET /api/notifications 'unread' field). CRITICAL REGRESSION FOUND AND FIXED: /app/backend/server.py was missing the helper functions agreed_rate() and settle_earnings() after the pre-production reset commit — every POST /api/projects, POST /api/ncs/{id}/assign, POST /api/ncs/{id}/review (approve path) and POST /api/projects/{pid}/resolve returned HTTP 500 (NameError). Restored both helpers verbatim from HEAD~1 (lines 239-277 in server.py) and reran — all project creation / assignment / full-approval flows work again. Notification backend verified end-to-end against the live preview backend (https://field-evidence-app-1.preview.emergentagent.com): (1) 3-NC-i1 + 2-NC-i2 project at same address — after installer1 uploads+submits 3 NCs, employee sees exactly ONE 'review' entry 'TEST-IT28-* / 12 Baker Street, NW1 6XE / 3 NCs awaiting review' with unread=True; unread count across the project is 1 (not 3). (2) Approving 1 NC updates same row to '2 NCs awaiting review'; installer1 sees ONE 'approved' entry '1 of 3 NCs approved'. (3) Rejecting 2 NCs -> installer1 sees ONE 'action' entry '2 NCs need more work' unread; reassigning one rejected NC to installer2 reduces installer1 count to '1 NC needs more work' and installer2 'assigned' summary updates to '3 NCs assigned to you'. (4) Reassigning ALL installer1 NCs away -> every installer1 entry for that project is hidden (invisible in GET /api/notifications). (5) A second project at the same address creates its own distinct notification rows (never merged). (6) Installer2 cannot see installer1's rows (strict user_id filter). (7) project_id present on every entry so tapping routes to /project/{id} (staff) or /job/{id} (installer). (8) Full approval -> review entry marked read + staff receives ONE 'completed' entry + installer sees 'N of N NCs approved'. Frontend web preview verified (390x844 mobile): login OK for both roles, staff dashboard renders project cards + counters + chips, notifications list on both staff and installer shows one card per (project, category) with title (category label), 12 Baker Street + NW1 6XE address, ref, summary, unread dot, and distinct icons per category; orange 'Sign in' CTA readable (dark text on orange). No red screens, no console errors beyond the harmless 401 from the pre-login /notifications ping and the known expo-notifications web warnings.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/projects, POST /api/ncs/{id}/assign, POST /api/ncs/{id}/review (approve), POST /api/projects/{id}/resolve",
+        "issue": "NameError: name 'agreed_rate' is not defined (and 'settle_earnings' is not defined). Both helper functions were deleted during the pre-production reset commit (e12e5a3) while the project-level notification system was being rewritten. Every project create / NC assign / approve returned HTTP 500. ALREADY RESTORED by test agent (verbatim from HEAD~1); backend restarted; all 13 notification tests + manual UI login now pass.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/notifications/unread-count",
+        "issue": "Mentioned in the review spec but not implemented in backend. Frontend (Bell.tsx) reads unread via GET /api/notifications 'unread' field so there is no functional impact; this is just a stale spec reference. Add the endpoint if the spec is still binding, otherwise remove the mention."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_notifications.py",
+    "/app/test_reports/pytest/pytest_iter28_notifications.xml"
+  ],
+  "action_items": [
+    "VERIFY my fix in /app/backend/server.py (lines 239-277): I re-added agreed_rate() and settle_earnings() so that create_project / assign_nc / recompute_project do not 500. Please review this restoration is semantically what you want — I copied the HEAD~1 implementation verbatim; the pre-production reset diff accidentally dropped these two helpers while rewriting the notification code.",
+    "Clarify whether GET /api/notifications/unread-count should be added (spec mentions it but frontend/backend both use the 'unread' field in GET /api/notifications instead). If yes, add the endpoint for parity; otherwise drop the mention from the spec.",
+    "Delete the TEST-IT28-* / TEST-IT28B-* projects I created (prefix 'TEST-IT28') before shipping — they were seeded only for this verification round and are safe to purge; the owner admin and QA accounts were never touched."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py:239-277 — HOT FIX by test agent. The pre-production commit (e12e5a3) removed agreed_rate() and settle_earnings() but left three call sites (lines 507, 538, 1215 — now 547, 578, 1256 after the insert) and one call site (line 122 — now 162) that reference them. Without the restore every project create / assign / approve returns HTTP 500 with NameError in backend.err.log. Please keep these helpers in server.py or extract them to a shared module.",
+    "/app/backend/server.py:180-206 notify() uses a per-user upsert on (user_id, key='{cat}:{project_id}') with hidden=False on every write — correct 'single row per (user, project, category)' primitive. Push fires only on the unread transition (prev is None or prev.read=True); updates of an already-unread row stay silent, matching the spec.",
+    "/app/backend/server.py:209-226 refresh_notifications() recomputes the summary of every live notification whenever recompute_project runs; it marks installer entries hidden+read when the installer no longer owns any NC on the project, and marks non-installer entries read when the underlying count hits 0 — matches the spec. One subtle behaviour: entries whose summary now says '0 NCs ...' are left visible (just read); the UI shows them with no unread dot. Acceptable because the spec only required 'marked read when their condition no longer applies'.",
+    "/app/backend/server.py:1225 GET /api/notifications filters hidden!=True — correct; hidden installer entries never leak back to the UI.",
+    "/app/frontend/src/components/Bell.tsx:11 uses the aggregated 'unread' field from GET /api/notifications; refetchInterval=30000. No separate /unread-count endpoint is needed by the frontend."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (restored agreed_rate + settle_earnings helpers removed by the pre-production reset — fixes CRITICAL 500 regression on project create / NC assign / approve / resolve)",
+    "/app/backend/tests/test_iter28_notifications.py (NEW: 14 cases covering single-entry per project+category, summary updates on approve/reject/reassign, unread-count semantics, installer removal hides entries, separate projects stay separate, RBAC, completed on full approval, optional unread-count endpoint)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 iter28 notification tests passed, 1 skipped — optional /unread-count endpoint not present; frontend uses 'unread' field in GET /notifications)",
+    "frontend": "manual web-preview smoke pass — login both roles, dashboard, notifications list on staff and installer, bell badge, project cards, summary wording all correct; dark/light toggle not driven in this round (backend regression was blocking the suite)"
+  },
+  "seed_data_creation": "Created 3 'TEST-IT28-*' projects (5 NCs each, mixed i1/i2 assignment) and 3 'TEST-IT28B-*' projects (1 NC each at same address) using qa.employee@example.com. All now sit in TEST_IT28-* 'Internally completed' + TEST-IT28B-* 'In progress'. Safe to delete — all prefixed TEST-IT28. Also one earnings row per installer per fully-approved project (restored settle_earnings() emits these). No Dropbox files were pushed in this round. No secure_settings touched. No new user accounts created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: EXPO_PUBLIC_BACKEND_URL=https://field-evidence-app-1.preview.emergentagent.com python3 -m pytest backend/tests/test_iter28_notifications.py -v -n 0 --tb=short. Pass -n 0 (serial) because the module-level STATE dict shares pid/nc_ids across class A->G. Tests use helpers _upload_photo (small valid JPEG) + _submit (safety_critical=True NCs go straight to employee_review bypassing AI) + _review via POST /api/ncs/{id}/review. Password for qa.* accounts is in /app/memory/test_credentials.md ('QaVerify-b41581d8dd2f'). If you re-run notification tests, remember recompute_project is the single hook that drives both auto_packs AND notifications — any regression in it will hit both suites.",
+  "rca_of_issue": "RCA: Commit e12e5a3 ('Pre-Production Reset Complete') rewrote the notification layer (lines 142-236) and in the process the diff deleted the surrounding helper functions agreed_rate() (freeze per-job rate on first assignment) and settle_earnings() (create earnings rows when every installer-owned NC on a project is approved). The deletion was silent because Python only errors at CALL time; the backend started cleanly and only threw NameError inside create_project/assign_nc/recompute_project once a project was actually created. REPRODUCTION: run POST /api/projects with any installer_id → 500 Internal Server Error → backend.err.log 'NameError: name agreed_rate is not defined'. MITIGATION: restored both functions verbatim (/app/backend/server.py lines 239-277, immediately after nc_notify) and restarted backend; 13/13 notification tests pass; project creation / assignment / full-approval flows all return 200. ALTERNATIVE (preferred long-term): move agreed_rate + settle_earnings into a dedicated earnings.py module imported by server.py so a future notification rewrite cannot drop them again."
+}

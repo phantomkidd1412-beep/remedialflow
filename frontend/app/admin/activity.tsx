@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { Empty, ErrorBlock, Feather, Loading, fmtDate } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Item = { seq: number; at: string; event: string; record_type: string; record_id: string; reference: string | null; actor_id: string | null; actor_name: string; actor_role: string | null; data: Record<string, any> };
 type Page = { items: Item[]; has_more: boolean; page: number };
@@ -83,11 +83,11 @@ export default function Activity() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   list: { padding: space.lg, gap: space.sm },
-  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, minHeight: 48 },
+  search: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, paddingHorizontal: space.md, minHeight: 48 },
   searchInput: { flex: 1, fontSize: 15, color: c.onSurface, minHeight: 44 },
-  chip: { minHeight: 40, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
+  chip: { minHeight: 40, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
-  row: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 2 },
+  row: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: 2 },
   top: { flexDirection: "row", justifyContent: "space-between", gap: space.sm },
   event: { flex: 1, fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface, textTransform: "capitalize" },
   body: { fontSize: 14, color: c.onSurface },

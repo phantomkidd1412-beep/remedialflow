@@ -141,3 +141,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Dropbox /remedialflow (623 test files) deleted with explicit approval; app/connection intact
 - DEMO_SEED=false; pre-reset Mongo dump at /tmp/rf_pre_reset_backup (preview server only)
 - Permanent Admin info@networksurveyltd.uk (syed) via bootstrap_admin.py with random unknown password; owner sets password via Forgot password email
+
+## Final UI refresh + project-level notifications (iteration 28, preview)
+- theme.ts retuned (soft tints + AA on* colours, BORDER=1, radius, system body font), ui primitives/dashboard/jobs/notifications restyled
+- Notifications: one per (user, project, category) key "{cat}:{pid}" unique; categories review/escalated/action/approved/assigned/project_ready/completed/rate_changed; refresh_notifications after each recompute
+- Temp QA accounts/projects and Dropbox test files removed after verification; only owner admin remains

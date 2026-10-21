@@ -10,7 +10,7 @@ import { Badge, Btn, ErrorBlock, Feather, Field, Label, Loading, Progress, Sheet
 import { DatePickerSheet } from "@/src/components/DatePickerSheet";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { StaffNCCard } from "@/src/components/StaffNCCard";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type SchedRow = { installer_id: string; name: string; date: string | null };
 
@@ -289,20 +289,20 @@ const useStyles = makeStyles((c) => ({
   prog: { flexDirection: "row", alignItems: "center", gap: space.md },
   addr: { fontFamily: fonts.display, fontWeight: "800", fontSize: 17, lineHeight: 22, color: c.onSurface },
   progText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
-  menuBtn: { width: 44, height: 44, borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center" },
-  mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  menuBtn: { width: 44, height: 44, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center" },
+  mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   muted: { fontSize: 12, color: c.muted, alignSelf: "center" },
   list: { padding: space.lg, gap: space.md },
   chips: { gap: space.sm },
-  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
-  chipText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
+  chipText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   check: { flexDirection: "row", gap: space.sm, alignItems: "center", minHeight: 44 },
-  box: { width: 22, height: 22, borderWidth: BORDER, borderColor: c.border },
+  box: { width: 22, height: 22, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   auditRow: { borderBottomWidth: 1, borderColor: c.border, paddingVertical: space.sm },
-  rates: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
+  rates: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: space.sm },
   rateRow: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44 },
   rateName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
   rateMeta: { fontSize: 13, color: c.muted },
   hint: { fontSize: 13, color: c.muted },
-  err: { fontSize: 14, fontWeight: "600", color: c.error },
+  err: { fontSize: 14, fontWeight: "600", color: c.onError },
 }));

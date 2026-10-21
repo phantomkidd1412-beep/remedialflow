@@ -106,8 +106,8 @@ export function PhotoViewer({ files, index, onClose, showInfo = false }: { files
 const useStyles = makeStyles(() => ({
   root: { flex: 1, backgroundColor: "#000000" },
   top: { position: "absolute", left: space.lg, right: space.lg, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  counter: { fontFamily: fonts.mono, fontSize: 14, color: "#FFFFFF", backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 8, paddingVertical: 4 },
+  counter: { fontFamily: fonts.text, fontSize: 14, color: "#FFFFFF", backgroundColor: "rgba(0,0,0,0.6)", paddingHorizontal: 8, paddingVertical: 4 },
   btn: { width: 44, height: 44, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.6)" },
   info: { position: "absolute", left: space.lg, right: space.lg, maxHeight: 180, backgroundColor: "rgba(0,0,0,0.8)", padding: space.md },
-  infoText: { fontFamily: fonts.mono, fontSize: 12, color: "#FFFFFF" },
+  infoText: { fontFamily: fonts.text, fontSize: 12, color: "#FFFFFF" },
 }));

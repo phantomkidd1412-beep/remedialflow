@@ -9,7 +9,7 @@ import { EvidenceFile, NCItem } from "@/src/projects";
 import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 /** Optional brief factual note printed on the exported NC PDF. Never filled automatically. */
 function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
@@ -261,27 +261,27 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
 });
 
 const useStyles = makeStyles((c) => ({
-  card: { borderWidth: BORDER, borderColor: c.border },
-  approvedBox: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, minHeight: 48, backgroundColor: c.success, borderWidth: BORDER, borderColor: c.border },
+  card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
+  approvedBox: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, minHeight: 48, backgroundColor: c.success, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   approvedText: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSuccess, textTransform: "uppercase" },
   head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md, minHeight: 56 },
   headRow: { flexDirection: "row", gap: space.sm, alignItems: "center", flexWrap: "wrap" },
-  num: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },
+  num: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface },
   desc: { fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface },
   body: { borderTopWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.sm },
-  mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   body1: { fontSize: 15, lineHeight: 21, color: c.onSurface },
   assignee: { fontSize: 13, color: c.muted },
-  muted: { fontFamily: fonts.mono, fontSize: 11, color: c.muted },
-  ai: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: 4 },
-  aiHead: { fontFamily: fonts.mono, fontSize: 12, color: c.onBrandTertiary },
-  concern: { fontFamily: fonts.mono, fontSize: 11, color: c.onSurface },
+  muted: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  ai: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: 4 },
+  aiHead: { fontFamily: fonts.text, fontSize: 12, color: c.onBrandTertiary },
+  concern: { fontFamily: fonts.text, fontSize: 11, color: c.onSurface },
   row: { gap: space.sm, paddingBottom: space.xs },
-  add: { width: 72, height: 72, borderWidth: BORDER, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
-  tag: { fontFamily: fonts.mono, fontSize: 9, color: c.muted },
+  add: { width: 72, height: 72, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center" },
+  tag: { fontFamily: fonts.text, fontSize: 9, color: c.muted },
   hiddenToggle: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: 44 },
-  restore: { borderWidth: BORDER, borderColor: c.border, alignItems: "center", justifyContent: "center", minHeight: 32 },
+  restore: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center", minHeight: 32 },
   actions: { flexDirection: "row", gap: space.sm },
-  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderColor: c.border, justifyContent: "center" },
+  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
 }));

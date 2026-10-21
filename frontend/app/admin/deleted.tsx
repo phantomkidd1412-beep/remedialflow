@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { Btn, Empty, ErrorBlock, Field, Loading, Sheet, fmtDate, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space } from "@/src/theme";
 
 type Deleted = { id: string; ref: string; address: string; postcode: string; nc_total: number; deleted: { at: string; by_name: string; by_role: string } };
 
@@ -97,9 +97,9 @@ export default function DeletedProjects() {
 const useStyles = makeStyles((c) => ({
   root: { flex: 1, backgroundColor: c.surface },
   list: { padding: space.lg, gap: space.sm },
-  card: { borderWidth: BORDER, borderColor: c.border, padding: space.md, gap: space.xs },
+  card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, gap: space.xs },
   ref: { fontFamily: fonts.display, fontWeight: "800", fontSize: 16, color: c.onSurface },
   addr: { fontSize: 14, color: c.onSurface },
   meta: { fontSize: 13, color: c.muted, marginBottom: space.xs },
-  warn: { fontSize: 14, fontWeight: "600", color: c.error },
+  warn: { fontSize: 14, fontWeight: "600", color: c.onError },
 }));

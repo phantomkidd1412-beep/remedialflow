@@ -8,7 +8,7 @@ import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 function exifDate(exif: any): string | null {
   const raw: string | undefined = exif?.DateTimeOriginal || exif?.DateTime;
@@ -212,19 +212,19 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 });
 
 const useStyles = makeStyles((c) => ({
-  card: { borderWidth: BORDER, borderColor: c.border, backgroundColor: c.surface },
+  card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.surface },
   head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.lg, minHeight: 64 },
   headRow: { flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap" },
-  num: { fontFamily: fonts.mono, fontSize: 14, color: c.onSurface },
+  num: { fontFamily: fonts.text, fontSize: 14, color: c.onSurface },
   desc: { fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onSurface },
   body: { borderTopWidth: BORDER, borderColor: c.border, padding: space.lg, gap: space.sm },
-  feedback: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderColor: c.border, padding: space.md, marginBottom: space.sm },
-  fbText: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
+  feedback: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, marginBottom: space.sm },
+  fbText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   row: { gap: space.sm, paddingBottom: space.sm },
   work: { fontSize: 15, lineHeight: 21, color: c.onSurface, marginBottom: space.sm },
-  muted: { fontFamily: fonts.mono, fontSize: 12, color: c.muted },
+  muted: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.sm },
-  local: { width: 72, height: 72, borderWidth: BORDER, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },
+  local: { width: 72, height: 72, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },
   localTag: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: c.warning, alignItems: "center" },
-  localText: { fontFamily: fonts.mono, fontSize: 9, color: c.onWarning },
+  localText: { fontFamily: fonts.text, fontSize: 9, color: c.onWarning },
 }));
