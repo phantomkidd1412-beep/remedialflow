@@ -109,3 +109,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Installer Earnings: 3 summary cards (Potential / Pending payment / Total paid) + 3 tabs; /api/earnings items include installer's NC numbers.
 - Installer Jobs: tappable summary cards (Revisit required, This week, Next week, Unscheduled, Completed) filter the list; one card per project with own-NC count/progress.
 - Theme: Light / Dark / Auto on every role's Account/Profile screen; stored on device (AsyncStorage rf.themePref), persists across logout.
+
+## Real-report Phase 7 validation + email delivery test (iteration 24, agent-tested)
+- Real TrustMark PDF P419977 (280 Dallow Road, LU1 1TD): 3 NCs extracted with original wording; 9 images -> 5 kept, 4 logos filtered.
+- Bug fixed: duplicate check matched neighbouring house numbers (281/283 Dallow Rd) by postcode+address; now skipped when house numbers differ. Exact-reference duplicates still flagged.
+- Verified: duplicate by reference, merge without duplicate NCs, hide/restore TrustMark image, deleted-project restore-match, admin recycle bin restore. Test projects purged.
+- One-off email delivery test sent to info@networksurveyltd.uk (no reset link, no account created).
+- Tap-to-pick DatePickerSheet for scheduled visits.

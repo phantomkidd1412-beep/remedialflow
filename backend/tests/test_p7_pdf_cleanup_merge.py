@@ -24,6 +24,9 @@ ADMIN = ("admin@remedialflow.dev", "AdminDemo!2026")
 EMPLOYEE = ("employee@remedialflow.dev", "EmployeeDemo!2026")
 INSTALLER = ("installer@remedialflow.dev", "InstallerDemo!2026")
 
+# project seeded by p419977_import so duplicate-by-ref fires; cleaned at module teardown
+_SEEDED_P419977: list = []
+
 
 def _login(email, password):
     r = requests.post(f"{API}/auth/login", json={"email": email, "password": password}, timeout=15)
@@ -51,6 +54,19 @@ def installer_token():
     return _login(*INSTALLER)
 
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _cleanup_seeded(admin_token):
+    yield
+    for ref, pid in list(_SEEDED_P419977):
+        try:
+            requests.delete(f"{API}/projects/{pid}", headers=_bearer(admin_token), timeout=15)
+            requests.post(f"{API}/admin/projects/{pid}/purge", json={"confirm_ref": ref},
+                          headers=_bearer(admin_token), timeout=20)
+        except Exception:
+            pass
+
+
 def _poll_ready(token, iid, timeout=120):
     deadline = time.time() + timeout
     last = None
@@ -66,7 +82,29 @@ def _poll_ready(token, iid, timeout=120):
 
 @pytest.fixture(scope="module")
 def p419977_import(employee_token):
-    """Upload the real P419977 report once (expect duplicate=Same project reference)."""
+    """Upload the real P419977 report. Ensures a P419977 project exists so duplicate-by-ref is deterministic.
+
+    Previously relied on neighbouring test projects (281/283 Dallow Road) which no longer trigger the dup
+    detector (bug fix: house numbers must match). We now seed a throw-away P419977-REF project ourselves if
+    there is no active one — and clean it up at the end of the module via the created_refs list.
+    """
+    created_ref = None
+    # Does any active project with ref P419977 exist? (we only need the ref match to fire)
+    projects = requests.get(f"{API}/projects", headers=_bearer(employee_token), timeout=15).json()
+    items = projects if isinstance(projects, list) else (projects.get("items") or projects.get("projects") or [])
+    has_ref = any((p.get("ref") or "").upper() == "P419977" for p in items)
+    if not has_ref:
+        ref = f"P419977"  # exact ref so the duplicate reason is "Same project reference"
+        body = {"ref": ref, "address": "280 Dallow Road, Luton, Bedfordshire", "postcode": "LU1 1TD",
+                "ncs": [{"description": "seed nc", "required_work": "x", "safety_critical": False}]}
+        r = requests.post(f"{API}/projects", json=body, headers=_bearer(employee_token), timeout=15)
+        if r.status_code == 409:
+            # someone else created it in parallel — fine
+            pass
+        else:
+            assert r.status_code == 200, r.text
+            created_ref = (ref, r.json()["id"])
+            _SEEDED_P419977.append(created_ref)
     with open(P419977_PDF, "rb") as f:
         data = f.read()
     files = {"file": ("p419977.pdf", data, "application/pdf")}
@@ -75,6 +113,7 @@ def p419977_import(employee_token):
     iid = r.json()["id"]
     assert r.json()["status"] == "processing"
     data = _poll_ready(employee_token, iid, timeout=150)
+    data["_seeded_ref"] = created_ref  # tuple (ref, pid) or None
     return iid, data
 
 

@@ -162,14 +162,24 @@ def nc_similarity(d: dict, e: dict) -> float:
     return max(similarity(x, y) for x in (d.get("original_text"), d.get("description")) for y in (e.get("original_text"), e.get("description")))
 
 
+def _house_no(addr: Optional[str]) -> Optional[str]:
+    """First house/flat number in an address ("280 Dallow Road" -> "280", "Flat 2b, ..." -> "2B")."""
+    m = re.search(r"\b(\d+[A-Za-z]?)\b", addr or "")
+    return m.group(1).upper() if m else None
+
+
 async def find_duplicate(draft: dict) -> Optional[dict]:
     ref, pc = norm_ref(draft.get("ref")), norm_ref(draft.get("postcode"))
+    num = _house_no(draft.get("address"))
     best = None
     async for p in db.projects.find({}, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1}):
         hit = {"project_id": str(p["_id"]), "ref": p["ref"], "address": p.get("address", ""), "postcode": p.get("postcode", ""),
                "deleted": bool(p.get("deleted"))}
         if ref and norm_ref(p["ref"]) == ref:
             return {**hit, "reason": "Same project reference"}
+        other = _house_no(p.get("address"))
+        if num and other and num != other:
+            continue  # neighbouring properties on the same street/postcode are different jobs
         if not best and pc and norm_ref(p.get("postcode")) == pc and similarity(p.get("address"), draft.get("address")) >= 0.6:
             best = {**hit, "reason": "Same postcode and similar address"}
     return best
