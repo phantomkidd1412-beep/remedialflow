@@ -126,3 +126,6 @@ test_reports/
 
 # Real customer report used by a local test (contains property data)
 tests/p419977.pdf
+*.env
+credentials.json
+.credentials
