@@ -71,10 +71,18 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   };
 
   const act = async (action: string) => {
+    if (busy) return; // no duplicate submissions while a decision is in flight
     setBusy(action);
     try {
       await api(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note } });
       setNote("");
+      // reflect the confirmed backend state immediately, then refetch the truth
+      const next = ({ approve: "approved", reject: "rejected", more_evidence: "more_evidence", trustmark_reject: "rejected" } as Record<string, string>)[action];
+      if (next) {
+        qc.setQueryData(["project", projectId], (old: any) =>
+          old?.ncs ? { ...old, ncs: old.ncs.map((x: NCItem) => (x.id === nc.id ? { ...x, status: next, approved_by: action === "approve" ? "employee" : x.approved_by } : x)) } : old,
+        );
+      }
       refresh();
       toast(`${nc.number}: ${({ approve: "approved", reject: "rejected", more_evidence: "more evidence requested", escalate: "escalated to Admin", return: "returned to Employee review", trustmark_reject: "reopened (TrustMark rejection)" } as Record<string, string>)[action]}`);
       onDone?.();
@@ -221,10 +229,17 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           ) : (
             <>
               <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
-              <Btn title="Approve" icon="check" variant="success" onPress={() => act("approve")} loading={busy === "approve"} testID={`approve-${nc.number}`} />
+              {nc.status === "approved" ? (
+                <View style={s.approvedBox} testID={`approved-state-${nc.number}`}>
+                  <Feather name="check-circle" size={18} color={colors.onSuccess} />
+                  <Text style={s.approvedText}>Approved{nc.approved_by === "ai" ? " (AI)" : ""}</Text>
+                </View>
+              ) : (
+                <Btn title="Approve" icon="check" variant="success" onPress={() => act("approve")} loading={busy === "approve"} disabled={!!busy} testID={`approve-${nc.number}`} />
+              )}
               <View style={s.actions}>
-                <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
-                <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
+                <Btn title="More evidence" variant="outline" small onPress={() => act("more_evidence")} loading={busy === "more_evidence"} disabled={!!busy} style={{ flex: 1 }} testID={`more-evidence-${nc.number}`} />
+                <Btn title="Reject" variant="danger" small onPress={() => act("reject")} loading={busy === "reject"} disabled={!!busy} style={{ flex: 1 }} testID={`reject-${nc.number}`} />
               </View>
               {nc.status === "approved" ? (
                 <Btn title="TrustMark rejected" icon="x-octagon" variant="outline" small onPress={() => act("trustmark_reject")} loading={busy === "trustmark_reject"} testID={`trustmark-reject-${nc.number}`} />
@@ -247,6 +262,8 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
 
 const useStyles = makeStyles((c) => ({
   card: { borderWidth: BORDER, borderColor: c.border },
+  approvedBox: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, minHeight: 48, backgroundColor: c.success, borderWidth: BORDER, borderColor: c.border },
+  approvedText: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSuccess, textTransform: "uppercase" },
   head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md, minHeight: 56 },
   headRow: { flexDirection: "row", gap: space.sm, alignItems: "center", flexWrap: "wrap" },
   num: { fontFamily: fonts.mono, fontSize: 13, color: c.onSurface },

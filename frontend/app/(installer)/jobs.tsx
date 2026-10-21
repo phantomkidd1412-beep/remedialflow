@@ -9,31 +9,48 @@ import { Bell } from "@/src/components/Bell";
 import { SyncBar } from "@/src/components/SyncBar";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type Row = ProjectRow & { my_statuses?: string[] };
-type Key = "action" | "new" | "active" | "completed";
-const TITLES: Record<Key, string> = { action: "Action required", new: "New", active: "Active", completed: "Completed" };
+type Row = ProjectRow & { my_statuses?: string[]; my_nc_numbers?: string[]; my_schedule?: string | null };
+type Key = "action" | "this_week" | "next_week" | "upcoming" | "unscheduled" | "completed";
+const TITLES: Record<Key, string> = { action: "Rejected / revisit required", this_week: "Current week", next_week: "Next week", upcoming: "Upcoming", unscheduled: "Not yet scheduled", completed: "Completed" };
+const ORDER: Key[] = ["action", "this_week", "next_week", "upcoming", "unscheduled", "completed"];
 
-/** Section from the installer's own NC statuses only. */
-function sectionOf(p: Row): Key {
+const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+function weekBounds() {
+  const now = new Date();
+  const mon = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  const add = (n: number) => iso(new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + n));
+  return { nextMon: add(7), afterNext: add(14) };
+}
+
+/** Exactly one section per job, from the installer's own NC statuses and their own scheduled date only. */
+function sectionOf(p: Row, w: { nextMon: string; afterNext: string }): Key {
   const st = p.my_statuses ?? [];
   if (st.some((x) => x === "rejected" || x === "more_evidence")) return "action";
   if (st.length && st.every((x) => x === "approved")) return "completed";
-  if (st.every((x) => x === "open") && p.nc_done === 0) return "new";
-  return "active";
+  const d = p.my_schedule;
+  if (!d) return "unscheduled";
+  if (d < w.nextMon) return "this_week"; // includes overdue visits from earlier weeks
+  if (d < w.afterNext) return "next_week";
+  return "upcoming";
 }
 
 const JobCard = memo(function JobCard({ p, queued, onOpen, section }: { p: Row; queued: number; onOpen: (id: string) => void; section: Key }) {
   const s = useStyles();
   const { colors } = useTheme();
   const attention = (p.my_statuses ?? []).filter((x) => x === "rejected" || x === "more_evidence").length;
+  const overdue = section === "this_week" && !!p.my_schedule && p.my_schedule < iso(new Date());
+  const statusLabel = section === "completed" ? "Completed" : (p.my_statuses ?? []).some((x) => x === "assessing" || x === "employee_review" || x === "admin_review") ? "In review" : "To do";
   return (
     <Pressable style={[s.card, section === "action" && { borderColor: colors.error, borderWidth: 3 }]} onPress={() => onOpen(p.id)} testID={`job-card-${p.ref}`}>
       <View style={s.cardTop}>
         <Text style={s.ref}>{p.ref}</Text>
-        {section === "action" ? <Badge status="rejected" label={`${attention} need action`} testID={`job-status-${p.ref}`} /> : <Badge status={section === "completed" ? "approved" : section === "new" ? "open" : "in_progress"} label={TITLES[section]} testID={`job-status-${p.ref}`} />}
+        {section === "action" ? <Badge status="rejected" label={`${attention} need action`} testID={`job-status-${p.ref}`} /> : <Badge status={section === "completed" ? "approved" : statusLabel === "In review" ? "employee_review" : "in_progress"} label={statusLabel} testID={`job-status-${p.ref}`} />}
       </View>
       <Text style={s.addr}>{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
-      <Text style={s.meta}>Your NCs: {p.nc_done}/{p.nc_total} approved</Text>
+      <Text style={s.meta} testID={`job-ncs-${p.ref}`}>Your NCs: {(p.my_nc_numbers ?? []).join(", ") || "—"} · {p.nc_done}/{p.nc_total} approved</Text>
+      <Text style={[s.meta, overdue && { color: colors.error, fontWeight: "700" }]} testID={`job-schedule-${p.ref}`}>
+        {p.my_schedule ? `Scheduled ${p.my_schedule.split("-").reverse().join("/")}${overdue ? " · overdue" : ""}` : "Not yet scheduled"}
+      </Text>
       <Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} testID={`job-progress-${p.ref}`} />
       <View style={s.cardBottom}>
         {queued > 0 ? <Badge status="pending" label={`${queued} unsynced`} /> : <View />}
@@ -52,9 +69,11 @@ export default function Jobs() {
   const open = useCallback((id: string) => router.push(`/job/${id}`), [router]);
   const sections = useMemo(() => {
     const rows = (q.data?.pages.flatMap((p) => p.items) ?? []) as Row[];
-    const by: Record<Key, Row[]> = { action: [], new: [], active: [], completed: [] };
-    rows.forEach((r) => by[sectionOf(r)].push(r));
-    return (Object.keys(by) as Key[]).filter((k) => by[k].length).map((k) => ({ key: k, title: TITLES[k], data: by[k] }));
+    const w = weekBounds();
+    const by = Object.fromEntries(ORDER.map((k) => [k, [] as Row[]])) as Record<Key, Row[]>;
+    rows.forEach((r) => by[sectionOf(r, w)].push(r));
+    (["this_week", "next_week", "upcoming"] as Key[]).forEach((k) => by[k].sort((a, b) => (a.my_schedule ?? "").localeCompare(b.my_schedule ?? "")));
+    return ORDER.filter((k) => by[k].length).map((k) => ({ key: k, title: TITLES[k], data: by[k] }));
   }, [q.data]);
 
   return (

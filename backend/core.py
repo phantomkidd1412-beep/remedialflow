@@ -85,6 +85,7 @@ class Project(BaseDocument):
     resolution_history: List[dict] = []
     source_report: Optional[dict] = None
     rates: dict = {}  # installer_id -> agreed per-job rate (frozen at assignment)
+    schedules: dict = {}  # installer_id -> scheduled visit date YYYY-MM-DD (optional, staff-set)
     rate_history: List[dict] = []  # admin overrides {installer_id, old, new, reason, by, at}
     rate_override: bool = False
     deleted: Optional[dict] = None  # soft delete {at, by, by_name, by_role}; data is never erased

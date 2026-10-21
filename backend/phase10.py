@@ -34,8 +34,12 @@ async def delete_project(pid: str, u: User = Depends(staff)):
 
 
 @router.get("/admin/deleted-projects")
-async def deleted_projects(u: User = Depends(admin)):
-    docs = await db.projects.find({"deleted": {"$ne": None}}, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1, "nc_total": 1}).sort("deleted.at", -1).to_list(1000)
+async def deleted_projects(q: Optional[str] = None, u: User = Depends(admin)):
+    f: dict = {"deleted": {"$ne": None}}
+    if q and q.strip():
+        rx = {"$regex": re.escape(q.strip()[:100]), "$options": "i"}
+        f["$or"] = [{"ref": rx}, {"address": rx}, {"postcode": rx}]
+    docs = await db.projects.find(f, {"ref": 1, "address": 1, "postcode": 1, "deleted": 1, "nc_total": 1}).sort("deleted.at", -1).to_list(1000)
     return [{"id": str(d["_id"]), "ref": d["ref"], "address": d["address"], "postcode": d.get("postcode", ""),
              "nc_total": d.get("nc_total", 0), "deleted": d["deleted"]} for d in docs]
 
@@ -48,6 +52,29 @@ async def restore_project(pid: str, u: User = Depends(admin)):
         raise HTTPException(404, "Deleted project not found")
     await _restore(p, u, "recycle_bin")
     return {"ok": True}
+
+
+class PurgeIn(BaseModel):
+    confirm_ref: str = Field(max_length=100)
+
+
+@router.post("/admin/projects/{pid}/purge")
+async def purge_project(pid: str, body: PurgeIn, u: User = Depends(admin)):
+    """Admin-only PERMANENT deletion of a project already in the recycle bin (typed reference required).
+    Payment records are kept (marked project_purged) so payment history stays intact; the audit log is append-only."""
+    p = await db.projects.find_one({"_id": oid(pid), "deleted": {"$ne": None}}, {"ref": 1, "address": 1, "nc_total": 1})
+    if not p:
+        raise HTTPException(404, "Deleted project not found")
+    if body.confirm_ref.strip() != p["ref"]:
+        raise HTTPException(400, "Type the project reference exactly to confirm")
+    counts = {}
+    for coll in ("ncs", "files", "submissions", "notifications", "assessments"):
+        counts[coll] = (await db[coll].delete_many({"project_id": pid})).deleted_count
+    await db.imports.update_many({"duplicate.project_id": pid}, {"$set": {"duplicate": None}})
+    await db.earnings.update_many({"project_id": pid}, {"$set": {"project_purged": True, "project_purged_at": now_iso()}})
+    await db.projects.delete_one({"_id": p["_id"]})
+    await audit("project.purged", u.id, f"project:{pid}", {"ref": p["ref"], "address": p["address"], "removed": counts})
+    return {"ok": True, "removed": counts}
 
 
 class RestoreMatchIn(BaseModel):
@@ -91,7 +118,7 @@ async def _restore(p: dict, u: User, via: str):
 
 
 # ---------------- activity log (admin, read-only) ----------------
-DELETION_EVENTS = ["project.deleted", "project.restored", "evidence.discarded", "evidence.excluded", "evidence.restored"]
+DELETION_EVENTS = ["project.deleted", "project.restored", "project.purged", "evidence.discarded", "evidence.excluded", "evidence.restored"]
 
 
 @router.get("/admin/activity")

@@ -20,7 +20,8 @@ _ASSIGNED = ("New work assigned", "You have new work in RemedialFlow.")
 _ACTION = ("Action required", "A job needs your attention in RemedialFlow.")
 _REVIEW = ("Review needed", "Evidence is waiting for review in RemedialFlow.")
 PUSH_TEXT = {"project_assigned": _ASSIGNED, "assigned": _ASSIGNED, "more_evidence": _ACTION,
-             "rejected_internal": _ACTION, "rejected_trustmark": _ACTION, "escalated": _REVIEW, "review_needed": _REVIEW}
+             "rejected_internal": _ACTION, "rejected_trustmark": _ACTION, "escalated": _REVIEW, "review_needed": _REVIEW,
+             "project_ready": ("Project ready for review", "All NC evidence submitted. Ready for review.")}
 
 
 def _client() -> httpx.AsyncClient:

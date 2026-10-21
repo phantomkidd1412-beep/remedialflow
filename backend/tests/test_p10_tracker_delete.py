@@ -376,7 +376,7 @@ class TestActivityLog:
         assert r.status_code == 200
         items = r.json()["items"]
         # all events are in deletion family
-        valid = {"project.deleted", "project.restored", "evidence.discarded",
+        valid = {"project.deleted", "project.restored", "project.purged", "evidence.discarded",
                  "evidence.excluded", "evidence.restored"}
         assert all(it["event"] in valid for it in items)
         # find our delete + restore pair for STATE['pid']

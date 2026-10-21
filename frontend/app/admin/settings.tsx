@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
-import { Badge, Btn, Field, Label, Loading, money, useToast } from "@/src/ui";
+import { Badge, Btn, Feather, Field, Label, Loading, Sheet, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
@@ -21,6 +21,87 @@ function Choice({ value, options, onChange, testID }: { value: string; options: 
           <Text style={[s.choiceText, value === v && { color: colors.onBrandSecondary }]}>{l}</Text>
         </Pressable>
       ))}
+    </View>
+  );
+}
+
+type Inst = { id: string; name: string; email: string; role: string; active: boolean; pay_type?: string; default_rate?: number | null };
+
+/** Dropdown of registered installers + that installer's own default per-job rate. Saving only affects jobs not yet
+ *  agreed: rates are frozen per project at assignment, and earned/paid amounts never change. */
+function InstallerRate({ currency, fallback }: { currency: string; fallback: number }) {
+  const s = useStyles();
+  const { colors } = useTheme();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const users = useQuery({ queryKey: ["admin-users"], queryFn: () => api<Inst[]>("/admin/users") });
+  const list = (users.data ?? []).filter((u) => u.role === "installer").sort((a, b) => a.name.localeCompare(b.name));
+  const [sel, setSel] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [val, setVal] = useState("");
+  const [err, setErr] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const cur = list.find((u) => u.id === sel) ?? null;
+
+  const pick = (u: Inst) => {
+    setSel(u.id);
+    setVal(u.default_rate != null ? String(u.default_rate) : "");
+    setErr("");
+    setSaved(false);
+    setOpen(false);
+  };
+  const save = async () => {
+    if (!cur) return;
+    const t = val.trim().replace(/^£/, "");
+    if (!/^\d+(\.\d{1,2})?$/.test(t) || Number(t) > 100000) {
+      setErr("Enter a valid amount, e.g. 150 or 150.50");
+      return;
+    }
+    setSaving(true);
+    setErr("");
+    try {
+      await api(`/admin/users/${cur.id}`, { method: "PATCH", body: { default_rate: Number(t) } });
+      await qc.invalidateQueries({ queryKey: ["admin-users"] });
+      setSaved(true);
+      toast(`Rate saved for ${cur.name}`);
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <View style={{ gap: space.sm }}>
+      <Label>Installer</Label>
+      <Pressable onPress={() => setOpen(true)} style={s.dropdown} testID="rate-installer-dropdown">
+        <Text style={s.mono}>{cur ? `${cur.name}${cur.active ? "" : " (disabled)"}` : users.isLoading ? "Loading installers…" : "Select an installer"}</Text>
+        <Feather name="chevron-down" size={18} color={colors.onSurface} />
+      </Pressable>
+      {cur ? (
+        cur.pay_type === "daily" ? (
+          <Text style={s.mono} testID="rate-daily-note">{cur.name} is daily wage, paid outside the app. Change pay type in Users to set a job rate.</Text>
+        ) : (
+          <>
+            <Field label={`Default rate per job (${currency})`} value={val} onChangeText={(t) => { setVal(t); setErr(""); setSaved(false); }} keyboardType="decimal-pad" placeholder={`Uses company default ${money(fallback, currency)}`} testID="installer-rate-input" />
+            <Text style={s.mono}>Applies to newly assigned jobs. Already earned or paid amounts and project-specific overrides are not changed.</Text>
+            {err ? <Text style={[s.mono, { color: colors.error }]} testID="installer-rate-error">{err}</Text> : null}
+            <Btn title={saved ? "Saved" : "Save rate"} icon={saved ? "check" : "save"} variant={saved ? "success" : "primary"} onPress={save} loading={saving} disabled={saving} testID="installer-rate-save" />
+          </>
+        )
+      ) : null}
+      <Sheet visible={open} onClose={() => setOpen(false)} title="Select installer" testID="rate-installer-sheet">
+        <ScrollView style={{ maxHeight: 420 }}>
+          {list.map((u) => (
+            <Pressable key={u.id} onPress={() => pick(u)} style={[s.option, u.id === sel && { backgroundColor: colors.brandSecondary }]} testID={`rate-installer-option-${u.id}`}>
+              <Text style={[s.payName, u.id === sel && { color: colors.onBrandSecondary }]}>{u.name}{u.active ? "" : " (disabled)"}</Text>
+              <Text style={[s.mono, u.id === sel && { color: colors.onBrandSecondary }]}>{u.pay_type === "daily" ? "Daily wage" : u.default_rate != null ? `${money(u.default_rate, currency)} per job` : "Company default rate"}</Text>
+            </Pressable>
+          ))}
+          {!list.length && !users.isLoading ? <Text style={s.mono}>No installers registered.</Text> : null}
+        </ScrollView>
+      </Sheet>
     </View>
   );
 }
@@ -82,6 +163,9 @@ export default function SettingsScreen() {
         <Field label="Payment terms (shown to installers)" value={f.payment_terms} onChangeText={(v) => set({ payment_terms: v })} testID="setting-payment-terms" />
         <Btn title="Save settings" onPress={save} loading={busy} testID="settings-save-button" />
 
+        <Text style={s.section}>INSTALLER RATES</Text>
+        <InstallerRate currency={f.currency} fallback={Number(f.default_job_rate)} />
+
         <Text style={s.section}>PAYMENTS BY INSTALLER & WEEK</Text>
         {groups.length === 0 ? <Text style={s.mono}>No earnings yet.</Text> : null}
         {groups.map((g) => (
@@ -110,4 +194,6 @@ const useStyles = makeStyles((c) => ({
   payRow: { flexDirection: "row", alignItems: "center", gap: space.sm, borderWidth: BORDER, borderColor: c.border, padding: space.md },
   mono: { fontFamily: fonts.mono, fontSize: 12, color: c.onSurface },
   payName: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSurface },
+  dropdown: { minHeight: 48, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  option: { paddingVertical: space.sm, paddingHorizontal: space.md, borderBottomWidth: 1, borderColor: c.border, minHeight: 48, justifyContent: "center" },
 }));

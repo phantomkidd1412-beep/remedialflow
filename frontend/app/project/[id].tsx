@@ -11,6 +11,60 @@ import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { StaffNCCard } from "@/src/components/StaffNCCard";
 import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
+type SchedRow = { installer_id: string; name: string; date: string | null };
+
+/** Optional scheduled visit date per installer (YYYY-MM-DD). Blank = not scheduled; nothing is invented. */
+function ScheduleRows({ pid, rows }: { pid: string; rows: SchedRow[] }) {
+  const s = useStyles();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [vals, setVals] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const save = async (r: SchedRow) => {
+    const raw = (vals[r.installer_id] ?? r.date ?? "").trim();
+    const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    const date = raw === "" ? null : m ? `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}` : raw;
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      toast("Use DD/MM/YYYY");
+      return;
+    }
+    setBusy(r.installer_id);
+    try {
+      await api(`/projects/${pid}/schedule/${r.installer_id}`, { method: "PUT", body: { date } });
+      qc.invalidateQueries({ queryKey: ["project", pid] });
+      setVals((v) => {
+        const { [r.installer_id]: _, ...rest } = v;
+        return rest;
+      });
+      toast(date ? `${r.name} scheduled` : `${r.name} schedule cleared`);
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setBusy(null);
+    }
+  };
+  const show = (d: string | null) => (d ? d.split("-").reverse().join("/") : "");
+  return (
+    <View style={s.rates} testID="project-schedules">
+      <Label>Scheduled visits</Label>
+      {rows.map((r) => {
+        const v = vals[r.installer_id] ?? show(r.date);
+        return (
+          <View key={r.installer_id} style={s.rateRow}>
+            <Text style={[s.rateName, { flex: 1 }]}>{r.name}</Text>
+            <View style={{ width: 130 }}>
+              <Field placeholder="DD/MM/YYYY" value={v} onChangeText={(t) => setVals((x) => ({ ...x, [r.installer_id]: t }))} keyboardType="numbers-and-punctuation" testID={`schedule-input-${r.installer_id}`} />
+            </View>
+            {vals[r.installer_id] !== undefined && vals[r.installer_id] !== show(r.date) ? (
+              <Btn title="Save" small onPress={() => save(r)} loading={busy === r.installer_id} testID={`schedule-save-${r.installer_id}`} />
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 export default function StaffProject() {
   const s = useStyles();
   const { colors } = useTheme();
@@ -144,7 +198,7 @@ export default function StaffProject() {
         <Text style={s.addr} testID="project-address">{p.address}{p.postcode ? `, ${p.postcode}` : ""}</Text>
         <View style={s.prog}>
           <View style={{ flex: 1 }}><Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} /></View>
-          <Text style={s.progText} testID="project-progress-text">{p.nc_done}/{p.nc_total} NCs approved</Text>
+          <Text style={s.progText} testID="project-progress-text">Project Progress: {p.nc_done} of {p.nc_total} NCs Completed</Text>
         </View>
         <View style={{ flexDirection: "row", gap: 4, flexWrap: "wrap" }}>
           <Badge status={p.status} testID="project-status" />
@@ -159,7 +213,7 @@ export default function StaffProject() {
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
         ListHeaderComponent={
           <View style={{ gap: space.sm, marginBottom: space.sm }}>
-            {p.rate_rows?.length ? (
+            {isAdmin && p.rate_rows?.length ? (
               <View style={s.rates} testID="project-rates">
                 <Label>Installer rates</Label>
                 {p.rate_rows.map((r) => (
@@ -177,6 +231,7 @@ export default function StaffProject() {
                 ))}
               </View>
             ) : null}
+            {p.schedule_rows?.length ? <ScheduleRows pid={id} rows={p.schedule_rows} /> : null}
             <Label>Assign project (unassigned NCs default to this installer)</Label>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
               {(installers.data ?? []).map((i) => (

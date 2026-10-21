@@ -38,7 +38,7 @@ export async function openTrackerExport(fmt: "csv" | "xlsx", params: Record<stri
 }
 
 export type RateRow = { installer_id: string; name: string; pay_type: string; rate: number | null; earning: { status: string; amount: number } | null };
-export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; rate_rows?: RateRow[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
+export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; rate_rows?: RateRow[]; schedule_rows?: { installer_id: string; name: string; date: string | null }[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 
 export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;

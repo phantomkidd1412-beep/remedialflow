@@ -75,7 +75,7 @@ export const STATUS: Record<string, { label: string; tone: "ok" | "warn" | "bad"
   rejected: { label: "Rejected", tone: "bad" },
   active: { label: "Active", tone: "info" },
   awaiting_review: { label: "Awaiting review", tone: "brand" },
-  completed: { label: "Completed", tone: "ok" },
+  completed: { label: "Internally completed", tone: "ok" },
   earned: { label: "Earned", tone: "brand" },
   paid: { label: "Paid", tone: "ok" },
   pending: { label: "Queued", tone: "warn" },

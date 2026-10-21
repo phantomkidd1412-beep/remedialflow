@@ -105,9 +105,10 @@ class TestRateRowsVisibility:
         assert row["pay_type"] == "per_job"
         assert row["rate"] == 150
         assert row["earning"] is None
-        # employee
+        # employee: must NOT see rate_rows / rates (iter22 — payment info is Admin-only)
         d = requests.get(f"{API}/projects/{pid}", headers=_hdr(tokens["employee"]), timeout=15).json()
-        assert "rate_rows" in d["project"], "employee must also get rate_rows"
+        assert "rate_rows" not in d["project"], "employee must NOT see rate_rows"
+        assert "rates" not in d["project"] or not d["project"].get("rates"), "employee must NOT see rates"
         # installer
         d = requests.get(f"{API}/projects/{pid}", headers=_hdr(tokens["installer_a"]), timeout=15).json()
         assert "rate_rows" not in d["project"], "installer must NOT see rate_rows"

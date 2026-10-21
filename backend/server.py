@@ -41,6 +41,7 @@ api = APIRouter(prefix="/api")
 staff = require("admin", "employee")
 admin = require("admin")
 DONE = {"approved"}
+OUTSTANDING = {"open", "rejected", "more_evidence"}  # NC still needs (new) installer evidence
 REVIEW = {"employee_review", "admin_review"}
 LIFECYCLE = {"unassigned", "in_progress", "completed", "trustmark_resolved"}
 MAX_UPLOAD = 300 * 1024 * 1024  # photos / reference images
@@ -84,7 +85,7 @@ async def recompute_project(pid: str):
     """Lifecycle: unassigned | in_progress | completed | trustmark_resolved, plus needs_review flag."""
     ncs = await db.ncs.find({"project_id": pid}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
     proj = await db.projects.find_one({"_id": oid(pid)}, {"completed_at": 1, "completion_history": 1, "resolved": 1,
-                                                          "resolution_history": 1, "status": 1})
+                                                          "resolution_history": 1, "status": 1, "ready_notified_at": 1})
     total = len(ncs)
     done = sum(1 for n in ncs if n["status"] in DONE)
     review = sum(1 for n in ncs if n["status"] in REVIEW)
@@ -101,8 +102,28 @@ async def recompute_project(pid: str):
             await audit("project.reopened", None, f"project:{pid}", {"previous_resolution": proj["resolved"]})
         status = "in_progress" if any(n.get("assigned_installer_id") for n in ncs) else "unassigned"
     upd["status"] = status
+    # Ready for review = every NC has server-confirmed submitted evidence (none open/rejected/needing more),
+    # and not all approved yet. Notified once; re-armed if any NC goes back to outstanding.
+    all_submitted = bool(total) and all(n["status"] not in OUTSTANDING for n in ncs)
+    notify_ready = all_submitted and done < total and not proj.get("ready_notified_at")
+    if notify_ready:
+        upd["ready_notified_at"] = now_iso()
+    elif not all_submitted and proj.get("ready_notified_at"):
+        upd["ready_notified_at"] = None
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
+    if notify_ready:
+        await notify_project_ready(pid)
     await settle_earnings(pid)
+
+
+async def notify_project_ready(pid: str):
+    p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "deleted": 1})
+    if not p or p.get("deleted"):
+        return
+    async for st in db.users.find({"role": {"$in": ["employee", "admin"]}, "active": True}, {"_id": 1}):
+        await notify(str(st["_id"]), "project_ready", f"Project {p['ref']} — All NC evidence submitted. Ready for review.",
+                     f"Project {p['ref']} — All NC evidence submitted. Ready for review.", pid)
+    await audit("project.ready_for_review", None, f"project:{pid}", {"ref": p["ref"]})
 
 
 async def live_project(pid: str) -> dict:
@@ -255,7 +276,11 @@ async def installers(u: User = Depends(staff)):
 # ---------------- settings ----------------
 @api.get("/settings")
 async def read_settings(u: User = Depends(staff)):
-    return (await get_settings()).model_dump()
+    d = (await get_settings()).model_dump()
+    if u.role != "admin":  # payment configuration is admin-only
+        for k in ("default_job_rate", "currency", "payment_terms"):
+            d.pop(k, None)
+    return d
 
 
 @api.put("/settings")
@@ -314,11 +339,20 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
     all_ids = set(ids) | {x for s in per.values() for x in s}
     names = {str(d["_id"]): d["name"] for d in await db.users.find({"_id": {"$in": [ObjectId(i) for i in all_ids]}}, {"name": 1}).to_list(500)}
     if u.role == "installer":
-        mine = await db.ncs.find({"project_id": {"$in": pids}, "assigned_installer_id": u.id}, {"project_id": 1, "status": 1}).to_list(5000)
+        mine = await db.ncs.find({"project_id": {"$in": pids}, "assigned_installer_id": u.id}, {"project_id": 1, "status": 1, "number": 1}).to_list(5000)
         for i in items:
             sts = [n["status"] for n in mine if n["project_id"] == i["id"]]
             i["nc_total"], i["nc_done"] = len(sts), sum(1 for x in sts if x in DONE)
             i["my_statuses"] = sts
+            i["my_nc_numbers"] = sorted(n.get("number", "") for n in mine if n["project_id"] == i["id"])
+            i["my_schedule"] = (i.get("schedules") or {}).get(u.id)
+    for i in items:
+        if u.role != "admin":
+            i.pop("rates", None)
+            i.pop("rate", None)
+            i.pop("rate_history", None)
+        if u.role == "installer":
+            i.pop("schedules", None)
     for i in items:
         i["installer_name"] = names.get(i["installer_id"] or "", None)
         i["installer_names"] = sorted(names[x] for x in per.get(i["id"], set()) if x in names)
@@ -646,8 +680,16 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
     if u.role == "installer":
         pd.pop("rate_history", None)
         pd["rates"] = {k: v for k, v in (p.rates or {}).items() if k == u.id}
-    else:
+        pd["schedules"] = {k: v for k, v in (p.schedules or {}).items() if k == u.id}
+    elif u.role == "admin":
         pd["rate_rows"] = await rate_rows(pid, p, uids)
+    else:  # employees: operational data only, no payment information
+        pd.pop("rate_history", None)
+        pd.pop("rates", None)
+        pd.pop("rate", None)
+    if u.role != "installer":
+        pd["schedule_rows"] = sorted(({"installer_id": i, "name": names[i], "date": (p.schedules or {}).get(i)}
+                                      for i in uids if i in names), key=lambda r: r["name"])
     return {"project": pd, "ncs": out}
 
 
@@ -661,6 +703,29 @@ async def rate_rows(pid: str, p: Project, uids: set) -> list:
         rows.append({"installer_id": iid, "name": d["name"], "pay_type": d.get("pay_type", "per_job"),
                      "rate": (p.rates or {}).get(iid), "earning": {"status": e["status"], "amount": e["amount"]} if e else None})
     return sorted(rows, key=lambda r: r["name"])
+
+
+class ScheduleIn(BaseModel):
+    date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+
+
+@api.put("/projects/{pid}/schedule/{iid}")
+async def set_schedule(pid: str, iid: str, body: ScheduleIn, u: User = Depends(staff)):
+    """Optional scheduled visit date for one installer on a project (null clears it). Never invented."""
+    from datetime import date as _d
+    p = await live_project(pid)
+    if p.get("installer_id") != iid and not await db.ncs.find_one({"project_id": pid, "assigned_installer_id": iid}, {"_id": 1}):
+        raise HTTPException(400, "Installer is not assigned to this project")
+    if body.date:
+        try:
+            _d.fromisoformat(body.date)
+        except ValueError:
+            raise HTTPException(422, "Invalid date")
+        await db.projects.update_one({"_id": p["_id"]}, {"$set": {f"schedules.{iid}": body.date}})
+    else:
+        await db.projects.update_one({"_id": p["_id"]}, {"$unset": {f"schedules.{iid}": ""}})
+    await audit("project.scheduled", u.id, f"project:{pid}", {"installer_id": iid, "date": body.date})
+    return {"ok": True, "date": body.date}
 
 
 class RateIn(BaseModel):
@@ -1156,6 +1221,8 @@ async def review_queue(u: User = Depends(staff)):
 @api.get("/earnings")
 async def earnings(u: User = Depends(current_user)):
     from datetime import datetime, timedelta
+    if u.role == "employee":
+        raise HTTPException(403, "Payment information is restricted to Admins")
     q = {} if u.role == "admin" else {"installer_id": u.id}
     items = clean(await db.earnings.find(q).sort("earned_at", -1).to_list(2000))
     s = await get_settings()
@@ -1163,12 +1230,16 @@ async def earnings(u: User = Depends(current_user)):
     pending = []
     if u.role == "installer":
         paid_pids = {i["project_id"] for i in items}
-        for pid in await db.ncs.distinct("project_id", {"assigned_installer_id": u.id, "project_deleted": {"$ne": True}}):
+        mine: dict = {}
+        async for n in db.ncs.find({"assigned_installer_id": u.id, "project_deleted": {"$ne": True}}, {"project_id": 1, "number": 1, "status": 1}):
+            mine.setdefault(n["project_id"], []).append(n)
+        for pid, ns in mine.items():
             if pid in paid_pids:
                 continue
-            p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1, "rates": 1})
-            if p:
-                pending.append({"project_id": pid, "ref": p["ref"], "address": p["address"], "status": "pending",
+            p = await db.projects.find_one({"_id": oid(pid), "deleted": None}, {"ref": 1, "address": 1, "rates": 1})
+            if p:  # estimate only: becomes earned when all of THIS installer's NCs here are internally approved
+                pending.append({"project_id": pid, "ref": p["ref"], "address": p["address"], "status": "potential",
+                                "ncs": sorted(n["number"] for n in ns), "ncs_done": sum(1 for n in ns if n["status"] in DONE),
                                 "amount": (p.get("rates") or {}).get(u.id, (me or {}).get("default_rate") or s.default_job_rate)})
     names = {}
     if u.role == "admin":

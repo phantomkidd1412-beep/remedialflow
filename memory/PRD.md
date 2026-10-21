@@ -93,3 +93,13 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - No duration limit; MAX_VIDEO_MB env (default 500) via GET /api/config/media shown in UI; size_bytes integrity check (422 -> auto retry).
 - Multiple videos per NC (nc.videos), never superseded; all in ZIP Videos/. Simplified video viewer (player + Close only).
 - Note: headless test Chromium lacks H.264, so web playback is verified only in real browsers.
+
+## Operational workflow improvements (iterations 21-22, agent-tested)
+- Admin Deleted Projects: search (ref/address/postcode), Restore, Permanently delete (admin only, typed-ref confirmation, POST /api/admin/projects/{pid}/purge; earnings kept with project_purged; audit project.purged). Storage objects can't be deleted via the managed storage API (DB records removed).
+- Evidence Rules & Payments: installer dropdown -> editable default rate -> Save (PATCH /api/admin/users/{uid}); rates frozen per project at assignment, earned/paid unchanged.
+- Employees: no rates/earnings/payment settings (API strips/403s + UI hidden).
+- Installer Earnings: Potential (estimated) / Payment pending / Paid + summary, per installer's own NCs.
+- Installer Jobs: Rejected/Revisit, Current week (incl. overdue), Next week, Upcoming, Not yet scheduled, Completed. Optional per-installer schedule date (PUT /api/projects/{pid}/schedule/{iid}), set on staff project page.
+- "Project Progress: X of Y NCs Completed"; status label "Internally completed" (only when all NCs approved).
+- project_ready in-app + push notification to employees/admins once all NCs have server-submitted evidence; latch ready_notified_at re-armed on reject/reopen.
+- Approve button -> green "Approved" state, disabled while processing.

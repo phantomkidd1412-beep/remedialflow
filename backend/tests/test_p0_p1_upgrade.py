@@ -90,7 +90,10 @@ class TestP0Security:
     def test_settings_employee_ok(self, employee_token):
         r = requests.get(f"{API}/settings", headers=_bearer(employee_token), timeout=10)
         assert r.status_code == 200
-        assert "default_job_rate" in r.json()
+        # iter22 — employees must NOT see payment configuration keys
+        assert "default_job_rate" not in r.json()
+        assert "currency" not in r.json()
+        assert "payment_terms" not in r.json()
 
 
 # ============================================================================
