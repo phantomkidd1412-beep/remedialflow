@@ -9,13 +9,14 @@ import { useQueue } from "@/src/queue";
 import { usesNativeTabs } from "@/src/navigation";
 import { Btn, ErrorBlock, Feather, Field, IconName, Label, Sheet, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, fonts, makeStyles, setThemePref, space, ThemePref, useTheme, useThemePref } from "@/src/theme";
 
 export type MenuItem = { label: string; icon: IconName; onPress: () => void; testID: string };
 
 export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
   const s = useStyles();
   const { colors } = useTheme();
+  const themePref = useThemePref();
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const toast = useToast();
@@ -77,6 +78,16 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
             <Feather name="chevron-right" size={20} color={colors.onSurface} />
           </Pressable>
         ))}
+        <Label>Appearance</Label>
+        <View style={s.seg} testID="theme-setting">
+          {(["light", "dark", "auto"] as ThemePref[]).map((t) => (
+            <Pressable key={t} onPress={() => setThemePref(t)} style={[s.segBtn, themePref === t && { backgroundColor: colors.brandSecondary }]} testID={`theme-${t}`} accessibilityState={{ selected: themePref === t }}>
+              <Feather name={t === "light" ? "sun" : t === "dark" ? "moon" : "smartphone"} size={16} color={themePref === t ? colors.onBrandSecondary : colors.onSurface} />
+              <Text style={[s.segText, themePref === t && { color: colors.onBrandSecondary }]}>{t === "auto" ? "Auto" : t === "light" ? "Light" : "Dark"}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={s.hint}>Auto follows your device setting.</Text>
         <Label>Security</Label>
         <Pressable style={s.row} onPress={() => setPw(true)} testID="change-password-button">
           <Feather name="lock" size={20} color={colors.onSurface} />
@@ -115,4 +126,8 @@ const useStyles = makeStyles((c) => ({
   queueText: { fontFamily: fonts.mono, fontSize: 12, color: c.onWarning, flex: 1 },
   row: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 56, borderWidth: BORDER, borderColor: c.border, paddingHorizontal: space.lg, marginBottom: -BORDER },
   rowText: { flex: 1, fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onSurface },
+  seg: { flexDirection: "row", borderWidth: BORDER, borderColor: c.border },
+  segBtn: { flex: 1, minHeight: 48, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center" },
+  segText: { fontFamily: fonts.display, fontWeight: "700", fontSize: 14, color: c.onSurface },
+  hint: { fontFamily: fonts.mono, fontSize: 11, color: c.muted, marginBottom: space.sm },
 }));

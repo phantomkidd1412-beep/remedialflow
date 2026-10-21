@@ -103,3 +103,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - "Project Progress: X of Y NCs Completed"; status label "Internally completed" (only when all NCs approved).
 - project_ready in-app + push notification to employees/admins once all NCs have server-submitted evidence; latch ready_notified_at re-armed on reject/reopen.
 - Approve button -> green "Approved" state, disabled while processing.
+
+## Final UX improvements (iteration 22, agent-tested)
+- No fixed photo limit per NC (gallery selectionLimit 0; horizontal FlatList rows; export PDF up to 60 relevant photos/NC after near-duplicate removal). 500 MB video limit unchanged.
+- Installer Earnings: 3 summary cards (Potential / Pending payment / Total paid) + 3 tabs; /api/earnings items include installer's NC numbers.
+- Installer Jobs: tappable summary cards (Revisit required, This week, Next week, Unscheduled, Completed) filter the list; one card per project with own-NC count/progress.
+- Theme: Light / Dark / Auto on every role's Account/Profile screen; stored on device (AsyncStorage rf.themePref), persists across logout.

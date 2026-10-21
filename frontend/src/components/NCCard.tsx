@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { Image } from "expo-image";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
@@ -52,7 +52,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images", "videos"],
       allowsMultipleSelection: true,
-      selectionLimit: 10,
+      selectionLimit: 0, // no fixed photo limit per NC (0 = unlimited)
       quality: 1, // no re-compression of photos
       exif: true,
       // iOS: hand over the original file (no HEVC->H.264 transcode / downscale)
@@ -142,28 +142,51 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           {drafts.length || uploads.length || draftVideos.length ? (
             <>
               <Label>New evidence {nc.status === "assessing" ? "" : "(not yet submitted)"}</Label>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-                {draftVideos.map((v) => <Thumb key={v.id} f={v} onPress={() => setView(v)} testID={`video-thumb-${v.id}`} />)}
-                {drafts.map((f, i) => <Thumb key={f.id} f={f} onPress={() => setPv({ files: drafts, i })} testID={`draft-thumb-${f.id}`} />)}
-                {uploads.map((q) => (
-                  <Pressable key={q.id} style={s.local} onPress={() => (q.status === "failed" ? openConfirm(q) : undefined)} onLongPress={() => q.status !== "uploaded" && q.status !== "uploading" && openConfirm(q)} testID={`queued-item-${q.id}`}>
-                    {q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
-                    <View style={[s.localTag, q.status === "failed" && { backgroundColor: colors.error }, q.status === "uploaded" && { backgroundColor: colors.success }]}>
-                      <Text style={[s.localText, q.status === "failed" && { color: colors.onError }, q.status === "uploaded" && { color: colors.onSuccess }]} testID={`queued-status-${q.id}`}>{q.status === "uploading" && pct[q.id] != null ? `${Math.round(pct[q.id] * 100)}%` : STATUS_LABEL[q.status].toUpperCase()}</Text>
-                    </View>
-                  </Pressable>
-                ))}
-              </ScrollView>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.row}
+                data={[...draftVideos.map((f) => ({ k: "v" as const, id: f.id, f })), ...drafts.map((f, i) => ({ k: "p" as const, id: f.id, f, i })), ...uploads.map((q) => ({ k: "q" as const, id: q.id, q }))]}
+                keyExtractor={(x) => x.id}
+                initialNumToRender={8}
+                windowSize={5}
+                renderItem={({ item: x }) =>
+                  x.k === "v" ? (
+                    <Thumb f={x.f} onPress={() => setView(x.f)} testID={`video-thumb-${x.f.id}`} />
+                  ) : x.k === "p" ? (
+                    <Thumb f={x.f} onPress={() => setPv({ files: drafts, i: x.i })} testID={`draft-thumb-${x.f.id}`} />
+                  ) : (
+                    <Pressable style={s.local} onPress={() => (x.q.status === "failed" ? openConfirm(x.q) : undefined)} onLongPress={() => x.q.status !== "uploaded" && x.q.status !== "uploading" && openConfirm(x.q)} testID={`queued-item-${x.q.id}`}>
+                      {x.q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: x.q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
+                      <View style={[s.localTag, x.q.status === "failed" && { backgroundColor: colors.error }, x.q.status === "uploaded" && { backgroundColor: colors.success }]}>
+                        <Text style={[s.localText, x.q.status === "failed" && { color: colors.onError }, x.q.status === "uploaded" && { color: colors.onSuccess }]} testID={`queued-status-${x.q.id}`}>{x.q.status === "uploading" && pct[x.q.id] != null ? `${Math.round(pct[x.q.id] * 100)}%` : STATUS_LABEL[x.q.status].toUpperCase()}</Text>
+                      </View>
+                    </Pressable>
+                  )
+                }
+              />
             </>
           ) : null}
 
           {submitted.length || submittedVideos.length ? (
             <>
-              <Label>Submitted evidence</Label>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-                {submittedVideos.map((v) => <Thumb key={v.id} f={v} size={56} onPress={() => setView(v)} testID={`submitted-video-${v.id}`} />)}
-                {submitted.map((f, i) => <Thumb key={f.id} f={f} size={56} onPress={() => setPv({ files: submitted, i })} testID={`submitted-thumb-${f.id}`} />)}
-              </ScrollView>
+              <Label>Submitted evidence ({submitted.length} photo{submitted.length === 1 ? "" : "s"}{submittedVideos.length ? `, ${submittedVideos.length} video${submittedVideos.length === 1 ? "" : "s"}` : ""})</Label>
+              <FlatList
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={s.row}
+                data={[...submittedVideos.map((f) => ({ v: true, f, i: 0 })), ...submitted.map((f, i) => ({ v: false, f, i }))]}
+                keyExtractor={(x) => x.f.id}
+                initialNumToRender={10}
+                windowSize={5}
+                renderItem={({ item: x }) =>
+                  x.v ? (
+                    <Thumb f={x.f} size={56} onPress={() => setView(x.f)} testID={`submitted-video-${x.f.id}`} />
+                  ) : (
+                    <Thumb f={x.f} size={56} onPress={() => setPv({ files: submitted, i: x.i })} testID={`submitted-thumb-${x.f.id}`} />
+                  )
+                }
+              />
             </>
           ) : null}
 

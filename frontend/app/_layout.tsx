@@ -14,7 +14,7 @@ import { queryClient } from "@/src/query-client";
 import { AuthProvider } from "@/src/auth";
 import { QueueProvider } from "@/src/queue";
 import { Btn, Sheet, ToastProvider } from "@/src/ui";
-import { colors } from "@/src/theme";
+import { loadThemePref, useTheme } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
 
@@ -36,6 +36,7 @@ const openPushTarget = (router: ReturnType<typeof useRouter>, data: any) => {
 
 function PushHandlers() {
   const router = useRouter();
+  const { colors } = useTheme();
   const [nudge, setNudge] = useState(false);
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -57,7 +58,7 @@ function PushHandlers() {
   };
   return (
     <Sheet visible={nudge} onClose={() => done(false)} title="Turn on notifications" testID="push-nudge-sheet">
-      <Text style={styles.nudge}>Get alerted when new work is assigned or a job needs action. You can change this in Settings.</Text>
+      <Text style={[styles.nudge, { color: colors.onSurface }]}>Get alerted when new work is assigned or a job needs action. You can change this in Settings.</Text>
       <Btn title="Open Settings" onPress={() => done(true)} testID="push-nudge-settings" />
       <Btn title="Later" variant="outline" onPress={() => done(false)} testID="push-nudge-later" />
     </Sheet>
@@ -76,17 +77,22 @@ export default function RootLayout() {
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
     Feather: require("@react-native-vector-icons/feather/fonts/Feather.ttf"),
   });
-  if (!loaded) return <View style={styles.boot} />;
+  const [prefReady, setPrefReady] = useState(false);
+  useEffect(() => {
+    loadThemePref().finally(() => setPrefReady(true));
+  }, []);
+  const { scheme, colors } = useTheme();
+  if (!loaded || !prefReady) return <View style={[styles.boot, { backgroundColor: colors.surface }]} />;
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <GestureHandlerRootView style={[styles.root, { backgroundColor: colors.surface }]}>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <KeyboardProvider>
             <AuthProvider>
               <QueueProvider>
                 <ToastProvider>
-                  <StatusBar style="dark" />
-                  <Stack screenOptions={{ headerShown: false, animation: "fade", animationDuration: 150 }} />
+                  <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+                  <Stack screenOptions={{ headerShown: false, animation: "fade", animationDuration: 150, contentStyle: { backgroundColor: colors.surface } }} />
                   <PushHandlers />
                 </ToastProvider>
               </QueueProvider>
@@ -100,6 +106,6 @@ export default function RootLayout() {
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  boot: { flex: 1, backgroundColor: colors.surface },
-  nudge: { fontSize: 15, color: colors.onSurface },
+  boot: { flex: 1 },
+  nudge: { fontSize: 15 },
 });

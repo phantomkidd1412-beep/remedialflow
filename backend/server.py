@@ -654,7 +654,7 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
     nq = {"project_id": pid, **({"assigned_installer_id": u.id} if u.role == "installer" else {})}
     ncs = [NC.from_mongo(d) for d in await db.ncs.find(nq).sort("number", 1).to_list(500)]
     files = [EvidenceFile.from_mongo(d) for d in await db.files.find(
-        {"project_id": pid, "nc_id": {"$in": [n.id for n in ncs]}, "status": {"$in": ["draft", "submitted", "superseded"]}}).sort("server_received_at", 1).to_list(5000)]
+        {"project_id": pid, "nc_id": {"$in": [n.id for n in ncs]}, "status": {"$in": ["draft", "submitted", "superseded"]}}).sort("server_received_at", 1).to_list(20000)]
     by_nc: dict = {}
     for f in files:
         by_nc.setdefault(f.nc_id, []).append(f)
@@ -1074,7 +1074,7 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
         if body.client_id and raw and raw.get("last_submit_client_id") == body.client_id:
             return {"ok": True, "status": nc.status, "duplicate": True}  # same device request already claimed this draft
         raise HTTPException(400, "No new evidence to submit")
-    drafts = await db.files.find({"submission_id": nc.draft_submission_id, "status": "draft"}).to_list(500)
+    drafts = await db.files.find({"submission_id": nc.draft_submission_id, "status": "draft"}).to_list(5000)
     photo_ids = [str(d["_id"]) for d in drafts if d["kind"] == "photo"]
     video_ids = [str(d["_id"]) for d in drafts if d["kind"] == "video"]
     if not photo_ids and not video_ids and not nc.active_video_id:
@@ -1241,6 +1241,8 @@ async def earnings(u: User = Depends(current_user)):
                 pending.append({"project_id": pid, "ref": p["ref"], "address": p["address"], "status": "potential",
                                 "ncs": sorted(n["number"] for n in ns), "ncs_done": sum(1 for n in ns if n["status"] in DONE),
                                 "amount": (p.get("rates") or {}).get(u.id, (me or {}).get("default_rate") or s.default_job_rate)})
+        for i in items:  # display only: this installer's own NC numbers on each earned/paid job
+            i["ncs"] = sorted(n["number"] for n in mine.get(i["project_id"], []))
     names = {}
     if u.role == "admin":
         names = {str(d["_id"]): d["name"] for d in await db.users.find({"role": "installer"}, {"name": 1}).to_list(1000)}
@@ -1438,7 +1440,7 @@ async def export_project(pid: str, exp: int, sig: str):
 
     for n in ncs:
         nid = str(n["_id"])
-        files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(500)
+        files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(5000)
         trust = [b for f in files if f["kind"] == "trustmark" and not f.get("excluded") for b in [await get(f, "display", "original")] if b]
         rem = [b for f in files if f["kind"] == "photo" and f["status"] != "superseded" for b in [await get(f, "stamped", "display", "original")] if b]
         trust, rem = await run_in_threadpool(readable, trust), await run_in_threadpool(readable, rem)
@@ -1446,7 +1448,7 @@ async def export_project(pid: str, exp: int, sig: str):
     rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
     for n, files, trust, rem in prepared:
         trust = await run_in_threadpool(drop_repeated, trust, rep)
-        rem = await run_in_threadpool(select_photos, rem, 6)
+        rem = await run_in_threadpool(select_photos, rem, 60)  # all relevant photos (near-duplicates dropped); extra pages as needed
         name = f"{n['number']}_{slug(n.get('description', ''))}"
         pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem)
         entries.append((f"{name}.pdf", pdf))
