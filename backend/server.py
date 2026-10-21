@@ -1708,7 +1708,11 @@ async def startup():
     await db.audit.create_index("seq", unique=True)
     await db.audit.create_index("target")
     await db.notifications.create_index([("user_id", 1), ("key", 1)], unique=True)
-    await db.rate_limits.create_index("expires_at", expireAfterSeconds=0)
+    # Expired rate-limit rows are ignored by query (expires_at > now) and reused per key; no auto-deleting TTL index.
+    try:
+        await db.rate_limits.drop_index("expires_at_1")
+    except Exception:
+        pass
     from migrations import run_migrations
     await run_migrations()
     if os.environ.get("DEMO_SEED") == "true":

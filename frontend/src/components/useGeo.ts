@@ -35,7 +35,6 @@ export function useGeo(enabled: boolean) {
 
   useEffect(() => {
     if (!enabled) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     start(true);
     return () => sub.current?.remove();
   }, [enabled]);
