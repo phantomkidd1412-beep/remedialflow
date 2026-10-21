@@ -1545,6 +1545,8 @@ async def startup():
     await run_migrations()
     if os.environ.get("DEMO_SEED") == "true":
         asyncio.create_task(_seed_safe())
+    from dropbox_link import load_dropbox as _ld
+    await _ld()
     asyncio.create_task(backfill_playback())
 
 
@@ -1566,6 +1568,8 @@ app.include_router(api)
 from phase10 import router as p10_router  # noqa: E402  (imports server helpers lazily)
 app.include_router(p10_router)
 from push import router as push_router  # noqa: E402
+from dropbox_link import router as dropbox_router, load_dropbox  # noqa: E402
+app.include_router(dropbox_router)
 app.include_router(push_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],

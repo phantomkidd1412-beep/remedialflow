@@ -66,3 +66,9 @@ Mobile builds never show demo shortcuts (`__DEV__` only).
 3. `python bootstrap_admin.py owner@… "Owner"` → verify login. 4. Remove ADMIN_BOOTSTRAP_SECRET.
 5. `python disable_demo_accounts.py --yes` (refuses unless a real admin exists; deactivates, never deletes, revokes sessions).
 6. Verify demo logins fail and Activity Log shows system.admin_bootstrapped + user.demo_disabled.
+
+## 11. Dropbox evidence storage (production)
+1. Dropbox App Console → RemedialFlow Evidence → Settings → Redirect URIs: add https://api.networksurveyltd.uk/api/admin/dropbox/callback
+2. Production secrets: DROPBOX_APP_KEY=<app key>, DROPBOX_REDIRECT_URI=https://api.networksurveyltd.uk/api/admin/dropbox/callback (no app secret needed - PKCE).
+3. After deploy: Admin → Settings → Evidence storage → Connect Dropbox → Allow. Status must show "✓ Dropbox connected".
+4. Production uses a NEW database, so Dropbox must be connected again there. JWT_SECRET encrypts the stored token: changing JWT_SECRET later requires reconnecting.

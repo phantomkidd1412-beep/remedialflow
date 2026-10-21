@@ -4,7 +4,7 @@ import { createContext, PropsWithChildren, useCallback, useContext, useEffect, u
 import { AppState, Platform } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { storage } from "@/src/utils/storage";
-import { uploadForm } from "@/src/utils/upload";
+import { uploadChunked, uploadForm } from "@/src/utils/upload";
 import { authed, BASE, readError } from "@/src/api";
 import { queryClient } from "@/src/query-client";
 import { useAuth } from "@/src/auth";
@@ -164,18 +164,23 @@ export function QueueProvider({ children }: PropsWithChildren) {
         let r: Response;
         try {
           if (next.type === "upload") {
+            const onProgress = (f: number) => {
+              // throttle re-renders: only on >=2% change
+              if (Math.abs(f - lastPct.current) < 0.02 && f < 1) return;
+              lastPct.current = f;
+              setPct((m) => ({ ...m, [next.id]: f }));
+            };
+            const meta = JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(next.uri!) });
             r = await withTimeout(authed((t) =>
-              uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
-                headers: t ? { Authorization: `Bearer ${t}` } : {},
-                fields: { meta: JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(next.uri!) }) },
-                files: { file: { uri: next.uri!, name: next.mime!.includes("video") ? (next.mime!.includes("quicktime") ? "video.mov" : "video.mp4") : "photo.jpg", mimeType: next.mime } },
-                onProgress: (f) => {
-                  // throttle re-renders: only on >=2% change
-                  if (Math.abs(f - lastPct.current) < 0.02 && f < 1) return;
-                  lastPct.current = f;
-                  setPct((m) => ({ ...m, [next.id]: f }));
-                },
-              }),
+              next.mime?.includes("video")
+                ? // videos: resumable 8 MB chunks, so no single request approaches the ~100 MB gateway limit
+                  uploadChunked(BASE, { ncId: next.ncId, clientId: next.id, uri: next.uri!, mime: next.mime!, meta, token: t, onProgress })
+                : uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
+                    headers: t ? { Authorization: `Bearer ${t}` } : {},
+                    fields: { meta },
+                    files: { file: { uri: next.uri!, name: "photo.jpg", mimeType: next.mime } },
+                    onProgress,
+                  }),
             ), next.mime?.includes("video") ? VIDEO_UPLOAD_TIMEOUT : UPLOAD_TIMEOUT).finally(() => {
               lastPct.current = 0;
               setPct((m) => {

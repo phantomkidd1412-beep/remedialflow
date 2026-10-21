@@ -116,3 +116,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Verified: duplicate by reference, merge without duplicate NCs, hide/restore TrustMark image, deleted-project restore-match, admin recycle bin restore. Test projects purged.
 - One-off email delivery test sent to info@networksurveyltd.uk (no reset link, no account created).
 - Tap-to-pick DatePickerSheet for scheduled visits.
+
+## Dropbox primary evidence storage (iteration 25, agent-tested)
+- storage.HybridStorage: new files -> Dropbox App folder (path remedialflow/projects/<pid>/ncs/<nc>/submissions/<sub>/<fid>/<variant>.<ext>, mode add, autorename off); refs stored as "dbx:<id>"; old Emergent paths still read. No delete/move/overwrite anywhere.
+- Admin OAuth PKCE (App key only, no secret): POST /api/admin/dropbox/connect, GET /api/admin/dropbox/callback, GET /api/admin/dropbox/status; refresh token Fernet-encrypted in db.secure_settings. Env: DROPBOX_APP_KEY, DROPBOX_REDIRECT_URI (production must add https://api.<domain>/api/admin/dropbox/callback in Dropbox console + env, then reconnect).
+- Chunked resumable uploads for videos (8 MB): /api/uploads, /uploads/{id}/chunk?offset=, /uploads/{id}/complete; verified 125 MB via external ingress.
+- If Dropbox not connected, new files fall back to Emergent storage.

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, View } from "react-native";
+import * as WebBrowser from "expo-web-browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -106,6 +107,47 @@ function InstallerRate({ currency, fallback }: { currency: string; fallback: num
   );
 }
 
+type DbxStatus = { connected: boolean; configured: boolean; connected_at?: string | null; connected_by?: string | null; redirect_uri?: string | null };
+
+/** Admin-only: connect the company Dropbox (OAuth happens on Dropbox's own page; tokens never reach the app). */
+function DropboxSection() {
+  const s = useStyles();
+  const toast = useToast();
+  const st = useQuery({ queryKey: ["dropbox-status"], queryFn: () => api<DbxStatus>("/admin/dropbox/status") });
+  const [busy, setBusy] = useState(false);
+  const connect = async () => {
+    setBusy(true);
+    try {
+      const { authorize_url } = await api<{ authorize_url: string }>("/admin/dropbox/connect", { method: "POST" });
+      if (Platform.OS === "web") window.open(authorize_url, "_blank");
+      else await WebBrowser.openBrowserAsync(authorize_url);
+      st.refetch();
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const d = st.data;
+  return (
+    <View style={{ gap: space.sm }} testID="dropbox-section">
+      <Text style={s.mono} testID="dropbox-status">
+        {!d ? "Checking…" : d.connected ? `Dropbox connected${d.connected_by ? ` by ${d.connected_by}` : ""}. New photos, videos and PDFs are stored in your Dropbox app folder. Files are never deleted from Dropbox by RemedialFlow.` : "Dropbox not connected. New evidence is stored in the built-in storage until you connect."}
+      </Text>
+      {d && !d.connected && d.redirect_uri ? (
+        <View style={{ gap: 4 }} testID="dropbox-redirect">
+          <Text style={s.mono}>Before connecting, add this exact Redirect URI in the Dropbox App Console → Settings → OAuth 2 → Redirect URIs:</Text>
+          <Text selectable style={[s.mono, { fontWeight: "700" }]} testID="dropbox-redirect-uri">{d.redirect_uri}</Text>
+          {Platform.OS === "web" ? <Btn title="Copy Redirect URI" icon="copy" variant="outline" small onPress={() => navigator.clipboard?.writeText(d.redirect_uri!).then(() => toast("Copied"))} testID="dropbox-copy-uri" /> : null}
+        </View>
+      ) : null}
+      {d?.connected ? <Badge status="approved" label="✓ Dropbox connected" testID="dropbox-connected-badge" /> : null}
+      {d ? <Btn title={d.connected ? "Reconnect (only if permissions change)" : "Connect Dropbox"} icon="link" variant={d.connected ? "outline" : "primary"} small={!!d.connected} onPress={connect} loading={busy} disabled={!d.configured} testID="dropbox-connect" /> : null}
+      {d ? <Btn title="Refresh status" variant="outline" small onPress={() => st.refetch()} testID="dropbox-refresh" /> : null}
+    </View>
+  );
+}
+
 export default function SettingsScreen() {
   const s = useStyles();
   const insets = useSafeAreaInsets();
@@ -162,6 +204,9 @@ export default function SettingsScreen() {
         </View>
         <Field label="Payment terms (shown to installers)" value={f.payment_terms} onChangeText={(v) => set({ payment_terms: v })} testID="setting-payment-terms" />
         <Btn title="Save settings" onPress={save} loading={busy} testID="settings-save-button" />
+
+        <Text style={s.section}>EVIDENCE STORAGE</Text>
+        <DropboxSection />
 
         <Text style={s.section}>INSTALLER RATES</Text>
         <InstallerRate currency={f.currency} fallback={Number(f.default_job_rate)} />

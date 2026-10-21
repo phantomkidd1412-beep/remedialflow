@@ -103,3 +103,77 @@ export async function uploadForm(url: string, opts: UploadOptions): Promise<Resp
   // Branch the call, not the function reference: the two fetches have different RequestInit types.
   return Platform.OS === "web" ? fetch(url, init) : expoFetch(url, init);
 }
+
+const CHUNK = 8 * 1024 * 1024;
+
+type ChunkOpts = { ncId: string; clientId: string; uri: string; mime: string; meta: string; token: string | null; onProgress?: (f: number) => void };
+
+/** Resumable chunked upload for large files (videos). Each request carries <= 8 MB, well under the gateway's
+ *  ~100 MB body limit. The server keeps received bytes, so a retry resumes from its confirmed offset; the evidence
+ *  record is only created on /complete after the full size has arrived. A 401 is returned as-is so the caller's
+ *  auth wrapper can refresh the session and call again (which resumes). */
+export async function uploadChunked(base: string, o: ChunkOpts): Promise<Response> {
+  const auth: Record<string, string> = o.token ? { Authorization: `Bearer ${o.token}` } : {};
+  const send = Platform.OS === "web" ? fetch : (expoFetch as unknown as typeof fetch);
+  let size: number;
+  let read: (start: number, end: number) => Promise<Uint8Array>;
+  if (Platform.OS === "web") {
+    const blob = await (await fetch(o.uri)).blob();
+    size = blob.size;
+    read = async (s, e) => new Uint8Array(await blob.slice(s, e).arrayBuffer());
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { File } = require("expo-file-system");
+    const file = new File(o.uri);
+    size = file.size;
+    read = async (s, e) => {
+      const h = file.open();
+      try {
+        h.offset = s;
+        return h.readBytes(e - s);
+      } finally {
+        h.close();
+      }
+    };
+  }
+  const init = await send(`${base}/api/uploads`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify({ nc_id: o.ncId, size, mime: o.mime, client_id: o.clientId }),
+  });
+  if (!init.ok) return init;
+  const { upload_id, offset: start } = await init.json();
+  let offset: number = start;
+  let fails = 0;
+  while (offset < size) {
+    const end = Math.min(offset + CHUNK, size);
+    let r: Response;
+    try {
+      r = await send(`${base}/api/uploads/${upload_id}/chunk?offset=${offset}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream", ...auth },
+        body: (await read(offset, end)) as any,
+      });
+    } catch (e) {
+      if (++fails > 4) throw e; // hand back to the queue: it keeps the file and retries later
+      await new Promise((res) => setTimeout(res, 1000 * 2 ** fails));
+      continue;
+    }
+    if (r.status === 409) {
+      // server tells us how much it really has: resume from there
+      const m = /offset:(\d+)/.exec(JSON.stringify(await r.json().catch(() => ({}))));
+      if (!m) return r;
+      offset = Number(m[1]);
+      continue;
+    }
+    if (!r.ok) return r;
+    offset = (await r.json()).offset;
+    fails = 0;
+    o.onProgress?.(offset / size);
+  }
+  return send(`${base}/api/uploads/${upload_id}/complete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...auth },
+    body: JSON.stringify({ meta: o.meta }),
+  });
+}
