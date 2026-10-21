@@ -122,3 +122,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Admin OAuth PKCE (App key only, no secret): POST /api/admin/dropbox/connect, GET /api/admin/dropbox/callback, GET /api/admin/dropbox/status; refresh token Fernet-encrypted in db.secure_settings. Env: DROPBOX_APP_KEY, DROPBOX_REDIRECT_URI (production must add https://api.<domain>/api/admin/dropbox/callback in Dropbox console + env, then reconnect).
 - Chunked resumable uploads for videos (8 MB): /api/uploads, /uploads/{id}/chunk?offset=, /uploads/{id}/complete; verified 125 MB via external ingress.
 - If Dropbox not connected, new files fall back to Emergent storage.
+
+## Dropbox folder organisation (iteration 26, preview only)
+- Installer photo/video originals: /remedialflow/{Address, POSTCODE}/Media/{stamp}_{ref}_{NC}_{kind}_{fileid}.ext (append-only, incl. discarded/rejected)
+- Evidence ZIP export copies: /remedialflow/{Address, POSTCODE}/{Ref}/{Ref}_Evidence_Pack_{stamp}_{6hex}.zip (db.dropbox_exports), download unchanged
+- Derived files/report images/imports: /remedialflow/_system/...
+- Folder fixed on first use in projects.dropbox_folder; same-address projects share folder; access still per project/NC in Mongo
+- Pre-change files left in place and readable. Tested: iteration_26 (15/15 + iter25 regression)

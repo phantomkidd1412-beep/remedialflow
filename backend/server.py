@@ -22,7 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from core import (db, client, User, Project, NC, EvidenceFile, Submission, AIResult, Settings, get_settings,
                   now_iso, oid, file_url, signed_query, verify_signed, audit, clean)
 from auth import router as auth_router, current_user, require, ph, revoke_all, create_reset_token
-from storage import storage, evidence_path, APP_NAME
+from storage import storage, evidence_path, SYSTEM, property_folder_name, media_path, export_path
 from media import process_photo, video_frames, make_playback, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
@@ -387,7 +387,7 @@ async def _parse_pdf(import_id: str, data: bytes):
         for page, imgs in images.items():
             paths = []
             for k, b in enumerate(imgs):
-                paths.append(await storage.aput(f"{APP_NAME}/imports/{import_id}/page{page}-{k}.jpg", b, "image/jpeg"))
+                paths.append(await storage.aput(f"{SYSTEM}/imports/{import_id}/page{page}-{k}.jpg", b, "image/jpeg"))
             page_images[str(page)] = paths
         with tempfile.NamedTemporaryFile(suffix=".pdf") as tf:
             tf.write(data)
@@ -411,7 +411,7 @@ async def import_pdf(bg: BackgroundTasks, file: UploadFile = File(...), u: User 
     if len(data) > 40 * 1024 * 1024:
         raise HTTPException(413, "PDF too large (max 40 MB)")
     iid = ObjectId()
-    path = await storage.aput(f"{APP_NAME}/imports/{iid}/report.pdf", data, "application/pdf")
+    path = await storage.aput(f"{SYSTEM}/imports/{iid}/report.pdf", data, "application/pdf")
     await db.imports.insert_one({"_id": iid, "status": "processing", "path": path, "sha256": hashlib.sha256(data).hexdigest(),
                                  "filename": file.filename, "size": len(data), "uploaded_by": u.id, "created_at": now_iso()})
     await audit("import.uploaded", u.id, f"import:{iid}", {"filename": file.filename, "size": len(data)})
@@ -860,6 +860,31 @@ def _sniff(b: bytes) -> Optional[str]:
     return None
 
 
+async def property_folder(pid: str) -> str:
+    """Dropbox property folder name, fixed on first use and stored on the project, so later address
+    corrections never split or move a property's files. Mongo keeps every file's project/NC association."""
+    d = await db.projects.find_one({"_id": oid(pid)}, {"address": 1, "postcode": 1, "dropbox_folder": 1})
+    if d.get("dropbox_folder"):
+        return d["dropbox_folder"]
+    name = property_folder_name(d.get("address", ""), d.get("postcode", ""))
+    await db.projects.update_one({"_id": d["_id"], "dropbox_folder": None}, {"$set": {"dropbox_folder": name}})
+    return (await db.projects.find_one({"_id": d["_id"]}, {"dropbox_folder": 1}))["dropbox_folder"]
+
+
+async def save_export_copy(pid: str, ref: str, data: bytes, actor: Optional[str]):
+    """Keeps a dated copy of each evidence pack in the property's Project Reference folder (never overwritten)."""
+    if not storage.dropbox_ready:
+        return
+    try:
+        ts = now_iso()
+        path = await storage.aput(export_path(await property_folder(pid), ref, ts, secrets.token_hex(3)), data, "application/zip")
+        await db.dropbox_exports.insert_one({"project_id": pid, "ref": ref, "path": path, "size": len(data), "created_at": ts, "by": actor})
+        await audit("export.saved_to_dropbox", actor, f"project:{pid}", {"path": path, "size": len(data)})
+    except Exception as e:
+        log.exception("dropbox export copy failed %s", pid)
+        await audit("export.dropbox_copy_failed", actor, f"project:{pid}", {"error": str(e)[:200]})
+
+
 async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict, kind: str, source: str,
                        submission_id: Optional[str], bg: BackgroundTasks) -> EvidenceFile:
     data = await file.read()
@@ -881,7 +906,11 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
     mime = {"jpg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp", "mp4": "video/mp4", "mov": "video/quicktime"}[sniff]
     ext = sniff  # server-chosen extension: no user-controlled path parts
     sha = hashlib.sha256(data).hexdigest()
-    path = await storage.aput(evidence_path(p.id, nc.id, submission_id or "reference", str(fid), "original", ext), data, mime)
+    if kind in ("photo", "video"):  # originals: the property's Media folder (shared by projects at the same address)
+        dest = media_path(await property_folder(p.id), p.ref, nc.number, kind, str(fid), ext, now_iso())
+    else:  # TrustMark reference images are app-generated copies of the report
+        dest = evidence_path(p.id, nc.id, submission_id or "reference", str(fid), "original", ext)
+    path = await storage.aput(dest, data, mime)
     lat, lng, acc = meta.get("lat"), meta.get("lng"), meta.get("accuracy_m")
     loc_ok = source == "in_app_camera" and lat is not None and lng is not None and acc is not None and float(acc) <= 50
     f = EvidenceFile(id=str(fid), project_id=p.id, nc_id=nc.id, submission_id=submission_id, kind=kind, source=source,
@@ -1418,7 +1447,7 @@ async def project_manifest(pid: str) -> dict:
 
 
 @api.get("/export/project/{pid}.zip")
-async def export_project(pid: str, exp: int, sig: str):
+async def export_project(pid: str, exp: int, sig: str, bg: BackgroundTasks):
     """TrustMark Evidence Pack: NC PDFs (before/after) + Videos/. Excluded photos stay in storage."""
     from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
     if not verify_signed(f"export:{pid}", exp, sig):
@@ -1461,6 +1490,7 @@ async def export_project(pid: str, exp: int, sig: str):
                     entries.append((f"Videos/{name}{suffix}.mp4", data))
     data = await run_in_threadpool(build_zip, entries)
     await audit("export.evidence_pack", None, f"project:{pid}", {"files": len(entries)})
+    bg.add_task(save_export_copy, pid, p["ref"], data, None)
     return Response(data, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
 

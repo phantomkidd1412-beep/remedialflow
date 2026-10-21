@@ -140,5 +140,35 @@ def get_storage() -> StorageProvider:
 storage = get_storage()
 
 
+SYSTEM = f"{APP_NAME}/_system"  # app-generated files (thumbnails, playback copies, frames, report images)
+
+
 def evidence_path(project_id: str, nc_id: str, submission_id: str, file_id: str, variant: str, ext: str) -> str:
-    return f"{APP_NAME}/projects/{project_id}/ncs/{nc_id}/submissions/{submission_id}/{file_id}/{variant}.{ext}"
+    return f"{SYSTEM}/projects/{project_id}/ncs/{nc_id}/submissions/{submission_id}/{file_id}/{variant}.{ext}"
+
+
+def safe_name(text: str, limit: int = 120) -> str:
+    """Human-readable Dropbox folder/file name part: strips characters Dropbox/Windows reject."""
+    import re
+    s = re.sub(r'[\\/:*?"<>|\x00-\x1f]', " ", text or "")
+    s = re.sub(r"\s+", " ", s).strip().strip(".").strip()
+    return s[:limit].rstrip(" .") or "Unnamed"
+
+
+def property_folder_name(address: str, postcode: str) -> str:
+    addr, pc = (address or "").strip(), (postcode or "").strip().upper()
+    if pc and pc.replace(" ", "") not in addr.upper().replace(" ", ""):
+        addr = f"{addr}, {pc}" if addr else pc
+    return safe_name(addr)
+
+
+def media_path(folder: str, ref: str, nc_number: str, kind: str, file_id: str, ext: str, ts: str) -> str:
+    """Every installer original lands in the property's Media folder; file id keeps each name unique."""
+    stamp = ts[:19].replace("-", "").replace(":", "").replace("T", "-")
+    return f"{APP_NAME}/{folder}/Media/{stamp}_{safe_name(ref, 60)}_{safe_name(nc_number, 20)}_{kind}_{file_id}.{ext}"
+
+
+def export_path(folder: str, ref: str, ts: str, uid: str) -> str:
+    stamp = ts[:19].replace("-", "").replace(":", "").replace("T", "-")
+    r = safe_name(ref, 80)
+    return f"{APP_NAME}/{folder}/{r}/{r}_Evidence_Pack_{stamp}_{uid}.zip"
