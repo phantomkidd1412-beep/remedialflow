@@ -141,14 +141,14 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[by
     heading("NON-COMPLIANCE")
     text(nc.get("original_text") or nc.get("description", ""), 10)
     photos("ORIGINAL TRUSTMARK DEFECT PHOTOGRAPHS", originals)
+    # Recorded wording only (never generated), placed directly above the remediation photographs.
+    heading("REMEDIATION DETAILS - WORK CARRIED OUT")
+    text((nc.get("export_note") or "").strip() or "No details recorded.", 10)
     if remediation:
         photos("REMEDIATION PHOTOGRAPHS", remediation)
     else:
         heading("REMEDIATION PHOTOGRAPHS")
         text("Not yet supplied.", 10)
-    if (nc.get("export_note") or "").strip():
-        heading("REMEDIATION NOTE")
-        text(nc["export_note"].strip(), 10)
     out = doc.tobytes(deflate=True, garbage=3)
     doc.close()
     return out

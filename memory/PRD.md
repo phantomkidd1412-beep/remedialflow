@@ -129,3 +129,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Derived files/report images/imports: /remedialflow/_system/...
 - Folder fixed on first use in projects.dropbox_folder; same-address projects share folder; access still per project/NC in Mongo
 - Pre-change files left in place and readable. Tested: iteration_26 (15/15 + iter25 regression)
+
+## Auto evidence pack + PDF remediation details (iteration 27, preview)
+- recompute_project -> queue_auto_pack(pid, cycle=len(completion_history)) when all NCs approved; db.auto_packs _id "{pid}:{cycle}" (dedupe), statuses pending/running/saved/failed/skipped
+- Saved to /remedialflow/{folder}/{Ref}/{Ref}_Evidence_Pack_{stamp}_v{cycle}-{hex}.zip; GET/POST /api/projects/{pid}/evidence-packs[/retry] (staff); startup retry
+- NC PDF: "REMEDIATION DETAILS - WORK CARRIED OUT" (export_note or "No details recorded.") before remediation photos
+- Tested iteration_27 11/11 + iter26 15/15

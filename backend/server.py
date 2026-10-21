@@ -111,6 +111,8 @@ async def recompute_project(pid: str):
     elif not all_submitted and proj.get("ready_notified_at"):
         upd["ready_notified_at"] = None
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
+    if "completion_history" in upd:  # project just became fully resolved (every NC approved)
+        await queue_auto_pack(pid, len(upd["completion_history"]))
     if notify_ready:
         await notify_project_ready(pid)
     await settle_earnings(pid)
@@ -1449,12 +1451,82 @@ async def project_manifest(pid: str) -> dict:
 @api.get("/export/project/{pid}.zip")
 async def export_project(pid: str, exp: int, sig: str, bg: BackgroundTasks):
     """TrustMark Evidence Pack: NC PDFs (before/after) + Videos/. Excluded photos stay in storage."""
-    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
     if not verify_signed(f"export:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     p = await db.projects.find_one({"_id": oid(pid)})
     if not p or p.get("deleted"):
         raise HTTPException(404, "Project not found")
+    data, n = await build_evidence_pack(pid, p)
+    await audit("export.evidence_pack", None, f"project:{pid}", {"files": n})
+    bg.add_task(save_export_copy, pid, p["ref"], data, None)
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
+
+
+# ---------------- automatic evidence pack on full project resolution ----------------
+async def queue_auto_pack(pid: str, cycle: int):
+    """One pack per completion cycle: the deterministic _id makes simultaneous triggers a no-op."""
+    try:
+        await db.auto_packs.insert_one({"_id": f"{pid}:{cycle}", "project_id": pid, "cycle": cycle, "status": "pending",
+                                        "attempts": 0, "created_at": now_iso()})
+    except DuplicateKeyError:
+        return
+    asyncio.create_task(run_auto_pack(f"{pid}:{cycle}"))
+
+
+async def run_auto_pack(key: str):
+    from datetime import datetime, timedelta, timezone
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    job = await db.auto_packs.find_one_and_update(  # claim: only one worker runs a given pack
+        {"_id": key, "$or": [{"status": {"$in": ["pending", "failed"]}}, {"status": "running", "started_at": {"$lt": stale}}]},
+        {"$set": {"status": "running", "started_at": now_iso()}, "$inc": {"attempts": 1}}, return_document=True)
+    if not job:
+        return
+    pid = job["project_id"]
+    try:
+        p = await db.projects.find_one({"_id": oid(pid)})
+        if not p or p.get("deleted") or p.get("status") not in ("completed", "trustmark_resolved"):
+            await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "skipped", "error": "Project no longer fully resolved"}})
+            return
+        if not storage.dropbox_ready:
+            raise RuntimeError("Dropbox is not connected")
+        data, n = await build_evidence_pack(pid, p)
+        ts = now_iso()
+        path = await storage.aput(export_path(await property_folder(pid), p["ref"], ts, f"v{job['cycle']}-{secrets.token_hex(3)}"),
+                                  data, "application/zip")
+        if not path.startswith("dbx:"):
+            raise RuntimeError("Pack was not stored in Dropbox")
+        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "files": n,
+                                                              "saved_at": ts, "error": None}})
+        await audit("export.auto_pack_saved", None, f"project:{pid}", {"cycle": job["cycle"], "path": path, "size": len(data)})
+    except Exception as e:
+        log.exception("auto evidence pack failed %s", key)
+        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(e)[:200], "failed_at": now_iso()}})
+        await audit("export.auto_pack_failed", None, f"project:{pid}", {"cycle": job["cycle"], "error": str(e)[:200]})
+
+
+@api.get("/projects/{pid}/evidence-packs")
+async def list_auto_packs(pid: str, u: User = Depends(staff)):
+    return clean(await db.auto_packs.find({"project_id": pid}).sort("cycle", -1).to_list(100))
+
+
+@api.post("/projects/{pid}/evidence-packs/retry")
+async def retry_auto_packs(pid: str, u: User = Depends(staff)):
+    keys = [d["_id"] for d in await db.auto_packs.find({"project_id": pid, "status": {"$in": ["failed", "pending"]}}, {"_id": 1}).to_list(100)]
+    for k in keys:
+        await run_auto_pack(k)
+    await audit("export.auto_pack_retry", u.id, f"project:{pid}", {"count": len(keys)})
+    return clean(await db.auto_packs.find({"project_id": pid}).sort("cycle", -1).to_list(100))
+
+
+async def retry_pending_packs():
+    """Startup safety net: packs interrupted by a restart or a Dropbox outage get one more attempt."""
+    for d in await db.auto_packs.find({"status": {"$in": ["pending", "failed", "running"]}}, {"_id": 1}).to_list(500):
+        await run_auto_pack(d["_id"])
+
+
+async def build_evidence_pack(pid: str, p: dict):
+    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
     ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
     entries, vcount, prepared = [], {}, []
 
@@ -1488,11 +1560,7 @@ async def export_project(pid: str, exp: int, sig: str, bg: BackgroundTasks):
                     vcount[name] = vcount.get(name, 0) + 1
                     suffix = "" if vcount[name] == 1 else f"_{vcount[name]}"
                     entries.append((f"Videos/{name}{suffix}.mp4", data))
-    data = await run_in_threadpool(build_zip, entries)
-    await audit("export.evidence_pack", None, f"project:{pid}", {"files": len(entries)})
-    bg.add_task(save_export_copy, pid, p["ref"], data, None)
-    return Response(data, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
+    return await run_in_threadpool(build_zip, entries), len(entries)
 
 
 @api.get("/export/all.json")
@@ -1578,6 +1646,7 @@ async def startup():
     from dropbox_link import load_dropbox as _ld
     await _ld()
     asyncio.create_task(backfill_playback())
+    asyncio.create_task(retry_pending_packs())
 
 
 async def _seed_safe():
