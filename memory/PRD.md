@@ -135,3 +135,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Saved to /remedialflow/{folder}/{Ref}/{Ref}_Evidence_Pack_{stamp}_v{cycle}-{hex}.zip; GET/POST /api/projects/{pid}/evidence-packs[/retry] (staff); startup retry
 - NC PDF: "REMEDIATION DETAILS - WORK CARRIED OUT" (export_note or "No details recorded.") before remediation photos
 - Tested iteration_27 11/11 + iter26 15/15
+
+## Pre-production reset (done, user-approved)
+- All test data collections emptied; kept settings, secure_settings (Dropbox), migrations, decorations, system
+- Dropbox /remedialflow (623 test files) deleted with explicit approval; app/connection intact
+- DEMO_SEED=false; pre-reset Mongo dump at /tmp/rf_pre_reset_backup (preview server only)
+- Permanent Admin info@networksurveyltd.uk (syed) via bootstrap_admin.py with random unknown password; owner sets password via Forgot password email
