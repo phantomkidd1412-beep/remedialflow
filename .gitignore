@@ -123,3 +123,6 @@ tests/sample_big.mp4
 *.ipa
 .emergent/
 test_reports/
+
+# Real customer report used by a local test (contains property data)
+tests/p419977.pdf
