@@ -65,7 +65,7 @@ export default function NewProject() {
   };
 
   const setNc = (i: number, patch: Partial<NcDraft>) => setNcs((l) => l.map((n, j) => (j === i ? { ...n, ...patch } : n)));
-  const valid = ref && address && ncs.every((n) => n.description && n.required_work);
+  const valid = ref && address && ncs.every((n) => n.description);
 
   const save = async () => {
     setBusy(true);
@@ -141,7 +141,6 @@ export default function NewProject() {
               ) : null}
             </View>
             <Field placeholder="NC description" value={n.description} onChangeText={(v) => setNc(i, { description: v })} multiline testID={`nc-${i}-description`} />
-            <Field placeholder="Required remedial work" value={n.required_work} onChangeText={(v) => setNc(i, { required_work: v })} multiline testID={`nc-${i}-work`} />
             <Pressable onPress={() => setNc(i, { safety_critical: !n.safety_critical })} style={s.check} testID={`nc-${i}-safety`}>
               <View style={[s.box, n.safety_critical && { backgroundColor: colors.error }]} />
               <Text style={s.mono}>Safety-critical</Text>

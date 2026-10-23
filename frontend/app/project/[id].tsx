@@ -81,7 +81,6 @@ export default function StaffProject() {
   const [auditOpen, setAuditOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [desc, setDesc] = useState("");
-  const [work, setWork] = useState("");
   const [safety, setSafety] = useState(false);
   const toggle = useCallback((nid: string) => setOpen((o) => (o === nid ? null : nid)), []);
   const audit = useQuery({ queryKey: ["audit", id], queryFn: () => api<any[]>(`/projects/${id}/audit`), enabled: auditOpen });
@@ -174,8 +173,8 @@ export default function StaffProject() {
   };
   const addNc = async () => {
     try {
-      await api(`/projects/${id}/ncs`, { method: "POST", body: { description: desc, required_work: work, safety_critical: safety } });
-      setDesc(""); setWork(""); setSafety(false); setAddOpen(false);
+      await api(`/projects/${id}/ncs`, { method: "POST", body: { description: desc, safety_critical: safety } });
+      setDesc(""); setSafety(false); setAddOpen(false);
       qc.invalidateQueries({ queryKey: ["project", id] });
     } catch (e: any) {
       toast(e.message);
@@ -294,12 +293,11 @@ export default function StaffProject() {
 
       <Sheet visible={addOpen} onClose={() => setAddOpen(false)} title="Add NC" testID="add-nc-sheet">
         <Field label="Description" value={desc} onChangeText={setDesc} multiline testID="nc-description-input" />
-        <Field label="Required remedial work" value={work} onChangeText={setWork} multiline testID="nc-work-input" />
         <Pressable onPress={() => setSafety(!safety)} style={s.check} testID="nc-safety-toggle">
           <View style={[s.box, safety && { backgroundColor: colors.error }]} />
           <Text style={s.mono}>Safety-critical (always employee review)</Text>
         </Pressable>
-        <Btn title="Add NC" onPress={addNc} disabled={!desc || !work} testID="nc-add-submit" />
+        <Btn title="Add NC" onPress={addNc} disabled={!desc} testID="nc-add-submit" />
       </Sheet>
 
       <Sheet visible={auditOpen} onClose={() => setAuditOpen(false)} title="Audit trail" testID="audit-sheet">

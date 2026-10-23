@@ -437,7 +437,7 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
 
 class NCIn(BaseModel):
     description: str = Field(min_length=1)
-    required_work: str = Field(min_length=1)
+    required_work: str = ""  # optional: imported TrustMark guidance kept as data, not shown on the form
     safety_critical: bool = False
     original_text: str = ""  # verbatim TrustMark wording (defaults to description)
     pages: List[int] = []  # PDF pages whose photos become TrustMark references
