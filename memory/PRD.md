@@ -176,3 +176,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - AI Evidence Guidance (backend/guidance.py, app/admin/guidance/*): admin CRUD, approve/disable/soft-delete, versions/history, example photos (re-encoded, no EXIF) in Dropbox _system/guidance; only approved entries matching NC keywords (or measure if no keywords), max 3, sent to Gemini as context (+ up to 2 example images); ai.guidance records {id, version, title}
 - Review: optional internal reason + "Suggest as AI guidance" → DRAFT entry (source employee_feedback)
 - Tests: iteration_32 23/23; real Gemini: video-OFF photo-only low-risk NC auto-approved (auto_verify temporarily on, restored OFF); approved vent guidance + 1 photo → specific requests
+
+## Iteration 33 — App Store readiness fixes (agent-tested, preview)
+- /privacy public in-app privacy policy (app/privacy.tsx); linked from login + all account screens
+- Help & contact (mailto info@networksurveyltd.uk, src/support.ts) on login + ProfileView
+- Account deletion: POST /api/auth/delete-account (password), DELETE /api/admin/users/{uid}; anonymise_user in auth.py keeps _id (evidence/audit linked as "Deleted user"), revokes sessions, blocks sole-admin self-delete
+- app.json ios.config.usesNonExemptEncryption=false; react-native-webview removed

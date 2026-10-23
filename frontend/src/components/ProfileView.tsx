@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useAuth } from "@/src/auth";
-import { changePassword } from "@/src/api";
+import { api, changePassword } from "@/src/api";
+import { SUPPORT_EMAIL } from "@/src/support";
 import { useQueue } from "@/src/queue";
 import { usesNativeTabs } from "@/src/navigation";
 import { Btn, ErrorBlock, Feather, Field, IconName, Label, Sheet, useToast } from "@/src/ui";
@@ -28,6 +29,8 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
   const [nw, setNw] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [del, setDel] = useState(false);
+  const [delPw, setDelPw] = useState("");
   const unsynced = items.filter((i) => i.status !== "uploaded");
 
   const doLogout = async (force = false) => {
@@ -47,6 +50,21 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
       setCur("");
       setNw("");
       toast("Password updated");
+    } catch (e: any) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteAccount = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api("/auth/delete-account", { method: "POST", body: { password: delPw } });
+      setDel(false);
+      await signOut().catch(() => {});
+      router.replace("/login");
     } catch (e: any) {
       setErr(e.message);
     } finally {
@@ -94,6 +112,25 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
           <Text style={s.rowText}>Change password</Text>
           <Feather name="chevron-right" size={20} color={colors.onSurface} />
         </Pressable>
+        <Label>Help & legal</Label>
+        <Pressable style={s.row} onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=RemedialFlow%20support`).catch(() => toast(`Email us at ${SUPPORT_EMAIL}`))} testID="help-contact-button">
+          <Feather name="help-circle" size={20} color={colors.onSurface} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.rowText}>Help & contact</Text>
+            <Text style={s.hint}>{SUPPORT_EMAIL}</Text>
+          </View>
+          <Feather name="mail" size={20} color={colors.onSurface} />
+        </Pressable>
+        <Pressable style={s.row} onPress={() => router.push("/privacy")} testID="privacy-policy-button">
+          <Feather name="shield" size={20} color={colors.onSurface} />
+          <Text style={s.rowText}>Privacy policy</Text>
+          <Feather name="chevron-right" size={20} color={colors.onSurface} />
+        </Pressable>
+        <Pressable style={s.row} onPress={() => setDel(true)} testID="delete-account-button">
+          <Feather name="user-x" size={20} color={colors.onSurface} />
+          <Text style={s.rowText}>Delete account</Text>
+          <Feather name="chevron-right" size={20} color={colors.onSurface} />
+        </Pressable>
         <Btn title="Log out" icon="log-out" variant="outline" onPress={() => doLogout()} testID="logout-button" style={{ marginTop: space.lg }} />
       </ScrollView>
 
@@ -109,6 +146,17 @@ export function ProfileView({ menu = [] }: { menu?: MenuItem[] }) {
           <Field label="New password (min 8)" secureTextEntry value={nw} onChangeText={setNw} testID="new-password-input" />
           {err ? <ErrorBlock message={err} /> : null}
           <Btn title="Update" onPress={changePw} loading={busy} disabled={!cur || nw.length < 8} testID="change-password-submit" />
+        </KeyboardAwareScrollView>
+      </Sheet>
+
+      <Sheet visible={del} onClose={() => { setDel(false); setErr(""); }} title="Delete account" testID="delete-account-sheet">
+        <KeyboardAwareScrollView bottomOffset={24} contentContainerStyle={{ gap: space.md }} keyboardShouldPersistTaps="handled">
+          <Text style={s.mono}>This permanently removes your name, email address, password, sign-in sessions and notification devices, and closes your account. It cannot be undone.</Text>
+          <Text style={s.mono}>Work evidence you have submitted stays as part of the property&apos;s compliance record, labelled &quot;Deleted user&quot;.</Text>
+          {unsynced.length ? <Text style={[s.mono, { color: colors.onWarning }]}>{unsynced.length} item(s) on this phone have not uploaded yet and will not be sent after deletion.</Text> : null}
+          <Field label="Enter your password to confirm" secureTextEntry value={delPw} onChangeText={setDelPw} testID="delete-account-password" />
+          {err ? <ErrorBlock message={err} /> : null}
+          <Btn title="Delete my account permanently" icon="trash-2" variant="danger" onPress={deleteAccount} loading={busy} disabled={!delPw || busy} testID="delete-account-confirm" />
         </KeyboardAwareScrollView>
       </Sheet>
     </View>

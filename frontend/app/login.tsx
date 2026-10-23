@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Linking, Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { KeyboardAwareScrollView } from "react-native-keyboard-controller";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/src/auth";
 import { api } from "@/src/api";
+import { SUPPORT_EMAIL } from "@/src/support";
 import { Btn, ErrorBlock, Field, H1 } from "@/src/ui";
 import { radius, fonts, makeStyles, space } from "@/src/theme";
 
@@ -91,6 +92,10 @@ export default function Login() {
         </View>
 
         <Text style={s.foot}>Accounts are created by your administrator.</Text>
+        <View style={s.legal}>
+          <Pressable onPress={() => router.push("/privacy")} hitSlop={8} testID="login-privacy-link"><Text style={s.link}>Privacy policy</Text></Pressable>
+          <Pressable onPress={() => Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=RemedialFlow%20support`).catch(() => setInfo(`Email us at ${SUPPORT_EMAIL}`))} hitSlop={8} testID="login-help-link"><Text style={s.link}>Help & contact</Text></Pressable>
+        </View>
       </KeyboardAwareScrollView>
     </View>
   );
@@ -107,4 +112,5 @@ const useStyles = makeStyles((c) => ({
   links: { flexDirection: "row", justifyContent: "space-between" },
   link: { fontFamily: fonts.text, fontSize: 14, fontWeight: "600", color: c.onBrandSecondary },
   foot: { fontFamily: fonts.text, fontSize: 11, color: c.muted, marginTop: space.lg },
+  legal: { flexDirection: "row", gap: space.xl, marginTop: space.sm, minHeight: 44, alignItems: "center" },
 }));

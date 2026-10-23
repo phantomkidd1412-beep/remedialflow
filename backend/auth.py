@@ -253,6 +253,46 @@ async def reset(body: ResetIn, req: Request):
     return {"ok": True}
 
 
+DELETED_NAME = "Deleted user"
+
+
+async def anonymise_user(uid: str, actor_id: str, mode: str) -> None:
+    """Account deletion (Apple 5.1.1(v)): personal details removed and the account closed for good.
+    The user _id is kept so evidence, reviews and audit history stay linked ("Deleted user"). Dropbox untouched."""
+    old = await db.users.find_one_and_update(
+        {"_id": oid(uid), "deleted_account": {"$ne": True}},
+        {"$set": {"deleted_account": True, "active": False, "name": DELETED_NAME, "email": f"deleted-{uid}@deleted.invalid",
+                  "password_hash": "", "phone": None, "push_active": False, "default_rate": None, "deleted_at": now_iso()},
+         "$inc": {"token_version": 1}})  # live access tokens die immediately
+    if not old:
+        raise HTTPException(404, "User not found")
+    await revoke_all(uid)
+    await db.sessions.delete_many({"user_id": uid})
+    await db.reset_tokens.delete_many({"user_id": uid})
+    await db.login_attempts.delete_many({"email": old.get("email")})
+    await audit("user.account_deleted", actor_id, f"user:{uid}", {"mode": mode, "role": old.get("role")})  # no name/email
+
+
+async def last_admin(uid: str) -> bool:
+    return await db.users.count_documents({"role": "admin", "active": True, "_id": {"$ne": oid(uid)}}) == 0
+
+
+class DeleteAccountIn(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+
+@router.post("/delete-account")
+async def delete_account(body: DeleteAccountIn, req: Request, resp: Response, u: User = Depends(current_user)):
+    await rate_limit(req, "delete-account", u.id, 10, 900)
+    if not u.password_hash or not ph.verify(body.password, u.password_hash):
+        raise HTTPException(400, "Password is incorrect")
+    if u.role == "admin" and await last_admin(u.id):
+        raise HTTPException(400, "You are the only active admin. Make another user an admin before deleting your account.")
+    await anonymise_user(u.id, u.id, "self")
+    resp.delete_cookie(COOKIE, path="/api/auth")
+    return {"ok": True}
+
+
 @router.post("/change-password")
 async def change_password(body: ChangeIn, req: Request, resp: Response, u: User = Depends(current_user)):
     await rate_limit(req, "change-pw", u.id, 10, 900)

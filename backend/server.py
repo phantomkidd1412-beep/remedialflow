@@ -21,7 +21,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from core import (db, client, User, Project, NC, EvidenceFile, Submission, AIResult, Settings, get_settings,
                   now_iso, oid, file_url, signed_query, verify_signed, audit, clean)
-from auth import router as auth_router, current_user, require, ph, revoke_all, create_reset_token
+from auth import router as auth_router, current_user, require, ph, revoke_all, create_reset_token, anonymise_user
 from storage import storage, evidence_path, SYSTEM, property_folder_name, media_path, export_path
 from media import process_photo, video_frames, make_playback, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
@@ -301,7 +301,7 @@ class UserPatch(BaseModel):
 
 @api.get("/admin/users")
 async def list_users(u: User = Depends(admin)):
-    return [User.from_mongo(d).public() for d in await db.users.find().sort("created_at", -1).to_list(1000)]
+    return [User.from_mongo(d).public() for d in await db.users.find({"deleted_account": {"$ne": True}}).sort("created_at", -1).to_list(1000)]
 
 
 @api.post("/admin/users")
@@ -325,7 +325,7 @@ async def patch_user(uid: str, body: UserPatch, u: User = Depends(admin)):
     q = {"$set": upd}
     if body.active is False or body.role:
         q["$inc"] = {"token_version": 1}  # invalidates live access tokens immediately
-    r = await db.users.find_one_and_update({"_id": oid(uid)}, q, return_document=True)
+    r = await db.users.find_one_and_update({"_id": oid(uid), "deleted_account": {"$ne": True}}, q, return_document=True)
     if not r:
         raise HTTPException(404, "User not found")
     if body.active is False:
@@ -334,9 +334,17 @@ async def patch_user(uid: str, body: UserPatch, u: User = Depends(admin)):
     return User.from_mongo(r).public()
 
 
+@api.delete("/admin/users/{uid}")
+async def admin_delete_user(uid: str, u: User = Depends(admin)):
+    if uid == u.id:
+        raise HTTPException(400, "Use Account → Delete account to delete your own account")
+    await anonymise_user(uid, u.id, "admin")
+    return {"ok": True}
+
+
 @api.post("/admin/users/{uid}/reset")
 async def admin_reset(uid: str, u: User = Depends(admin)):
-    if not await db.users.find_one({"_id": oid(uid)}):
+    if not await db.users.find_one({"_id": oid(uid), "deleted_account": {"$ne": True}}):
         raise HTTPException(404, "User not found")
     code = await create_reset_token(uid, hours=72)
     await audit("user.reset_issued", u.id, f"user:{uid}")

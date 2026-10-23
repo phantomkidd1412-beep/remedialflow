@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
+      "config": { "usesNonExemptEncryption": false },
       "bundleIdentifier": "com.emergent.fieldevidenceapp.pnhb44",
       "infoPlist": {
         "NSCameraUsageDescription": "Capture timestamped remediation evidence photos and videos",

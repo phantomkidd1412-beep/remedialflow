@@ -26,6 +26,7 @@ export default function Users() {
   const [err, setErr] = useState("");
   const [code, setCode] = useState<{ title: string; code: string } | null>(null);
   const [sel, setSelRaw] = useState<U | null>(null);
+  const [armedDel, setArmedDel] = useState<string | null>(null);
   const [payType, setPayType] = useState("per_job");
   const [rateText, setRateText] = useState("");
   const setSel = (u: U | null) => {
@@ -65,6 +66,19 @@ export default function Users() {
       await api(`/admin/users/${u.id}`, { method: "PATCH", body: { active: !u.active } });
       toast(u.active ? `${u.name} deactivated · sessions revoked` : `${u.name} reactivated`);
       setSel(null);
+      refresh();
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
+
+  const removeUser = async (u: U) => {
+    if (armedDel !== u.id) return setArmedDel(u.id);
+    try {
+      await api(`/admin/users/${u.id}`, { method: "DELETE" });
+      toast(`${u.name}'s account deleted · personal details removed`);
+      setSel(null);
+      setArmedDel(null);
       refresh();
     } catch (e: any) {
       toast(e.message);
@@ -135,6 +149,12 @@ export default function Users() {
         <Btn title="Issue password reset code" icon="key" variant="outline" onPress={() => sel && reset(sel)} testID="user-reset-button" />
         {sel && sel.id !== me?.id ? (
           <Btn title={sel.active ? "Deactivate & revoke access" : "Reactivate"} icon={sel.active ? "slash" : "check"} variant={sel.active ? "danger" : "success"} onPress={() => toggleActive(sel)} testID="user-toggle-active-button" />
+        ) : null}
+        {sel && sel.id !== me?.id ? (
+          <>
+            <Btn title={armedDel === sel.id ? "Tap again to delete permanently" : "Delete account"} icon="user-x" variant={armedDel === sel.id ? "danger" : "outline"} onPress={() => removeUser(sel)} testID="user-delete-button" />
+            <Text style={s.mono}>Removes their name, email, password, sessions and devices. Their evidence and history stay, labelled &quot;Deleted user&quot;. Cannot be undone.</Text>
+          </>
         ) : null}
       </Sheet>
 
