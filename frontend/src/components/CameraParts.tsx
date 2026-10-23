@@ -5,7 +5,7 @@ import { Btn, Feather } from "@/src/ui";
 import { useGeo, stampTime } from "@/src/components/useGeo";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-export type P = { projectId: string; ncId: string; ref: string; postcode: string; nc: string };
+export type P = { projectId: string; ncId: string; ref: string; postcode: string; nc: string; stage?: string };
 
 export function PermissionGate({ kind, perm, request }: { kind: "camera" | "microphone"; perm: { granted: boolean; canAskAgain: boolean } | null; request: () => void }) {
   const s = useCameraStyles();

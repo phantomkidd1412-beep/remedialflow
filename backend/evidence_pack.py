@@ -78,7 +78,7 @@ def _pdf_image(b: bytes, max_px: int = 1600) -> Tuple[bytes, float]:
     return out.getvalue(), img.width / max(img.height, 1)
 
 
-def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[bytes]) -> bytes:
+def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tuple[str, List[bytes]]], videos: int = 0) -> bytes:
     """Clean client-facing NC sheet: address, references, original TrustMark wording, before/after photos and an
     optional staff note. Deliberately contains NO internal workflow data (approvals, reviewers, AI, statuses)."""
     import pymupdf
@@ -141,14 +141,18 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[by
     heading("NON-COMPLIANCE")
     text(nc.get("original_text") or nc.get("description", ""), 10)
     photos("ORIGINAL TRUSTMARK DEFECT PHOTOGRAPHS", originals)
-    # Recorded wording only (never generated), placed directly above the remediation photographs.
-    heading("REMEDIATION DETAILS - WORK CARRIED OUT")
+    # Short description of the works (AI-drafted from recorded information, staff-editable), before the photographs.
+    heading("REMEDIAL WORKS CARRIED OUT")
     text((nc.get("export_note") or "").strip() or "No details recorded.", 10)
-    if remediation:
-        photos("REMEDIATION PHOTOGRAPHS", remediation)
-    else:
+    groups = [(t, imgs) for t, imgs in remediation if imgs]
+    for t, imgs in groups:
+        photos(t, imgs)
+    if not groups:
         heading("REMEDIATION PHOTOGRAPHS")
         text("Not yet supplied.", 10)
+    if videos:
+        heading("VIDEO EVIDENCE")
+        text(f"{videos} video{'s' if videos > 1 else ''} for this NC included in the Videos folder of this evidence pack.", 10)
     out = doc.tobytes(deflate=True, garbage=3)
     doc.close()
     return out

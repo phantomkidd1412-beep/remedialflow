@@ -19,6 +19,7 @@ export type EvidenceMeta = {
   lng: number | null;
   accuracy_m: number | null;
   duration_s?: number | null;
+  stage?: "pre" | "mid" | "final";
 };
 
 export type QueueItem = {
@@ -33,6 +34,7 @@ export type QueueItem = {
   status: "pending" | "uploading" | "uploaded" | "failed";
   error?: string;
   createdAt: string;
+  note?: string; // submit only: installer's short description of the work
   expect?: string[]; // submit only: client ids of uploads that must reach the server before AI assessment starts
 };
 
@@ -91,7 +93,7 @@ type Ctx = {
   pct: Record<string, number>; // live upload fraction (0..1) per queue item id; in-memory only
   retryFailed: () => void;
   enqueueUpload: (projectId: string, ncId: string, uri: string, mime: string, meta: EvidenceMeta) => Promise<void>;
-  enqueueSubmit: (projectId: string, ncId: string) => Promise<void>;
+  enqueueSubmit: (projectId: string, ncId: string, note?: string) => Promise<void>;
   discard: (id: string) => Promise<void>;
   clearAll: () => Promise<void>;
   retry: (id: string) => void;
@@ -194,7 +196,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
               fetch(`${BASE}/api/ncs/${next.ncId}/submit`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-                body: JSON.stringify({ client_id: next.id, expect: next.expect ?? [] }),
+                body: JSON.stringify({ client_id: next.id, expect: next.expect ?? [], note: next.note }),
               }),
             ), SUBMIT_TIMEOUT);
           }
@@ -265,15 +267,15 @@ export function QueueProvider({ children }: PropsWithChildren) {
     process();
   };
 
-  const enqueueSubmit: Ctx["enqueueSubmit"] = async (projectId, ncId) => {
+  const enqueueSubmit: Ctx["enqueueSubmit"] = async (projectId, ncId, note) => {
     const expect = ref.current.filter((i) => i.type === "upload" && i.ncId === ncId && (!i.userId || i.userId === user?.id)).map((i) => i.id);
     const existing = ref.current.find((i) => i.type === "submit" && i.ncId === ncId);
     if (existing && existing.status !== "failed") return;
     if (existing) {
       // re-submitting after a failure: same idempotency key, refreshed list of expected uploads
-      await save(ref.current.map((i) => (i.id === existing.id ? { ...i, status: "pending", error: undefined, expect: [...new Set([...(i.expect ?? []), ...expect])] } : i)));
+      await save(ref.current.map((i) => (i.id === existing.id ? { ...i, status: "pending", error: undefined, note: note ?? i.note, expect: [...new Set([...(i.expect ?? []), ...expect])] } : i)));
     } else {
-      await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, userId: user?.id, status: "pending", expect, createdAt: new Date().toISOString() }]);
+      await save([...ref.current, { id: uid(), type: "submit", projectId, ncId, userId: user?.id, status: "pending", expect, note, createdAt: new Date().toISOString() }]);
     }
     process();
   };

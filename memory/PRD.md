@@ -146,3 +146,12 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - theme.ts retuned (soft tints + AA on* colours, BORDER=1, radius, system body font), ui primitives/dashboard/jobs/notifications restyled
 - Notifications: one per (user, project, category) key "{cat}:{pid}" unique; categories review/escalated/action/approved/assigned/project_ready/completed/rate_changed; refresh_notifications after each recompute
 - Temp QA accounts/projects and Dropbox test files removed after verification; only owner admin remains
+
+## Pre-launch Phase 1 + Phase 3 (iteration 29, preview)
+- Login demo chips removed; Download evidence (cached by fingerprint, no Dropbox) vs POST /api/projects/{pid}/export-dropbox (idempotent per fingerprint, concurrency claim)
+- Notifications: project_ready notification removed (audit only); single "Ready for review" per project; identical re-processing silent
+- Review screen: Previous/Next, NC x of y, auto-advance across properties, "All reviews completed"
+- New NCs requires_stages: pre/mid/final photos + video mandatory before submit; installer_note; AI statuses (ai_approved, ai_verified_signoff, more_evidence, employee_review, potential_noncompliance, unavailable), requests to installer, works_description -> export_note (source ai, staff edits win), best photo per stage
+- PDF: REMEDIAL WORKS CARRIED OUT + one photo per stage; staff pdf_include override (PUT /api/evidence/{fid}/pdf-include); VIDEO EVIDENCE line
+- Settings: auto_approve_risks, human_signoff_required
+- Pending: Phase 2 (compression/upload UX, native build), Phase 4 (batch upload, web, push)

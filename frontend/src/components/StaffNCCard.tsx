@@ -5,13 +5,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/src/auth";
 import { api, authed, BASE, readError } from "@/src/api";
 import { uploadForm } from "@/src/utils/upload";
-import { EvidenceFile, NCItem } from "@/src/projects";
+import { AI_STATUS, EvidenceFile, NCItem } from "@/src/projects";
 import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-/** Optional brief factual note printed on the exported NC PDF. Never filled automatically. */
+/** "Remedial works carried out" text on the NC PDF: AI drafts it from recorded information; staff edit before export. */
 function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -23,7 +23,7 @@ function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
     try {
       await api(`/ncs/${nc.id}/export-note`, { method: "PUT", body: { note: val } });
       qc.invalidateQueries({ queryKey: ["project", projectId] });
-      toast("PDF note saved");
+      toast("Works description saved");
     } catch (e: any) {
       toast(e.message);
     } finally {
@@ -32,9 +32,10 @@ function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
   };
   return (
     <>
-      <Label>PDF remediation note (optional)</Label>
-      <Field placeholder="Brief factual note for the exported PDF, only if needed" value={val} onChangeText={setVal} multiline maxLength={600} testID={`export-note-${nc.number}`} />
-      {dirty ? <Btn title="Save PDF note" icon="save" variant="outline" small onPress={save} loading={busy} testID={`export-note-save-${nc.number}`} /> : null}
+      <Label>Remedial works carried out (PDF){nc.export_note_source === "ai" ? " · AI draft, please check" : ""}</Label>
+      {nc.installer_note ? <Text style={{ fontSize: 13 }} testID={`installer-note-${nc.number}`}>Installer note: {nc.installer_note}</Text> : null}
+      <Field placeholder="20-40 words: what was corrected and how" value={val} onChangeText={setVal} multiline maxLength={600} testID={`export-note-${nc.number}`} />
+      {dirty ? <Btn title="Save description" icon="save" variant="outline" small onPress={save} loading={busy} testID={`export-note-save-${nc.number}`} /> : null}
     </>
   );
 }
@@ -68,6 +69,17 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     qc.invalidateQueries({ queryKey: ["review-groups"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["projects"] });
+  };
+
+  // PDF photo selection override: automatic -> always include -> never include -> automatic
+  const togglePdf = async (f: EvidenceFile) => {
+    const next = f.pdf_include == null ? true : f.pdf_include ? false : null;
+    try {
+      await api(`/evidence/${f.id}/pdf-include`, { method: "PUT", body: { include: next } });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    } catch (e: any) {
+      toast(e.message);
+    }
   };
 
   const act = async (action: string) => {
@@ -155,9 +167,10 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
 
           {nc.ai ? (
             <View style={s.ai} testID={`staff-nc-ai-${nc.number}`}>
-              <Text style={s.aiHead}>AI: {nc.ai.outcome.replace(/_/g, " ").toUpperCase()} · {Math.round(nc.ai.confidence * 100)}%</Text>
+              <Text style={s.aiHead} testID={`staff-nc-ai-status-${nc.number}`}>{AI_STATUS[nc.ai.status ?? ""] ?? `AI: ${nc.ai.outcome.replace(/_/g, " ")}`}{nc.ai.confidence != null && nc.ai.status !== "unavailable" ? ` · ${Math.round(nc.ai.confidence * 100)}%` : ""}</Text>
               <Text style={s.mono}>{nc.ai.feedback}</Text>
               {nc.ai.concerns.map((c, i) => <Text key={i} style={s.concern}>⚑ {c}</Text>)}
+              {nc.ai.requests?.length ? <Text style={s.mono}>Requested from installer: {nc.ai.requests.join(" ")}</Text> : null}
               <Text style={s.muted}>{nc.ai.model}</Text>
             </View>
           ) : null}
@@ -205,7 +218,10 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             {nc.photos.map((f, i) => (
               <View key={f.id} style={{ gap: 2 }}>
                 <Thumb f={f} size={88} onPress={() => setPv({ files: nc.photos, i })} testID={`staff-photo-${f.id}`} />
-                <Text style={s.tag}>{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
+                <Text style={s.tag}>{f.stage ? `${f.stage.toUpperCase()}·` : ""}{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
+                <Pressable onPress={() => togglePdf(f)} style={[s.restore, f.pdf_include === true && { backgroundColor: colors.success }, f.pdf_include === false && { backgroundColor: colors.error }]} testID={`pdf-include-${f.id}`}>
+                  <Text style={[s.tag, f.pdf_include === true && { color: colors.onSuccess }, f.pdf_include === false && { color: colors.onError }]}>{f.pdf_include === true ? "IN PDF" : f.pdf_include === false ? "NOT IN PDF" : "PDF: AUTO"}</Text>
+                </Pressable>
               </View>
             ))}
             <Pressable style={[s.add, { width: 88, height: 88 }]} onPress={() => upload("evidence")} testID={`add-evidence-${nc.number}`}>

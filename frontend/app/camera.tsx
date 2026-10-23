@@ -6,7 +6,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
 import { Image } from "expo-image";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { tzInfo, useQueue } from "@/src/queue";
+import { EvidenceMeta, tzInfo, useQueue } from "@/src/queue";
 import { Feather } from "@/src/ui";
 import { freshFix, useGeo } from "@/src/components/useGeo";
 import { P, PermissionGate, StampBlock, useCameraStyles } from "@/src/components/CameraParts";
@@ -61,7 +61,7 @@ export default function Camera() {
       const photo = await cam.current.takePictureAsync({ quality: 0.95, skipProcessing: false });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       await enqueueUpload(p.projectId, p.ncId, photo.uri, "image/jpeg", {
-        kind: "photo", source: "in_app_camera", captured_at: captured.toISOString(), ...tzInfo(),
+        kind: "photo", source: "in_app_camera", stage: p.stage as EvidenceMeta["stage"], captured_at: captured.toISOString(), ...tzInfo(),
         lat: pos?.coords.latitude ?? null, lng: pos?.coords.longitude ?? null, accuracy_m: pos?.coords.accuracy ?? null,
       });
       setShots((x) => [photo.uri, ...x]);

@@ -3,9 +3,9 @@ import { Image } from "expo-image";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
+import { NCItem, ProjectRow, DONE, EvidenceFile, STAGES, useMediaConfig } from "@/src/projects";
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
-import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
+import { Badge, Btn, Feather, Field, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
@@ -46,7 +46,17 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const badge = ev
     ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
     : { status: nc.status, label: nc.status === "assessing" ? "Awaiting Review" : undefined };
-  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number };
+  // Mandatory evidence for new NCs: pre, mid and final photos plus a video for this NC (queued items count too)
+  const allPhotos = [...nc.photos.filter((p) => p.status !== "superseded"), ...uploads.filter((q) => q.meta?.kind === "photo").map((q) => ({ stage: q.meta?.stage }))];
+  const has = {
+    pre: allPhotos.some((p) => p.stage === "pre"), mid: allPhotos.some((p) => p.stage === "mid"), final: allPhotos.some((p) => p.stage === "final"),
+    video: (nc.videos ?? []).some((v) => v.status !== "superseded") || uploads.some((q) => q.meta?.kind === "video"),
+  };
+  const firstMissing = (["pre", "mid", "final"] as const).find((k) => !has[k]) ?? "final";
+  const [stage, setStage] = useState<"pre" | "mid" | "final">(firstMissing);
+  const [note, setNote] = useState(nc.installer_note ?? "");
+  const missing = nc.requires_stages ? [...STAGES.filter(([k]) => !has[k]).map(([, l]) => `${l} photo`), ...(has.video ? [] : ["video"])] : [];
+  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, stage };
 
   const pickGallery = async () => {
     const r = await ImagePicker.launchImageLibraryAsync({
@@ -68,7 +78,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     for (const a of photos) {
       await enqueueUpload(project.id, nc.id, a.uri, a.mimeType || "image/jpeg", {
         // captured_at only from the file's own EXIF; GPS is never claimed for gallery media
-        kind: "photo", source: "gallery", captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
+        kind: "photo", source: "gallery", stage, captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       });
     }
     for (const video of okVideos) {
@@ -83,7 +93,8 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   };
 
   const submit = async () => {
-    await enqueueSubmit(project.id, nc.id);
+    if (missing.length) return toast(`Before submitting, add: ${missing.join(", ")}`);
+    await enqueueSubmit(project.id, nc.id, note.trim() || undefined);
     toast(uploads.some((q) => q.status !== "uploaded") ? "Submit queued · sends after uploads finish" : "Submitting…");
   };
 
@@ -131,6 +142,24 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           <Label>Required remedial work</Label>
           <Text style={s.work}>{nc.required_work}</Text>
 
+          {!done ? (
+            <>
+              <Label>Photo stage</Label>
+              <View style={s.actions} testID={`stage-picker-${nc.number}`}>
+                {STAGES.map(([k, l]) => (
+                  <Pressable key={k} onPress={() => setStage(k)} style={[s.stage, stage === k && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID={`stage-${k}-${nc.number}`}>
+                    <Feather name={has[k] ? "check-circle" : "circle"} size={14} color={has[k] ? colors.onSuccess : colors.muted} />
+                    <Text style={[s.stageText, stage === k && { color: colors.onBrandSecondary }]}>{l}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              {nc.requires_stages ? (
+                <Text style={[s.muted, missing.length ? { color: colors.onWarning } : { color: colors.onSuccess }]} testID={`mandatory-${nc.number}`}>
+                  {missing.length ? `Still needed: ${missing.join(", ")}` : "All required evidence added (pre, mid, final photos and video)"}
+                </Text>
+              ) : null}
+            </>
+          ) : null}
           {!done ? (
             <View style={s.actions}>
               <Btn title="Take photos" icon="camera" onPress={() => router.push({ pathname: "/camera", params })} style={{ flex: 1.4 }} testID={`take-photos-${nc.number}`} disabled={nc.status === "assessing"} />
@@ -190,6 +219,9 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             </>
           ) : null}
 
+          {!done && nc.status !== "assessing" ? (
+            <Field label="What work did you do? (short, optional)" placeholder="e.g. Fitted insulation behind the bracket, then re-rendered" value={note} onChangeText={setNote} multiline maxLength={500} testID={`installer-note-${nc.number}`} />
+          ) : null}
           {!done ? (
             <View style={s.actions}>
               <Btn title="Gallery" icon="image" variant="outline" small onPress={pickGallery} testID={`gallery-upload-${nc.number}`} disabled={nc.status === "assessing"} />
@@ -224,6 +256,8 @@ const useStyles = makeStyles((c) => ({
   work: { fontSize: 15, lineHeight: 21, color: c.onSurface, marginBottom: space.sm },
   muted: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.sm },
+  stage: { flex: 1, minHeight: 44, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderRadius: radius.pill, borderColor: c.border },
+  stageText: { fontFamily: fonts.text, fontSize: 14, fontWeight: "600", color: c.onSurface },
   local: { width: 72, height: 72, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },
   localTag: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: c.warning, alignItems: "center" },
   localText: { fontFamily: fonts.text, fontSize: 9, color: c.onWarning },

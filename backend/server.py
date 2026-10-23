@@ -126,8 +126,7 @@ async def notify_project_ready(pid: str):
     p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "deleted": 1})
     if not p or p.get("deleted"):
         return
-    async for st in db.users.find({"role": {"$in": ["employee", "admin"]}, "active": True}, {"_id": 1}):
-        await notify(str(st["_id"]), "project_ready", pid)
+    # Audit only: reviewers already get the project's single "Ready for review" notification (category "review").
     await audit("project.ready_for_review", None, f"project:{pid}", {"ref": p["ref"]})
 
 
@@ -143,7 +142,7 @@ async def live_project(pid: str) -> dict:
 # One entry per (user, project, category). Further NCs of the same category update that entry (never a new row);
 # its summary is recomputed from live NC data whenever the project changes, so counts stay accurate.
 LIVE_CATS = {"review", "escalated", "action", "approved", "assigned"}  # summaries derived from current NC states
-CAT_TITLE = {"review": "Awaiting review", "escalated": "Escalated to Admin", "action": "Work rejected - action needed",
+CAT_TITLE = {"review": "Ready for review", "escalated": "Escalated to Admin", "action": "Work rejected - action needed",
              "approved": "Work approved", "assigned": "New work assigned", "project_ready": "Ready for review",
              "completed": "Project completed", "rate_changed": "Rate updated"}
 
@@ -157,7 +156,7 @@ async def _summary(cat: str, pid: str, uid: str, ncs: list) -> tuple:
     mine = [n for n in ncs if n.get("assigned_installer_id") == uid]
     if cat == "review":
         k = sum(1 for n in ncs if n["status"] == "employee_review")
-        return k > 0, f"{_n(k)} awaiting review"
+        return k > 0, f"{_n(k)} ready for review"
     if cat == "escalated":
         k = sum(1 for n in ncs if n["status"] == "admin_review")
         return k > 0, f"{_n(k)} awaiting Admin review"
@@ -196,6 +195,9 @@ async def notify(user_id: Optional[str], cat: str, project_id: str, extra: str =
     key = f"{cat}:{project_id}"
     addr = f"{p['address']}{', ' + p['postcode'] if p.get('postcode') else ''}"
     body = summary + (f"\n{extra}" if extra else "")
+    old = await db.notifications.find_one({"user_id": user_id, "key": key}, {"body": 1, "hidden": 1})
+    if old and old.get("body") == body and not old.get("hidden"):
+        return  # same event re-processed (refresh/save/re-assessment): no duplicate alert, in-app or push
     prev = await db.notifications.find_one_and_update(
         {"user_id": user_id, "key": key},
         {"$set": {"kind": cat, "title": CAT_TITLE.get(cat, cat), "address": addr, "ref": p["ref"], "summary": summary, "body": body,
@@ -535,7 +537,7 @@ class ProjectPatch(BaseModel):
 async def add_nc(pid: str, body: NCIn, idx: int, installer_id: Optional[str] = None) -> str:
     d = body.model_dump(exclude={"pages"})
     d["original_text"] = d.get("original_text") or d["description"]
-    nc = NC(project_id=pid, number=f"NC-{idx:02d}", assigned_installer_id=installer_id, **d)
+    nc = NC(project_id=pid, number=f"NC-{idx:02d}", assigned_installer_id=installer_id, requires_stages=True, **d)
     r = await db.ncs.insert_one(nc.to_mongo())
     return str(r.inserted_id)
 
@@ -942,20 +944,6 @@ async def property_folder(pid: str) -> str:
     return (await db.projects.find_one({"_id": d["_id"]}, {"dropbox_folder": 1}))["dropbox_folder"]
 
 
-async def save_export_copy(pid: str, ref: str, data: bytes, actor: Optional[str]):
-    """Keeps a dated copy of each evidence pack in the property's Project Reference folder (never overwritten)."""
-    if not storage.dropbox_ready:
-        return
-    try:
-        ts = now_iso()
-        path = await storage.aput(export_path(await property_folder(pid), ref, ts, secrets.token_hex(3)), data, "application/zip")
-        await db.dropbox_exports.insert_one({"project_id": pid, "ref": ref, "path": path, "size": len(data), "created_at": ts, "by": actor})
-        await audit("export.saved_to_dropbox", actor, f"project:{pid}", {"path": path, "size": len(data)})
-    except Exception as e:
-        log.exception("dropbox export copy failed %s", pid)
-        await audit("export.dropbox_copy_failed", actor, f"project:{pid}", {"error": str(e)[:200]})
-
-
 async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict, kind: str, source: str,
                        submission_id: Optional[str], bg: BackgroundTasks) -> EvidenceFile:
     data = await file.read()
@@ -1028,7 +1016,24 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
     f = await store_upload(nc, p, u, file, m, kind, source, sub_id, bg)
     if kind == "video":  # multiple videos per NC: a new video never replaces or hides an earlier one
         await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"active_video_id": f.id}})
+    elif m.get("stage") in STAGES:
+        await db.files.update_one({"_id": oid(f.id)}, {"$set": {"stage": m["stage"]}})
+        f.stage = m["stage"]
     return file_public(f)
+
+
+STAGES = ("pre", "mid", "final")
+STAGE_NAME = {"pre": "pre-remediation", "mid": "mid-remediation", "final": "final-remediation"}
+
+
+async def missing_mandatory(nc_id: str) -> List[str]:
+    """Mandatory evidence for new NCs: at least one pre, mid and final photo and one video (all uploaded)."""
+    have = await db.files.find({"nc_id": nc_id, "status": {"$in": ["draft", "submitted"]}, "kind": {"$in": ["photo", "video"]}},
+                               {"kind": 1, "stage": 1}).to_list(5000)
+    miss = [f"a {STAGE_NAME[st]} photo" for st in STAGES if not any(f["kind"] == "photo" and f.get("stage") == st for f in have)]
+    if not any(f["kind"] == "video" for f in have):
+        miss.append("a video of this NC's remediation")
+    return miss
 
 
 class ExportNoteIn(BaseModel):
@@ -1039,7 +1044,7 @@ class ExportNoteIn(BaseModel):
 async def set_export_note(nc_id: str, body: ExportNoteIn, u: User = Depends(staff)):
     await get_nc(nc_id, u)
     note = body.note.strip()
-    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"export_note": note, "updated_at": now_iso()}})
+    await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"export_note": note, "export_note_source": "staff", "updated_at": now_iso()}})
     await audit("nc.export_note", u.id, f"nc:{nc_id}", {"length": len(note)})
     return {"ok": True, "export_note": note}
 
@@ -1087,7 +1092,11 @@ async def run_assessment(nc_id: str, sub_id: str):
             return (await storage.aget(path))[0]
 
         refs = [await img(t) for t in trust[:3]]
-        evid = [await img(f) for f in photos[:6]]
+        staged = [EvidenceFile.from_mongo(d) for d in await db.files.find(
+            {"nc_id": nc_id, "kind": "photo", "status": {"$in": ["draft", "submitted"]}, "stage": {"$in": list(STAGES)}}).sort("server_received_at", -1).to_list(500)]
+        chosen = [f for st in STAGES for f in [x for x in staged if x.stage == st][:3]] if staged else photos[:6]
+        labels = [STAGE_NAME.get(f.stage, "remediation").upper() + " photo" for f in chosen]
+        evid = [await img(f) for f in chosen]
         video = None
         if sub.video_id:
             video = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(sub.video_id)}))
@@ -1097,19 +1106,23 @@ async def run_assessment(nc_id: str, sub_id: str):
                 p = await storage.aput(evidence_path(nc.project_id, nc_id, sub_id, video.id, f"frame{i}", "jpg"), fr, "image/jpeg")
                 await db.files.update_one({"_id": ObjectId(video.id)}, {"$set": {f"paths.frame{i}": p}})
             evid += frames
+            labels += ["VIDEO FRAME"] * len(frames)
         reasons: List[str] = []
         try:
             res = await get_assessor().assess(AssessmentInput(nc.number, nc.description, nc.required_work,
-                                                             nc.safety_critical, refs, evid, nc.original_text))
+                                                             nc.safety_critical, refs, evid, nc.original_text, labels,
+                                                             nc.installer_note, nc.requires_stages))
         except Exception as e:
             log.exception("AI failed")
             res = None
             reasons.append(f"AI unavailable: {str(e)[:80]}")
-        if res is None:
-            ai = AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.", concerns=reasons)
+        if res is None:  # AI down / rate-limited: never a fake 0% or a "failed" verdict
+            ai = AIResult(outcome="manual_review_required", status="unavailable", feedback="AI assessment unavailable. Sent to an employee for review.", concerns=reasons)
         else:
+            best = {st: chosen[i].id for st, i in res.best.items() if st in STAGES and isinstance(i, int) and 0 <= i < len(chosen) and chosen[i].stage == st}
             ai = AIResult(outcome=res.outcome, confidence=res.confidence, feedback=res.feedback, concerns=res.concerns,
-                          model=res.model, risk=res.risk)
+                          model=res.model, risk=res.risk, method_demonstrated=res.method_demonstrated,
+                          requests=res.requests, works_description=res.works_description, best=best)
         media = photos + ([video] if video else [])
         # Flags are recorded but do not escalate on their own.
         flags = []
@@ -1120,17 +1133,25 @@ async def run_assessment(nc_id: str, sub_id: str):
         if not refs:
             flags.append("No TrustMark reference photo")
         status = {"ai_verified": "approved", "more_evidence_required": "more_evidence"}.get(ai.outcome, "employee_review")
+        if res is not None:
+            ai.status = {"more_evidence_required": "more_evidence", "potential_noncompliance": "potential_noncompliance"}.get(ai.outcome, "employee_review")
         safety = nc.safety_critical or ai.risk == "safety"
         if safety:
             # Safety-critical work always needs a competent human decision (incl. AI "more evidence" opinions).
             status = "employee_review"
+            if ai.status == "more_evidence":
+                ai.status = "employee_review"
             reasons.append("Safety-critical: competent human review required")
         if status == "approved":
             if not (s.auto_verify and s.auto_approve_low_risk):
-                reasons.append("Automatic internal approval disabled")
-            if ai.risk != "low":
-                reasons.append("Not a low-risk category")
-            if ai.confidence < s.confidence_threshold:
+                reasons.append("Automatic approval disabled")
+            if ai.risk not in s.auto_approve_risks:
+                reasons.append(f"'{ai.risk}' NCs are not eligible for automatic approval")
+            if ai.method_demonstrated is False:
+                reasons.append("Corrective method not demonstrated")
+            if nc.requires_stages and await missing_mandatory(nc_id):
+                reasons.append("Mandatory evidence incomplete")
+            if (ai.confidence or 0) < s.confidence_threshold:
                 reasons.append(f"Confidence {ai.confidence:.2f} below {s.confidence_threshold:.2f}")
             if s.location_policy == "reject" and any(not f.location_verified for f in photos):
                 reasons.append("Location not verified")
@@ -1138,21 +1159,35 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append("Gallery uploads need review")
             if reasons:
                 status = "employee_review"
+            elif s.human_signoff_required:
+                status, ai.status = "employee_review", "ai_verified_signoff"
+                reasons.append("AI technically verified - human sign-off required by policy")
+            else:
+                ai.status = "ai_approved"
+        if status == "more_evidence" and ai.requests:
+            ai.feedback = " ".join(ai.requests)[:600]
         ai.concerns = ai.concerns + reasons + flags
         extra = {"approved_by": "ai", "approved_at": now_iso()} if status == "approved" else {}
+        cur = await db.ncs.find_one({"_id": ObjectId(nc_id)}, {"export_note_source": 1})
+        if ai.works_description and cur.get("export_note_source") != "staff":  # AI draft; a staff edit is never overwritten
+            extra.update({"export_note": ai.works_description, "export_note_source": "ai"})
         await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso(), **extra}})
         if status == "employee_review":
             await notify_reviewers(nc_id)
+        elif status == "more_evidence":  # precise request goes straight to the installer, not to an employee
+            await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "action", "more evidence needed: " + ai.feedback[:160])
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
         await recompute_project(nc.project_id)
     except Exception:
         log.exception("assessment crashed")
         await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": "employee_review",
-                                "ai": AIResult(outcome="manual_review_required", feedback="Sent to an employee for review.").model_dump()}})
+                                "ai": AIResult(outcome="manual_review_required", status="unavailable", feedback="AI assessment unavailable. Sent to an employee for review.").model_dump()}})
+        await notify_reviewers(nc_id)
 
 
 class SubmitIn(BaseModel):
     client_id: Optional[str] = Field(default=None, max_length=64)  # device idempotency key
+    note: Optional[str] = Field(default=None, max_length=500)  # installer's short description of the work
     expect: List[str] = Field(default=[], max_length=200)  # device client ids that must have arrived first
 
 
@@ -1179,6 +1214,13 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
     video_ids = [str(d["_id"]) for d in drafts if d["kind"] == "video"]
     if not photo_ids and not video_ids and not nc.active_video_id:
         raise HTTPException(400, "Add at least one photo or video")
+    raw_nc = await db.ncs.find_one({"_id": oid(nc_id)}, {"requires_stages": 1})
+    if raw_nc.get("requires_stages"):
+        miss = await missing_mandatory(nc_id)
+        if miss:
+            raise HTTPException(400, "Before submitting, please add " + ", ".join(miss) + ".")
+    if body.note is not None and body.note.strip():
+        await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"installer_note": body.note.strip()}})
     sid = nc.draft_submission_id
     # atomic claim: two concurrent submits for the same draft cannot both start an assessment
     claimed = await db.ncs.update_one({"_id": oid(nc_id), "draft_submission_id": sid},
@@ -1518,18 +1560,88 @@ async def project_manifest(pid: str) -> dict:
 
 
 @api.get("/export/project/{pid}.zip")
-async def export_project(pid: str, exp: int, sig: str, bg: BackgroundTasks):
+async def export_project(pid: str, exp: int, sig: str):
     """TrustMark Evidence Pack: NC PDFs (before/after) + Videos/. Excluded photos stay in storage."""
     if not verify_signed(f"export:{pid}", exp, sig):
         raise HTTPException(403, "Link expired or invalid")
     p = await db.projects.find_one({"_id": oid(pid)})
     if not p or p.get("deleted"):
         raise HTTPException(404, "Project not found")
-    data, n = await build_evidence_pack(pid, p)
-    await audit("export.evidence_pack", None, f"project:{pid}", {"files": n})
-    bg.add_task(save_export_copy, pid, p["ref"], data, None)
+    data, _ = await cached_pack(pid, p)
+    await audit("export.evidence_pack_downloaded", None, f"project:{pid}", {"size": len(data)})
     return Response(data, media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
+
+
+async def pack_fingerprint(pid: str, p: dict) -> str:
+    """Changes whenever anything that appears in the evidence pack changes (NC text/status/notes, files, address)."""
+    ncs = await db.ncs.find({"project_id": pid}, {"number": 1, "status": 1, "original_text": 1, "export_note": 1, "title": 1}).sort("number", 1).to_list(500)
+    files = await db.files.find({"project_id": pid}, {"status": 1, "kind": 1, "excluded": 1, "nc_id": 1, "stage": 1, "pdf_include": 1}).sort("_id", 1).to_list(20000)
+    raw = json.dumps([p.get("ref"), p.get("address"), p.get("postcode"),
+                      [[str(n["_id"]), n.get("number"), n.get("status"), n.get("original_text"), n.get("export_note"), n.get("title")] for n in ncs],
+                      [[str(f["_id"]), f.get("nc_id"), f.get("status"), f.get("kind"), bool(f.get("excluded")), f.get("stage"), f.get("pdf_include")] for f in files]], default=str)
+    return hashlib.sha256(raw.encode()).hexdigest()[:20]
+
+
+PACK_DIR = Path(os.environ.get("MEDIA_CACHE_DIR", "/tmp/rf_media")) / "packs"
+
+
+async def cached_pack(pid: str, p: dict) -> tuple:
+    """(zip bytes, fingerprint): reuses the last generated pack while its content is unchanged."""
+    fp = await pack_fingerprint(pid, p)
+    path = PACK_DIR / f"{pid}-{fp}.zip"
+    if path.exists():
+        return path.read_bytes(), fp
+    data, _ = await build_evidence_pack(pid, p)
+    PACK_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+    return data, fp
+
+
+def _dbx_location(path: str) -> Optional[str]:
+    try:
+        return storage.client().files_get_metadata(path[len("dbx:id:"):] if path.startswith("dbx:id:") else path).path_display
+    except Exception:
+        return None
+
+
+@api.post("/projects/{pid}/export-dropbox")
+async def export_to_dropbox(pid: str, u: User = Depends(staff)):
+    """Saves the current evidence pack to the project's Dropbox folder once per unique content.
+    Repeated clicks/retries reuse the existing export; changed evidence creates a new dated version (never overwrites)."""
+    p = clean(await live_project(pid))
+    if not storage.dropbox_ready:
+        raise HTTPException(409, "Dropbox is not connected. Ask an Admin to connect it in Settings.")
+    fp = await pack_fingerprint(pid, p)
+    done = await db.dropbox_exports.find_one({"project_id": pid, "fingerprint": fp, "status": "saved"}) or \
+        await db.auto_packs.find_one({"project_id": pid, "fingerprint": fp, "status": "saved"})
+    if done:
+        loc = await run_in_threadpool(_dbx_location, done["path"])
+        return {"status": "already_exported", "location": loc, "saved_at": done.get("created_at") or done.get("saved_at")}
+    key = f"{pid}:{fp}"
+    try:  # claim: concurrent requests for the same unchanged pack collapse into one upload
+        await db.dropbox_exports.insert_one({"_id": key, "project_id": pid, "ref": p["ref"], "fingerprint": fp, "status": "running",
+                                            "by": u.id, "created_at": now_iso()})
+    except DuplicateKeyError:
+        cur = await db.dropbox_exports.find_one({"_id": key})
+        if cur.get("status") == "running":
+            raise HTTPException(409, "This export is already in progress.")
+        await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "running", "by": u.id, "created_at": now_iso()}})
+    try:
+        data, _ = await cached_pack(pid, p)
+        ts = now_iso()
+        path = await storage.aput(export_path(await property_folder(pid), p["ref"], ts, fp[:6]), data, "application/zip")
+        if not path.startswith("dbx:"):
+            raise RuntimeError("Pack was not stored in Dropbox")
+    except Exception as e:
+        await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(e)[:200]}})
+        await audit("export.dropbox_failed", u.id, f"project:{pid}", {"error": str(e)[:200]})
+        raise HTTPException(502, "Dropbox export failed. Please try again.")
+    await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "created_at": ts}})
+    await audit("export.saved_to_dropbox", u.id, f"project:{pid}", {"path": path, "size": len(data), "fingerprint": fp})
+    return {"status": "exported", "location": await run_in_threadpool(_dbx_location, path), "saved_at": ts}
 
 
 # ---------------- automatic evidence pack on full project resolution ----------------
@@ -1559,13 +1671,14 @@ async def run_auto_pack(key: str):
             return
         if not storage.dropbox_ready:
             raise RuntimeError("Dropbox is not connected")
-        data, n = await build_evidence_pack(pid, p)
+        data, fp = await cached_pack(pid, p)
+        n = None
         ts = now_iso()
         path = await storage.aput(export_path(await property_folder(pid), p["ref"], ts, f"v{job['cycle']}-{secrets.token_hex(3)}"),
                                   data, "application/zip")
         if not path.startswith("dbx:"):
             raise RuntimeError("Pack was not stored in Dropbox")
-        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "files": n,
+        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "fingerprint": fp,
                                                               "saved_at": ts, "error": None}})
         await audit("export.auto_pack_saved", None, f"project:{pid}", {"cycle": job["cycle"], "path": path, "size": len(data)})
     except Exception as e:
@@ -1594,6 +1707,52 @@ async def retry_pending_packs():
         await run_auto_pack(d["_id"])
 
 
+async def pdf_photo_groups(n: dict, files: list, get) -> list:
+    """[(heading, [jpeg])]: staff overrides win; otherwise one best photo per Pre/Mid/Final stage (AI pick, else the
+    sharpest non-duplicate); historic un-staged NCs keep up to 6 distinct photos. Originals are never removed."""
+    from evidence_pack import select_photos, readable
+    photos = [f for f in files if f["kind"] == "photo" and f["status"] != "superseded"]
+
+    async def load(fs):
+        return await run_in_threadpool(readable, [b for f in fs for b in [await get(f, "stamped", "display", "original")] if b])
+    picked = [f for f in photos if f.get("pdf_include") is True]
+    pool = [f for f in photos if f.get("pdf_include") is not False]
+    staged = [f for f in pool if f.get("stage") in STAGES]
+    if not picked and not staged:
+        return [("REMEDIATION PHOTOGRAPHS", await run_in_threadpool(select_photos, await load(pool), 6))]
+    out = []
+    best = (n.get("ai") or {}).get("best") or {}
+    for st in STAGES:
+        if picked:
+            sel = [f for f in picked if f.get("stage") == st]
+        else:
+            cand = [f for f in staged if f.get("stage") == st]
+            sel = [f for f in cand if str(f["_id"]) == best.get(st)] or cand
+        imgs = await load(sel)
+        if imgs:
+            out.append((STAGE_NAME[st].upper() + " PHOTOGRAPH" + ("S" if picked and len(imgs) > 1 else ""),
+                        imgs if picked else await run_in_threadpool(select_photos, imgs, 1)))
+    extra = [f for f in picked if f.get("stage") not in STAGES]
+    if extra:
+        out.append(("ADDITIONAL SUPPORTING EVIDENCE", await load(extra)))
+    return out
+
+
+class PdfIncludeIn(BaseModel):
+    include: Optional[bool] = None  # True = always in PDF, False = never, None = automatic
+
+
+@api.put("/evidence/{fid}/pdf-include")
+async def set_pdf_include(fid: str, body: PdfIncludeIn, u: User = Depends(staff)):
+    f = await db.files.find_one({"_id": oid(fid)}, {"nc_id": 1, "kind": 1})
+    if not f or f["kind"] != "photo":
+        raise HTTPException(404, "Photo not found")
+    await get_nc(f["nc_id"], u)
+    await db.files.update_one({"_id": f["_id"]}, {"$set": {"pdf_include": body.include}})
+    await audit("evidence.pdf_selection", u.id, f"nc:{f['nc_id']}", {"file_id": fid, "include": body.include})
+    return {"ok": True, "pdf_include": body.include}
+
+
 async def build_evidence_pack(pid: str, p: dict):
     from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
     ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
@@ -1612,15 +1771,14 @@ async def build_evidence_pack(pid: str, p: dict):
         nid = str(n["_id"])
         files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(5000)
         trust = [b for f in files if f["kind"] == "trustmark" and not f.get("excluded") for b in [await get(f, "display", "original")] if b]
-        rem = [b for f in files if f["kind"] == "photo" and f["status"] != "superseded" for b in [await get(f, "stamped", "display", "original")] if b]
-        trust, rem = await run_in_threadpool(readable, trust), await run_in_threadpool(readable, rem)
-        prepared.append((n, files, trust, rem))
+        trust = await run_in_threadpool(readable, trust)
+        prepared.append((n, files, trust, await pdf_photo_groups(n, files, get)))
     rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
     for n, files, trust, rem in prepared:
         trust = await run_in_threadpool(drop_repeated, trust, rep)
-        rem = await run_in_threadpool(select_photos, rem, 60)  # all relevant photos (near-duplicates dropped); extra pages as needed
         name = f"{n['number']}_{slug(n.get('description', ''))}"
-        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem)
+        nvid = sum(1 for f in files if f["kind"] == "video" and f["status"] != "superseded")
+        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, nvid)
         entries.append((f"{name}.pdf", pdf))
         for f in files:
             if f["kind"] == "video":

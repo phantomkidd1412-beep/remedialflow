@@ -10,7 +10,7 @@ import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
-type S = { auto_approve_low_risk: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
+type S = { auto_approve_low_risk: boolean; auto_approve_risks: string[]; human_signoff_required: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
 function Choice({ value, options, onChange, testID }: { value: string; options: [string, string][]; onChange: (v: string) => void; testID: string }) {
   const s = useStyles();
@@ -189,6 +189,8 @@ export default function SettingsScreen() {
         <Label>AI internal approval of low-risk NCs</Label>
         <Choice value={f.auto_verify && f.auto_approve_low_risk ? "on" : "off"} options={[["on", "On"], ["off", "Off (all to employee)"]]} onChange={(v) => set({ auto_verify: v === "on", auto_approve_low_risk: v === "on" })} testID="setting-auto-verify" />
         <Text style={s.mono}>Safety-critical NCs (gas, electrical, fire, structural, flues) always go to Employee Review.</Text>
+        <Choice value={(f.auto_approve_risks ?? []).includes("standard") ? "std" : "low"} options={[["low", "Low-risk NCs only"], ["std", "Low + standard NCs"]]} onChange={(v) => set({ auto_approve_risks: v === "std" ? ["low", "standard"] : ["low"] })} testID="setting-auto-risks" />
+        <Choice value={f.human_signoff_required ? "on" : "off"} options={[["off", "AI may approve"], ["on", "AI verifies, employee signs off"]]} onChange={(v) => set({ human_signoff_required: v === "on" })} testID="setting-signoff" />
         <Field label="Min AI confidence to auto-verify (0–1)" value={String(f.confidence_threshold)} onChangeText={(v) => set({ confidence_threshold: v as any })} keyboardType="decimal-pad" testID="setting-confidence" />
 
         <Text style={s.section}>EVIDENCE ACCEPTANCE</Text>

@@ -16,7 +16,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("EXPO_PUBLIC_BACKEND_URL", "https://field-evidence-app-1.preview.emergentagent.com").rstrip("/")
-PASSWORD = "QaVerify-b41581d8dd2f"
+PASSWORD = __import__("os").environ.get("RF_QA_PASSWORD", "")
 
 EMP = "qa.employee@example.com"
 ADMIN = "qa.admin@example.com"

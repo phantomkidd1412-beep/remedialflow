@@ -1,10 +1,10 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { FlatList, Keyboard, Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
-import { RateRow, openExport, openReport, useProject } from "@/src/projects";
+import { RateRow, exportToDropbox, openExport, openReport, useProject } from "@/src/projects";
 import { useAuth } from "@/src/auth";
 import { Badge, Btn, ErrorBlock, Feather, Field, Label, Loading, Progress, Sheet, fmtDate, money, useToast } from "@/src/ui";
 import { DatePickerSheet } from "@/src/components/DatePickerSheet";
@@ -59,6 +59,20 @@ export default function StaffProject() {
   const toast = useToast();
   const qc = useQueryClient();
   const router = useRouter();
+  const dbxBusy = useRef(false);
+  const sendToDropbox = async () => {
+    if (dbxBusy.current) return toast("Dropbox export already in progress");
+    dbxBusy.current = true;
+    toast("Exporting to Dropbox…");
+    try {
+      const r = await exportToDropbox(id);
+      toast(`${r.status === "already_exported" ? "Already in Dropbox (unchanged)" : "Saved to Dropbox"}${r.location ? `: ${r.location}` : ""}`);
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      dbxBusy.current = false;
+    }
+  };
   const { id, nc } = useLocalSearchParams<{ id: string; nc?: string }>();
   const q = useProject(id);
   const installers = useQuery({ queryKey: ["installers"], queryFn: () => api<{ id: string; name: string }[]>("/installers"), staleTime: 300000 });
@@ -234,7 +248,8 @@ export default function StaffProject() {
 
       <Sheet visible={menuOpen} onClose={() => setMenuOpen(false)} title="Project actions" testID="project-actions-sheet">
         {p.source_report ? <Btn title="View TrustMark PDF" icon="file-text" variant="outline" onPress={menu(() => openReport(id).then(() => toast("Inspection PDF downloaded")).catch((e) => toast(e.message)))} testID="open-report-button" /> : null}
-        <Btn title="Export evidence" icon="download" variant="outline" onPress={menu(() => openExport(id).catch((e) => toast(e.message)))} testID="export-project-button" />
+        <Btn title="Download evidence" icon="download" variant="outline" onPress={menu(() => { toast("Preparing evidence pack…"); return openExport(id).catch((e) => toast(e.message)); })} testID="export-project-button" />
+        <Btn title="Export to Dropbox" icon="upload-cloud" variant="outline" onPress={menu(sendToDropbox)} testID="export-dropbox-button" />
         <Btn title="Audit history" icon="list" variant="outline" onPress={menu(() => setAuditOpen(true))} testID="audit-trail-button" />
         <Btn title="Add NC" icon="plus" variant="outline" onPress={menu(() => setAddOpen(true))} testID="add-nc-button" />
         {p.status === "completed" ? <Btn title="Mark TrustMark Resolved" icon="award" variant="success" onPress={resolve} testID="resolve-project-button" /> : null}

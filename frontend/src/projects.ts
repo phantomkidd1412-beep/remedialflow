@@ -25,6 +25,11 @@ async function openSigned(path: string, filename: string, inline = false) {
 }
 
 /** Downloads a short-lived signed export (ZIP per project, or JSON metadata for everything). */
+/** Saves the current pack to the project's Dropbox folder; the server reuses an identical earlier export. */
+export async function exportToDropbox(projectId: string) {
+  return api<{ status: "exported" | "already_exported"; location: string | null; saved_at: string }>(`/projects/${projectId}/export-dropbox`, { method: "POST" });
+}
+
 export async function openExport(projectId?: string) {
   const r = await api<{ url: string }>(`/export/link${projectId ? `?project_id=${projectId}` : ""}`);
   await openSigned(r.url, projectId ? "project-evidence.zip" : "remedialflow-metadata.json");
@@ -44,7 +49,7 @@ export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
   captured_at?: string | null; server_received_at: string; tz?: string | null; lat?: number | null; lng?: number | null;
   accuracy_m?: number | null; location_verified: boolean; duration_s?: number | null; processing: string;
-  exclude_reason?: string | null; playback?: string | null;
+  exclude_reason?: string | null; playback?: string | null; stage?: "pre" | "mid" | "final" | null; pdf_include?: boolean | null;
 };
 
 /** Server-configured per-video size limit (shown before recording/selection). */
@@ -56,7 +61,8 @@ export function useMediaConfig() {
 export type NCItem = {
   id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
   assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null; reopen_history?: { at: string; source: string; note?: string }[];
-  ai?: { outcome: string; confidence: number; feedback: string; concerns: string[]; model: string; at: string } | null;
+  ai?: { outcome: string; confidence: number | null; status?: string; feedback: string; concerns: string[]; requests?: string[]; model: string; at: string } | null;
+  installer_note?: string; requires_stages?: boolean; export_note_source?: string;
   review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; videos?: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
   text_history?: { original_text: string; replaced_at: string }[];
 };
@@ -64,6 +70,13 @@ export type NCItem = {
 export type ProjectDetail = { project: ProjectRow; ncs: NCItem[] };
 
 export const DONE = ["approved"];
+
+export const STAGES = [["pre", "Pre"], ["mid", "Mid"], ["final", "Final"]] as const;
+/** Clear AI decision labels (no fake 0% when AI did not run). */
+export const AI_STATUS: Record<string, string> = {
+  ai_approved: "AI Approved", ai_verified_signoff: "AI Technically Verified - Human Sign-off Required", more_evidence: "More Evidence Required",
+  employee_review: "Employee Review Required", potential_noncompliance: "Potential Noncompliance", pending: "AI Assessment Pending", unavailable: "AI Unavailable",
+};
 
 export function useProjects(search = "", status = "") {
   return useInfiniteQuery({

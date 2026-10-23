@@ -95,8 +95,13 @@ class Project(BaseDocument):
 
 
 class AIResult(BaseModel):
-    outcome: str  # ai_verified | more_evidence_required | manual_review_required
-    confidence: float = 0
+    outcome: str  # ai_verified | more_evidence_required | manual_review_required | potential_noncompliance
+    confidence: Optional[float] = None  # None = no AI result (never shown as 0%)
+    status: str = "pending"  # ai_approved | ai_verified_signoff | more_evidence | employee_review | potential_noncompliance | pending | unavailable
+    method_demonstrated: Optional[bool] = None
+    requests: List[str] = []  # precise evidence requests sent to the installer
+    works_description: str = ""  # AI draft of the remedial works (from recorded info only)
+    best: dict = {}  # stage -> file id chosen for the PDF
     feedback: str = ""
     concerns: List[str] = []
     model: str = ""
@@ -125,7 +130,10 @@ class NC(BaseDocument):
     active_video_id: Optional[str] = None
     ai: Optional[AIResult] = None
     review_note: str = ""
-    export_note: str = ""  # optional brief factual note printed on the exported NC PDF (staff-written)
+    export_note: str = ""  # "Remedial works carried out" text on the NC PDF (AI-drafted, staff-editable)
+    export_note_source: str = ""  # "" | ai | staff
+    installer_note: str = ""  # installer's short description of the work done
+    requires_stages: bool = False  # new NCs: pre/mid/final photos + a video are mandatory (historic NCs unaffected)
     reviewed_by: Optional[str] = None
     updated_at: str = Field(default_factory=now_iso)
 
@@ -152,6 +160,8 @@ class EvidenceFile(BaseDocument):
     uploaded_by: str
     server_received_at: str = Field(default_factory=now_iso)
     status: str = "draft"  # draft | submitted | superseded
+    stage: Optional[str] = None  # pre | mid | final (photos; None for historic evidence)
+    pdf_include: Optional[bool] = None  # staff override of the PDF photo selection (None = automatic)
     client_id: Optional[str] = None  # idempotency key from device queue
     processing: str = "pending"  # pending | ready | failed
     playback: Optional[str] = None  # videos only: pending | ready | failed (universal H.264 copy for in-app playback)
@@ -177,7 +187,9 @@ class Settings(BaseModel):
     confidence_threshold: float = 0.8
     location_policy: str = "accept_flag"  # accept_flag | reject | accept
     gallery_policy: str = "accept"  # manual_review | accept
-    auto_approve_low_risk: bool = True  # AI may internally approve low-risk NCs
+    auto_approve_low_risk: bool = True  # AI may approve eligible NCs automatically
+    auto_approve_risks: List[str] = ["low", "standard"]  # eligible categories (safety-critical never)
+    human_signoff_required: bool = False  # AI-verified NCs still need an employee sign-off
     default_job_rate: float = 150.0
     currency: str = "GBP"
     payment_terms: str = "Paid monthly for completed jobs"

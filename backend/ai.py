@@ -8,12 +8,12 @@ import base64
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent, TextDelta, StreamDone
 
 log = logging.getLogger("ai")
-OUTCOMES = {"ai_verified", "more_evidence_required", "manual_review_required"}
+OUTCOMES = {"ai_verified", "more_evidence_required", "manual_review_required", "potential_noncompliance"}
 
 
 @dataclass
@@ -25,6 +25,9 @@ class AssessmentInput:
     reference_images: List[bytes] = field(default_factory=list)  # TrustMark inspection photos
     evidence_images: List[bytes] = field(default_factory=list)   # photos + video frames
     original_text: str = ""
+    labels: List[str] = field(default_factory=list)  # one label per evidence image (PRE-/MID-/FINAL-REMEDIATION photo, VIDEO FRAME)
+    installer_note: str = ""
+    requires_stages: bool = False
 
 
 @dataclass
@@ -35,19 +38,35 @@ class AssessmentResult:
     concerns: List[str]
     model: str
     risk: str = "standard"
+    method_demonstrated: Optional[bool] = None
+    requests: List[str] = field(default_factory=list)
+    works_description: str = ""
+    best: dict = field(default_factory=dict)  # stage -> evidence image index
 
-SYSTEM = """You are a practical remediation evidence assessor for TrustMark non-compliances (NCs) — efficient, not an over-strict inspector.
-You receive: the NC description (and original TrustMark wording), the required remedial work, ORIGINAL inspection photos
-(labelled REFERENCE, may be absent) and installer EVIDENCE photos/video frames. Compare the evidence with the NC and required work.
+SYSTEM = """You are a practical, competent remediation evidence assessor for TrustMark non-compliances (NCs).
+You receive the NC wording, the required remedial work, ORIGINAL inspection photos (REFERENCE, may be absent), the installer's
+note, and labelled EVIDENCE images: PRE-REMEDIATION (original defect), MID-REMEDIATION (the corrective method, incl. concealed work),
+FINAL-REMEDIATION (completed work) photos and VIDEO FRAMES from the NC's remediation video.
+Verify the METHOD of remediation, not just the finished appearance: a finished surface does not prove what is behind it
+(e.g. a rendered wall does not prove insulation behind a bracket - a mid-remediation photo must show it).
 Rules:
-- If the photos convincingly show the required remedial work completed (e.g. a vent perimeter visibly sealed, pipes visibly lagged, holes visibly filled), outcome = ai_verified.
-- Reasonable visual judgement and approximate measurements are allowed when supported by the evidence; say "estimated" for estimates. Do not demand a measuring tape unless an exact measurement is essential to the NC.
-- Never claim concealed work, ratings, testing or regulatory compliance is verified. If completion genuinely depends on something not visible, outcome = manual_review_required.
-- If photos are blurry, unrelated, or do not show the area/completion, outcome = more_evidence_required (say exactly what photo is missing).
-- If genuinely uncertain or technically complex, outcome = manual_review_required.
-- risk: "safety" for gas, electrical, fire, structural, combustion ventilation / flues / CO; "low" for simple visually verifiable work (sealing, filling, lagging, vents, trims, draught strips, making good, cleaning, insulation top-up); otherwise "standard".
-Respond with ONLY JSON: {"outcome": "ai_verified|more_evidence_required|manual_review_required", "risk": "low|standard|safety",
-"confidence": 0.0-1.0, "feedback": "<= 2 short plain-English sentences for the installer", "concerns": ["short items"]}"""
+- ai_verified: the evidence is relevant to THIS NC and convincingly shows the required corrective method and the completed result.
+  Reasonable visual judgement and approximate measurements are allowed ("estimated"). Do not demand tools/measurements unless essential.
+- more_evidence_required: evidence is missing, unclear, unrelated, or the method is not visible. List precise requests for the
+  installer, e.g. "Please upload a mid-remediation photograph showing insulation fitted behind the bracket." Max 3 requests.
+- potential_noncompliance: the evidence suggests the work was done incorrectly or does not meet the required work.
+- manual_review_required: genuinely ambiguous, technically complex, or completion depends on hidden/tested items you cannot see.
+- Never claim ratings, testing or regulatory compliance are verified.
+- A generic or unrelated video does not count as evidence for this NC.
+- risk: "safety" for gas, electrical, fire, structural, combustion ventilation / flues / CO; "low" for simple visually verifiable
+  work (sealing, filling, lagging, vents, trims, draught strips, making good, cleaning); otherwise "standard".
+- works_description: 20-40 words, one or two professional sentences stating what was corrected and how, using ONLY what the NC,
+  the installer note and the visible evidence establish. Never invent materials or methods. Empty string if it cannot be established.
+- best: for each stage present, the index (0-based, among EVIDENCE images only) of the clearest, most technically useful photo.
+Respond with ONLY JSON: {"outcome": "ai_verified|more_evidence_required|potential_noncompliance|manual_review_required",
+"risk": "low|standard|safety", "confidence": 0.0-1.0, "method_demonstrated": true|false,
+"feedback": "<= 2 short plain-English sentences for the installer", "concerns": ["short items"],
+"requests": ["precise evidence requests"], "works_description": "...", "best": {"pre": 0, "mid": 3, "final": 5}}"""
 
 
 class Assessor(ABC):
@@ -68,8 +87,10 @@ class LlmAssessor(Assessor):
         text = (f"NC {data.nc_number}: {data.description}\nOriginal TrustMark wording: {data.original_text or data.description}\n"
                 f"Required remedial work: {data.required_work}\n"
                 f"Safety-critical flag: {data.safety_critical}\n"
+                f"Installer note: {data.installer_note or '(none)'}\n"
                 f"The first {len(data.reference_images)} image(s) are REFERENCE inspection photos; "
-                f"the remaining {len(data.evidence_images)} are EVIDENCE.")
+                f"the remaining {len(data.evidence_images)} are EVIDENCE, in order (index: label):\n"
+                + "\n".join(f"{i}: {data.labels[i] if i < len(data.labels) else 'EVIDENCE photo'}" for i in range(len(data.evidence_images))))
         out = ""
         async for ev in chat.stream_message(UserMessage(text=text, file_contents=imgs)):
             if isinstance(ev, TextDelta):
@@ -84,11 +105,16 @@ class LlmAssessor(Assessor):
             j = json.loads(m.group(0))
             outcome = j.get("outcome") if j.get("outcome") in OUTCOMES else "manual_review_required"
             risk = j.get("risk") if j.get("risk") in ("low", "standard", "safety") else "standard"
+            md = j.get("method_demonstrated")
             return AssessmentResult(outcome, float(j.get("confidence", 0)), str(j.get("feedback", ""))[:300],
-                                    [str(c)[:120] for c in j.get("concerns", [])][:5], self.model_name, risk)
+                                    [str(c)[:120] for c in j.get("concerns", [])][:5], self.model_name, risk,
+                                    md if isinstance(md, bool) else None,
+                                    [str(r)[:200] for r in (j.get("requests") or []) if r][:3],
+                                    " ".join(str(j.get("works_description") or "").split()[:60]),
+                                    {k: v for k, v in (j.get("best") or {}).items() if isinstance(v, int)})
         except Exception:
             log.warning("Unparseable AI output: %s", raw[:300])
-            return AssessmentResult("manual_review_required", 0, "Sent to an employee for review.",
+            return AssessmentResult("manual_review_required", None, "Sent to an employee for review.",
                                     ["AI response could not be read"], self.model_name)
 
 
