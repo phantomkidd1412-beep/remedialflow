@@ -25,6 +25,7 @@ from auth import router as auth_router, current_user, require, ph, revoke_all, c
 from storage import storage, evidence_path, SYSTEM, property_folder_name, media_path, export_path
 from media import process_photo, video_frames, make_playback, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
+from guidance import match_guidance, guidance_text, suggest_from_review
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
 from security import PRODUCTION, check_production_config, install_log_redaction, security_headers
@@ -450,6 +451,7 @@ class ProjectIn(BaseModel):
     rate: Optional[float] = None
     ncs: List[NCIn] = []
     import_id: Optional[str] = None
+    require_video: bool = True  # default ON: a relevant video is mandatory for every new NC
 
 
 # ---------------- PDF import (async) ----------------
@@ -534,6 +536,7 @@ async def _attach_pdf_photos(import_id: str, nc_pages: List[tuple]):
 class ProjectPatch(BaseModel):
     installer_id: Optional[str] = None
     rate: Optional[float] = None
+    require_video: Optional[bool] = None
 
 
 async def add_nc(pid: str, body: NCIn, idx: int, installer_id: Optional[str] = None) -> str:
@@ -567,7 +570,7 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
         raise HTTPException(409, "Project reference already exists")
     s = await get_settings()
     p = Project(ref=body.ref, address=body.address, postcode=body.postcode.upper(), installer_id=body.installer_id or None,
-                rate=body.rate if body.rate is not None else s.default_job_rate, rate_override=body.rate is not None)
+                rate=body.rate if body.rate is not None else s.default_job_rate, rate_override=body.rate is not None, require_video=body.require_video)
     doc = p.to_mongo()
     if body.import_id:
         imp = await db.imports.find_one({"_id": oid(body.import_id)}, {"path": 1, "sha256": 1, "filename": 1})
@@ -742,7 +745,7 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         videos = [file_public(f) for f in fs if f.kind == "video"]  # every video, incl. ones previously marked superseded
         d = n.model_dump()
         d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
-                 video_versions=len(videos),
+                 video_versions=len(videos), video_required=bool(n.requires_stages and p.require_video is not False),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
         out.append(d)
     pd = p.model_dump()
@@ -1031,15 +1034,34 @@ SAFETY_RE = re.compile(r"\b(gas|electric\w*|wiring|fuse|consumer unit|fire|flue|
 STAGE_NAME = {"pre": "pre-remediation", "mid": "mid-remediation", "final": "final-remediation"}
 
 
-async def missing_mandatory(nc_id: str) -> List[str]:
-    """Mandatory evidence for new NCs: at least one pre, mid and final photo and one video (all uploaded)."""
+async def project_requires_video(pid: str) -> bool:
+    p = await db.projects.find_one({"_id": oid(pid)}, {"require_video": 1})
+    return (p or {}).get("require_video", True) is not False  # older projects: ON
+
+
+async def missing_mandatory(nc_id: str, require_video: bool = True) -> List[str]:
+    """Mandatory evidence for new NCs: at least one photo, plus a video when the project requires one."""
     have = await db.files.find({"nc_id": nc_id, "status": {"$in": ["draft", "submitted"]}, "kind": {"$in": ["photo", "video"]}},
                                {"kind": 1, "stage": 1}).to_list(5000)
     # photos are arranged by AI at PDF time; only the remediation video is mandatory (plus at least one photo)
     miss = [] if any(f["kind"] == "photo" for f in have) else ["at least one photo"]
-    if not any(f["kind"] == "video" for f in have):
+    if require_video and not any(f["kind"] == "video" for f in have):
         miss.append("a video of this NC's remediation")
     return miss
+
+
+class SafetyIn(BaseModel):
+    safety_critical: bool
+
+
+@api.put("/ncs/{nc_id}/safety")
+async def set_safety(nc_id: str, body: SafetyIn, u: User = Depends(staff)):
+    """Staff flag; safety-critical NCs always need human sign-off (enforced in run_assessment)."""
+    nc, _ = await get_nc(nc_id, u)
+    if nc.safety_critical != body.safety_critical:
+        await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"safety_critical": body.safety_critical, "updated_at": now_iso()}})
+        await audit("nc.safety_critical", u.id, f"nc:{nc_id}", {"from": nc.safety_critical, "to": body.safety_critical})
+    return {"ok": True, "safety_critical": body.safety_critical}
 
 
 class ExportNoteIn(BaseModel):
@@ -1114,10 +1136,19 @@ async def run_assessment(nc_id: str, sub_id: str):
             evid += frames
             labels += ["VIDEO FRAME"] * len(frames)
         reasons: List[str] = []
+        video_req = nc.requires_stages and await project_requires_video(nc.project_id)
+        guides = await match_guidance(" ".join([nc.original_text or "", nc.description or "", nc.required_work or ""]))
+        gimgs = []
+        for g in guides:
+            for gid in (g.get("example_photo_ids") or [])[:1]:
+                gf = await db.files.find_one({"_id": oid(gid), "kind": "guidance"}, {"paths": 1})
+                if gf and len(gimgs) < 2:
+                    gimgs.append((await storage.aget(gf["paths"].get("display") or gf["paths"]["original"]))[0])
         try:
             res = await get_assessor().assess(AssessmentInput(nc.number, nc.description, nc.required_work,
                                                              nc.safety_critical, refs, evid, nc.original_text, labels,
-                                                             nc.installer_note, nc.requires_stages))
+                                                             nc.installer_note, nc.requires_stages, video_req,
+                                                             guidance_text(guides), gimgs))
         except Exception as e:
             log.exception("AI failed")
             res = None
@@ -1129,6 +1160,8 @@ async def run_assessment(nc_id: str, sub_id: str):
             ai = AIResult(outcome=res.outcome, confidence=res.confidence, feedback=res.feedback, concerns=res.concerns,
                           model=res.model, risk=res.risk, method_demonstrated=res.method_demonstrated,
                           requests=res.requests, works_description=res.works_description, best=best)
+        ai.video_required = video_req
+        ai.guidance = [{"id": g["id"], "version": g.get("version", 1), "title": g.get("title", "")} for g in guides]
         media = photos + ([video] if video else [])
         # Flags are recorded but do not escalate on their own.
         flags = []
@@ -1159,8 +1192,8 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append(f"'{ai.risk}' NCs are not eligible for automatic approval")
             if ai.method_demonstrated is False:
                 reasons.append("Corrective method not demonstrated")
-            if nc.requires_stages and await missing_mandatory(nc_id):
-                reasons.append("Mandatory remediation video missing")
+            if nc.requires_stages and video_req and await missing_mandatory(nc_id, True):
+                reasons.append("Mandatory remediation video missing (required for this project)")
             if (ai.confidence or 0) < s.confidence_threshold:
                 reasons.append(f"Confidence {ai.confidence:.2f} below {s.confidence_threshold:.2f}")
             if s.location_policy == "reject" and any(not f.location_verified for f in photos):
@@ -1232,7 +1265,7 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
         raise HTTPException(400, "Add at least one photo or video")
     raw_nc = await db.ncs.find_one({"_id": oid(nc_id)}, {"requires_stages": 1})
     if raw_nc.get("requires_stages"):
-        miss = await missing_mandatory(nc_id)
+        miss = await missing_mandatory(nc_id, p.require_video is not False)
         if miss:
             raise HTTPException(400, "Before submitting, please add " + ", ".join(miss) + ".")
     if body.note is not None and body.note.strip():
@@ -1256,6 +1289,8 @@ async def submit(nc_id: str, bg: BackgroundTasks, body: Optional[SubmitIn] = Non
 class ReviewIn(BaseModel):
     action: str = Field(pattern="^(approve|reject|more_evidence|escalate|return|trustmark_reject)$")
     note: str = ""
+    reason: str = Field(default="", max_length=1000)  # internal: why the decision was made (optional)
+    suggest_guidance: bool = False  # create a DRAFT AI guidance entry for admin review
 
 
 @api.post("/ncs/{nc_id}/review")
@@ -1293,8 +1328,9 @@ async def review(nc_id: str, body: ReviewIn, u: User = Depends(staff)):
         for a in await db.users.find({"role": "admin", "active": True}, {"_id": 1}).to_list(50):
             await nc_notify(raw, str(a["_id"]), "escalated", f"escalated by {u.name}" + (f": {body.note}" if body.note else ""))
     await recompute_project(p.id)
-    await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note, "role": u.role})
-    return {"ok": True, "status": status}
+    await audit("nc.reviewed", u.id, f"nc:{nc_id}", {"action": body.action, "note": body.note, "reason": body.reason, "role": u.role})
+    gid = await suggest_from_review(raw, body.action, body.reason or body.note, u) if body.suggest_guidance else None
+    return {"ok": True, "status": status, "guidance_draft_id": gid}
 
 
 class AssignIn(BaseModel):
@@ -1960,6 +1996,8 @@ app.include_router(auth_router)
 app.include_router(api)
 from phase10 import router as p10_router  # noqa: E402  (imports server helpers lazily)
 app.include_router(p10_router)
+from guidance import router as guidance_router  # noqa: E402
+app.include_router(guidance_router)
 from push import router as push_router  # noqa: E402
 from dropbox_link import router as dropbox_router, load_dropbox  # noqa: E402
 app.include_router(dropbox_router)

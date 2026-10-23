@@ -28,6 +28,9 @@ class AssessmentInput:
     labels: List[str] = field(default_factory=list)  # one label per evidence image (PRE-/MID-/FINAL-REMEDIATION photo, VIDEO FRAME)
     installer_note: str = ""
     requires_stages: bool = False
+    video_required: bool = True  # project-level setting (staff-controlled)
+    guidance: str = ""  # approved AI Evidence Guidance entries matching this NC
+    guidance_images: List[bytes] = field(default_factory=list)  # approved example photos (NOT evidence)
 
 
 @dataclass
@@ -62,6 +65,13 @@ Rules:
   work (sealing, filling, lagging, vents, trims, draught strips, making good, cleaning); otherwise "standard".
 - works_description: 20-40 words, one or two professional sentences stating what was corrected and how, using ONLY what the NC,
   the installer note and the visible evidence establish. Never invent materials or methods. Empty string if it cannot be established.
+- APPROVED EVIDENCE GUIDANCE (when given) is admin-approved context describing what evidence demonstrates the corrective
+  method for this NC type. Compare the evidence against it, state which required details are demonstrated, and make precise
+  requests for missing items modelled on it. It never overrides safety rules, technical standards or human sign-off, and never
+  lets you claim compliance you cannot see. GUIDANCE EXAMPLE images only illustrate acceptable evidence - they are NOT evidence.
+  If no guidance is given, use your own judgement; never invent technical standards.
+- Video: if "Video required by project" is no, a missing video is NOT a reason for more_evidence_required on its own; verify from
+  the photos. Request a video only if the photos genuinely cannot show the method, and say why it is needed.
 - best: for each stage present, the index (0-based, among EVIDENCE images only) of the clearest, most technically useful photo.
 Respond with ONLY JSON: {"outcome": "ai_verified|more_evidence_required|potential_noncompliance|manual_review_required",
 "risk": "low|standard|safety", "confidence": 0.0-1.0, "method_demonstrated": true|false,
@@ -83,13 +93,16 @@ class LlmAssessor(Assessor):
     async def assess(self, data: AssessmentInput) -> AssessmentResult:
         chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"assess-{uuid.uuid4()}",
                        system_message=SYSTEM).with_model(self.provider, self.model_name)
-        imgs = [ImageContent(image_base64=base64.b64encode(b).decode()) for b in data.reference_images + data.evidence_images]
+        imgs = [ImageContent(image_base64=base64.b64encode(b).decode()) for b in data.reference_images + data.evidence_images + data.guidance_images]
         text = (f"NC {data.nc_number}: {data.description}\nOriginal TrustMark wording: {data.original_text or data.description}\n"
                 f"Required remedial work: {data.required_work}\n"
                 f"Safety-critical flag: {data.safety_critical}\n"
                 f"Installer note: {data.installer_note or '(none)'}\n"
-                f"The first {len(data.reference_images)} image(s) are REFERENCE inspection photos; "
-                f"the remaining {len(data.evidence_images)} are EVIDENCE, in order (index: label):\n"
+                f"Video required by project: {'yes' if data.video_required else 'no'}\n"
+                + (f"APPROVED EVIDENCE GUIDANCE:\n{data.guidance}\n" if data.guidance else "APPROVED EVIDENCE GUIDANCE: (none)\n")
+                + (f"The LAST {len(data.guidance_images)} image(s) are GUIDANCE EXAMPLE photos (not evidence).\n" if data.guidance_images else "")
+                + f"The first {len(data.reference_images)} image(s) are REFERENCE inspection photos; "
+                f"then {len(data.evidence_images)} EVIDENCE images, in order (index: label):\n"
                 + "\n".join(f"{i}: {data.labels[i] if i < len(data.labels) else 'EVIDENCE photo'}" for i in range(len(data.evidence_images))))
         out = ""
         async for ev in chat.stream_message(UserMessage(text=text, file_contents=imgs)):

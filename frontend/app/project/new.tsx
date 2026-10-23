@@ -24,6 +24,7 @@ export default function NewProject() {
   const [postcode, setPostcode] = useState("");
   const [rate, setRate] = useState("");
   const [installer, setInstaller] = useState<string | null>(null);
+  const [requireVideo, setRequireVideo] = useState(true);
   const [ncs, setNcs] = useState<NcDraft[]>([{ description: "", required_work: "", safety_critical: false }]);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -72,7 +73,7 @@ export default function NewProject() {
     try {
       const r = await api<{ id: string }>("/projects", {
         method: "POST",
-        body: { ref: ref.trim(), address: address.trim(), postcode: postcode.trim(), installer_id: installer, rate: rate ? Number(rate) : null, ncs, import_id: importId },
+        body: { ref: ref.trim(), address: address.trim(), postcode: postcode.trim(), installer_id: installer, rate: rate ? Number(rate) : null, ncs, import_id: importId, require_video: requireVideo },
       });
       qc.invalidateQueries({ queryKey: ["projects"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -122,6 +123,13 @@ export default function NewProject() {
             </Pressable>
           ))}
         </ScrollView>
+        <Pressable onPress={() => setRequireVideo((v) => !v)} style={s.videoRow} accessibilityRole="switch" accessibilityState={{ checked: requireVideo }} testID="new-project-require-video">
+          <Feather name={requireVideo ? "check-square" : "square"} size={20} color={colors.onSurface} />
+          <View style={{ flex: 1 }}>
+            <Text style={s.videoTitle}>Require video evidence for NC submissions</Text>
+            <Text style={s.muted} testID="new-project-require-video-state">{requireVideo ? "ON: installers must upload at least one relevant video for every new NC" : "OFF: installers can submit without a video (videos still optional)"}</Text>
+          </View>
+        </Pressable>
         {ncs.map((n, i) => (
           <View key={i} style={s.nc}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
@@ -164,6 +172,8 @@ const useStyles = makeStyles((c) => ({
   mono: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   warn: { fontFamily: fonts.text, fontSize: 12, color: c.onWarning, backgroundColor: c.warning, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
   muted: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  videoRow: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 56, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
+  videoTitle: { fontSize: 15, fontWeight: "700", color: c.onSurface },
   summary: { fontSize: 14, fontWeight: "600", color: c.onSurface, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
   dup: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.warning, padding: space.md, gap: space.sm },
   dupTitle: { fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onWarning },

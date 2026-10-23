@@ -168,3 +168,11 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Auto-approval: ai.blocked reasons shown to staff; SAFETY_RE on NC text forces human sign-off (AI risk label varied between runs); approved NCs notify installer
 - Root cause of "no auto-approval": Admin setting auto_verify = OFF in DB (left as user set it)
 - Real Gemini verified in-process on QA clones of real NC-01 evidence (scenarios B, C, D, E, video-missing; A with risk relabelled)
+
+## Iteration 32 — NC interface, project video setting, AI Evidence Guidance (agent-tested, preview)
+- Safety Critical toggle (SafetyToggle.tsx): staff toggle on staff NC card via PUT /api/ncs/{id}/safety (audited); orange icon/border/bg when on; installer read-only chip when on; safety guard in run_assessment unchanged
+- Duplicate "Required work"/"Required remedial work" box removed from installer + staff NC cards (data kept)
+- Project.require_video (default True; older projects treated ON): set at creation (new.tsx), toggle on project page (PATCH /api/projects/{pid}); ncs[].video_required = requires_stages && require_video; submit + auto-approval + Gemini prompt respect it; ai.video_required recorded
+- AI Evidence Guidance (backend/guidance.py, app/admin/guidance/*): admin CRUD, approve/disable/soft-delete, versions/history, example photos (re-encoded, no EXIF) in Dropbox _system/guidance; only approved entries matching NC keywords (or measure if no keywords), max 3, sent to Gemini as context (+ up to 2 example images); ai.guidance records {id, version, title}
+- Review: optional internal reason + "Suggest as AI guidance" → DRAFT entry (source employee_feedback)
+- Tests: iteration_32 23/23; real Gemini: video-OFF photo-only low-risk NC auto-approved (auto_verify temporarily on, restored OFF); approved vent guidance + 1 photo → specific requests

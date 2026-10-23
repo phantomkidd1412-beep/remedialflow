@@ -162,6 +162,16 @@ export default function StaffProject() {
     qc.invalidateQueries({ queryKey: ["project", id] });
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
+  const toggleVideo = async () => {
+    const next = p.require_video === false;
+    try {
+      await api(`/projects/${id}`, { method: "PATCH", body: { require_video: next } });
+      qc.invalidateQueries({ queryKey: ["project", id] });
+      toast(next ? "Video now required for submissions" : "Video now optional for submissions");
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
   const addNc = async () => {
     try {
       await api(`/projects/${id}/ncs`, { method: "POST", body: { description: desc, required_work: work, safety_critical: safety } });
@@ -233,6 +243,13 @@ export default function StaffProject() {
               </View>
             ) : null}
             {p.schedule_rows?.length ? <ScheduleRows pid={id} rows={p.schedule_rows} /> : null}
+            <Pressable onPress={toggleVideo} style={s.videoRow} accessibilityRole="switch" accessibilityState={{ checked: p.require_video !== false }} testID="project-require-video">
+              <Feather name={p.require_video !== false ? "check-square" : "square"} size={20} color={colors.onSurface} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.rateName}>Require video evidence for NC submissions</Text>
+                <Text style={s.hint} testID="project-require-video-state">{p.require_video !== false ? "ON: a relevant video is needed before an NC can be submitted" : "OFF: NCs can be submitted without a video"}. Completed NCs are not affected.</Text>
+              </View>
+            </Pressable>
             <Label>Assign project (unassigned NCs default to this installer)</Label>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
               {(installers.data ?? []).map((i) => (
@@ -320,5 +337,6 @@ const useStyles = makeStyles((c) => ({
   rateName: { fontSize: 15, fontWeight: "700", color: c.onSurface },
   rateMeta: { fontSize: 13, color: c.muted },
   hint: { fontSize: 13, color: c.muted },
+  videoRow: { flexDirection: "row", alignItems: "center", gap: space.md, minHeight: 56, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md },
   err: { fontSize: 14, fontWeight: "600", color: c.onError },
 }));

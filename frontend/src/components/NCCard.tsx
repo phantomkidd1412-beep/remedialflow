@@ -4,9 +4,7 @@ import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
-
-// TrustMark boilerplate repeated on every NC (admin instructions, not remedial work): hidden from installers
-const GENERIC_WORK = /as the retrofit installer for this project|data warehouse|retrofit portal|see inspection report/i;
+import { SafetyToggle } from "@/src/components/SafetyToggle";
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Field, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
@@ -56,7 +54,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     video: (nc.videos ?? []).some((v) => v.status !== "superseded") || uploads.some((q) => q.meta?.kind === "video"),
   };
   const [note, setNote] = useState(nc.installer_note ?? "");
-  const missing = nc.requires_stages ? [...(allPhotos.length ? [] : ["a photo"]), ...(has.video ? [] : ["a remediation video"])] : [];
+  const missing = nc.requires_stages ? [...(allPhotos.length ? [] : ["a photo"]), ...(has.video || !nc.video_required ? [] : ["a remediation video"])] : [];
   const [orig, setOrig] = useState(false);
   const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, orig: orig ? "1" : "0" };
 
@@ -107,12 +105,22 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           <View style={s.headRow}>
             <Text style={s.num}>{nc.number}</Text>
             <Badge status={badge.status} label={badge.label} testID={`nc-status-${nc.number}`} />
-            {nc.safety_critical ? <Badge status="rejected" label="Safety" /> : null}
           </View>
           <Text style={s.desc}>{nc.description}</Text>
         </View>
         <Feather name={expanded ? "chevron-up" : "chevron-down"} size={22} color={colors.onSurface} />
       </Pressable>
+      {nc.safety_critical || (!done && nc.requires_stages) ? (
+        <View style={s.flags}>
+          <SafetyToggle ncId={nc.id} number={nc.number} value={nc.safety_critical} projectId={project.id} readOnly />
+          {!done && nc.requires_stages ? (
+            <View style={[s.vidTag, nc.video_required && !has.video && { borderColor: colors.brandPrimary }]} testID={`video-req-${nc.number}`}>
+              <Feather name="video" size={14} color={nc.video_required && !has.video ? colors.brandPrimary : colors.muted} />
+              <Text style={[s.vidText, nc.video_required && !has.video && { color: colors.brandPrimary }]}>{nc.video_required ? (has.video ? "Video added" : "Video required") : "Video optional"}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
 
       {expanded ? (
         <View style={s.body}>
@@ -141,20 +149,13 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
               <Text style={s.work} selectable>{nc.original_text}</Text>
             </>
           ) : null}
-          {nc.required_work && !GENERIC_WORK.test(nc.required_work) ? (
-            <>
-              <Label>Required remedial work</Label>
-              <Text style={s.work}>{nc.required_work}</Text>
-            </>
-          ) : null}
-
           {!done ? (
             <>
               <Pressable onPress={() => setOrig((o) => !o)} style={s.origRow} testID={`original-quality-${nc.number}`}>
                 <Feather name={orig ? "check-square" : "square"} size={18} color={colors.onSurface} />
                 <Text style={s.stageText}>Original quality (larger, slower upload)</Text>
               </Pressable>
-              {nc.requires_stages && !has.video ? (
+              {nc.requires_stages && nc.video_required && !has.video ? (
                 <Text style={[s.muted, { color: colors.onWarning }]} testID={`mandatory-${nc.number}`}>A remediation video is required for this NC</Text>
               ) : null}
             </>
@@ -245,6 +246,9 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 const useStyles = makeStyles((c) => ({
   card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, backgroundColor: c.surface },
   head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.lg, minHeight: 64 },
+  flags: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, paddingHorizontal: space.lg, paddingBottom: space.md, marginTop: -space.sm },
+  vidTag: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: 36, paddingHorizontal: space.sm, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
+  vidText: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", color: c.muted },
   headRow: { flexDirection: "row", alignItems: "center", gap: space.sm, flexWrap: "wrap" },
   num: { fontFamily: fonts.text, fontSize: 14, color: c.onSurface },
   desc: { fontFamily: fonts.display, fontWeight: "700", fontSize: 16, color: c.onSurface },

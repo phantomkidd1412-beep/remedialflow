@@ -88,6 +88,7 @@ class Project(BaseDocument):
     schedules: dict = {}  # installer_id -> scheduled visit date YYYY-MM-DD (optional, staff-set)
     rate_history: List[dict] = []  # admin overrides {installer_id, old, new, reason, by, at}
     rate_override: bool = False
+    require_video: bool = True  # staff-controlled: a relevant video is mandatory for new NCs in this project
     deleted: Optional[dict] = None  # soft delete {at, by, by_name, by_role}; data is never erased
     deletion_history: List[dict] = []
     created_at: str = Field(default_factory=now_iso)
@@ -103,6 +104,8 @@ class AIResult(BaseModel):
     works_description: str = ""  # AI draft of the remedial works (from recorded info only)
     best: dict = {}  # stage -> file id chosen for the PDF
     blocked: List[str] = []  # why automatic approval did not happen (shown to staff)
+    guidance: List[dict] = []  # approved guidance entries used {id, version, title} (audit)
+    video_required: Optional[bool] = None  # project video requirement at assessment time
     feedback: str = ""
     concerns: List[str] = []
     model: str = ""

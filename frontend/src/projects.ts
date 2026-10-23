@@ -43,7 +43,7 @@ export async function openTrackerExport(fmt: "csv" | "xlsx", params: Record<stri
 }
 
 export type RateRow = { installer_id: string; name: string; pay_type: string; rate: number | null; earning: { status: string; amount: number } | null };
-export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; rate_rows?: RateRow[]; schedule_rows?: { installer_id: string; name: string; date: string | null }[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
+export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; require_video?: boolean; rate_rows?: RateRow[]; schedule_rows?: { installer_id: string; name: string; date: string | null }[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 
 export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
@@ -61,8 +61,8 @@ export function useMediaConfig() {
 export type NCItem = {
   id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
   assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null; reopen_history?: { at: string; source: string; note?: string }[];
-  ai?: { outcome: string; confidence: number | null; status?: string; feedback: string; concerns: string[]; requests?: string[]; blocked?: string[]; model: string; at: string } | null;
-  installer_note?: string; requires_stages?: boolean; export_note_source?: string; pdf_ai?: { uncertain?: boolean } | null;
+  ai?: { outcome: string; confidence: number | null; status?: string; feedback: string; concerns: string[]; requests?: string[]; blocked?: string[]; guidance?: { id: string; version: number; title: string }[]; model: string; at: string } | null;
+  installer_note?: string; requires_stages?: boolean; video_required?: boolean; export_note_source?: string; pdf_ai?: { uncertain?: boolean } | null;
   review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; videos?: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
   text_history?: { original_text: string; replaced_at: string }[];
 };

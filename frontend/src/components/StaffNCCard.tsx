@@ -9,6 +9,7 @@ import { AI_STATUS, EvidenceFile, NCItem } from "@/src/projects";
 import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
+import { SafetyToggle } from "@/src/components/SafetyToggle";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 /** "Remedial works carried out" text on the NC PDF: AI drafts it from recorded information; staff edit before export. */
@@ -51,6 +52,8 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   const qc = useQueryClient();
   const toast = useToast();
   const [note, setNote] = useState("");
+  const [reason, setReason] = useState("");
+  const [suggest, setSuggest] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [view, setView] = useState<EvidenceFile | null>(null);
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
@@ -100,8 +103,11 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     if (busy) return; // no duplicate submissions while a decision is in flight
     setBusy(action);
     try {
-      await api(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note } });
+      const r = await api<{ guidance_draft_id?: string | null }>(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note, reason: reason.trim(), suggest_guidance: suggest } });
       setNote("");
+      setReason("");
+      setSuggest(false);
+      if (r?.guidance_draft_id) toast("Draft AI guidance created for Admin review");
       // reflect the confirmed backend state immediately, then refetch the truth
       const next = ({ approve: "approved", reject: "rejected", more_evidence: "more_evidence", trustmark_reject: "rejected" } as Record<string, string>)[action];
       if (next) {
@@ -161,13 +167,15 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           <View style={s.headRow}>
             <Text style={s.num}>{nc.number}</Text>
             <Badge status={nc.status} testID={`staff-nc-status-${nc.number}`} />
-            {nc.safety_critical ? <Badge status="rejected" label="Safety-critical" /> : null}
           </View>
           <Text style={s.desc}>{nc.description}</Text>
           <Text style={s.assignee} testID={`staff-nc-installer-${nc.number}`}>{nc.assigned_installer_name ?? "Unassigned"}{nc.approved_by === "ai" ? " · AI approved" : ""}{nc.reopen_history?.length ? ` · Reopened ${nc.reopen_history.length}× by TrustMark` : ""}</Text>
         </View>
         <Feather name={expanded ? "chevron-up" : "chevron-down"} size={20} color={colors.onSurface} />
       </Pressable>
+      <View style={s.safetyRow}>
+        <SafetyToggle ncId={nc.id} number={nc.number} value={nc.safety_critical} projectId={projectId} />
+      </View>
       {expanded ? (
         <View style={s.body}>
           {nc.original_text && nc.original_text !== nc.description ? (
@@ -176,8 +184,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
               <Text style={s.body1} selectable testID={`staff-nc-original-${nc.number}`}>{nc.original_text}</Text>
             </>
           ) : null}
-          <Label>Required work</Label>
-          <Text style={s.body1} selectable>{nc.required_work}</Text>
+          {nc.ai?.guidance?.length ? <Text style={s.muted} testID={`staff-nc-guidance-${nc.number}`}>AI used guidance: {nc.ai.guidance.map((g) => `${g.title} (v${g.version})`).join(", ")}</Text> : null}
 
           {nc.ai ? (
             <View style={s.ai} testID={`staff-nc-ai-${nc.number}`}>
@@ -261,6 +268,11 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           ) : (
             <>
               <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
+              <Field placeholder="Why? Internal reason for this decision (optional)" value={reason} onChangeText={setReason} multiline maxLength={1000} testID={`review-reason-${nc.number}`} />
+              <Pressable onPress={() => setSuggest((v) => !v)} style={s.check} accessibilityRole="checkbox" accessibilityState={{ checked: suggest }} testID={`suggest-guidance-${nc.number}`}>
+                <Feather name={suggest ? "check-square" : "square"} size={18} color={colors.onSurface} />
+                <Text style={s.mono}>Suggest as AI guidance (Admin approves before AI uses it)</Text>
+              </Pressable>
               {nc.status === "approved" ? (
                 <View style={s.approvedBox} testID={`approved-state-${nc.number}`}>
                   <Feather name="check-circle" size={18} color={colors.onSuccess} />
@@ -296,7 +308,9 @@ const useStyles = makeStyles((c) => ({
   card: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   approvedBox: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: space.sm, minHeight: 48, backgroundColor: c.success, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
   approvedText: { fontFamily: fonts.display, fontWeight: "800", fontSize: 15, color: c.onSuccess, textTransform: "uppercase" },
-  head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md, minHeight: 56 },
+  head: { flexDirection: "row", alignItems: "center", gap: space.md, padding: space.md, paddingBottom: space.sm, minHeight: 56 },
+  safetyRow: { paddingHorizontal: space.md, paddingBottom: space.md },
+  check: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44 },
   headRow: { flexDirection: "row", gap: space.sm, alignItems: "center", flexWrap: "wrap" },
   num: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface },
   desc: { fontFamily: fonts.display, fontWeight: "700", fontSize: 15, color: c.onSurface },
