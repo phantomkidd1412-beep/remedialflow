@@ -144,7 +144,7 @@ async def live_project(pid: str) -> dict:
 LIVE_CATS = {"review", "escalated", "action", "approved", "assigned"}  # summaries derived from current NC states
 CAT_TITLE = {"review": "Ready for review", "escalated": "Escalated to Admin", "action": "Work rejected - action needed",
              "approved": "Work approved", "assigned": "New work assigned", "project_ready": "Ready for review",
-             "completed": "Project completed", "rate_changed": "Rate updated"}
+             "completed": "Project completed", "rate_changed": "Rate updated", "deadline": "Site visit tomorrow"}
 
 
 def _n(k: int, word: str = "NC") -> str:
@@ -173,6 +173,8 @@ async def _summary(cat: str, pid: str, uid: str, ncs: list) -> tuple:
         return True, "All NC evidence submitted. Ready for review."
     if cat == "completed":
         return True, "All NCs approved. Evidence pack is being saved."
+    if cat == "deadline":
+        return True, "You have a site visit scheduled here tomorrow."
     return True, ""
 
 
@@ -874,9 +876,11 @@ async def _process_file(fid: str, data: bytes, meta: Optional[dict]):
             outs = await run_in_threadpool(process_photo, frames[0], None) if frames else {}
             outs.pop("display", None)
         paths = dict(f.paths)
-        for variant, b in outs.items():
-            paths[variant] = await storage.aput(
-                evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, variant, "jpg"), b, "image/jpeg")
+        names = list(outs)
+        # thumbnail/display/stamped copies upload in parallel instead of one Dropbox round-trip after another
+        stored = await asyncio.gather(*[storage.aput(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, v, "jpg"),
+                                                     outs[v], "image/jpeg") for v in names])
+        paths.update(dict(zip(names, stored)))
         await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {f"paths.{k}": v for k, v in paths.items()} | {"processing": "ready"}})
     except Exception as e:
         log.exception("processing failed %s", fid)
@@ -1701,6 +1705,23 @@ async def retry_auto_packs(pid: str, u: User = Depends(staff)):
     return clean(await db.auto_packs.find({"project_id": pid}).sort("cycle", -1).to_list(100))
 
 
+async def deadline_reminders():
+    """Hourly: installers get one reminder the day before a scheduled visit (deduplicated by notify)."""
+    from datetime import datetime, timedelta, timezone
+    while True:
+        try:
+            tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
+            async for p in db.projects.find({"deleted": {"$ne": True}, "schedules": {"$exists": True}}, {"schedules": 1, "status": 1}):
+                if p.get("status") in ("completed", "trustmark_resolved"):
+                    continue
+                for iid, d in (p.get("schedules") or {}).items():
+                    if d == tomorrow:
+                        await notify(iid, "deadline", str(p["_id"]), f"Visit date: {d}")
+        except Exception:
+            log.exception("deadline reminders failed")
+        await asyncio.sleep(3600)
+
+
 async def retry_pending_packs():
     """Startup safety net: packs interrupted by a restart or a Dropbox outage get one more attempt."""
     for d in await db.auto_packs.find({"status": {"$in": ["pending", "failed", "running"]}}, {"_id": 1}).to_list(500):
@@ -1879,6 +1900,7 @@ async def startup():
     await _ld()
     asyncio.create_task(backfill_playback())
     asyncio.create_task(retry_pending_packs())
+    asyncio.create_task(deadline_reminders())
 
 
 async def _seed_safe():

@@ -23,7 +23,9 @@ export function SyncBar({ projectId, inTabs = true }: { projectId?: string; inTa
   const offline = waiting ? " · offline, will send when connected" : "";
   const text = failed
     ? `${failed} upload failed · ${pendingUploads} pending`
-    : syncing && progress?.total
+    : pending.some((i) => i.status === "compressing")
+      ? `Compressing photo${progress?.total ? ` · ${Math.min(progress.done + 1, progress.total)} of ${progress.total}` : ""}`
+      : syncing && progress?.total
       ? `Uploading ${Math.min(progress.done + 1, progress.total)} of ${progress.total}`
       : uploads
         ? `${uploads} pending upload${uploads === 1 ? "" : "s"}${offline}`

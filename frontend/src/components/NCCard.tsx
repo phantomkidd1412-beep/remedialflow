@@ -44,7 +44,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const { maxVideoMb } = useMediaConfig();
   const canSubmit = !done && nc.status !== "assessing" && !submitQueued && (nc.draft_count > 0 || uploads.length > 0);
   const badge = ev
-    ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
+    ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", compressing: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
     : { status: nc.status, label: nc.status === "assessing" ? "Awaiting Review" : undefined };
   // Mandatory evidence for new NCs: pre, mid and final photos plus a video for this NC (queued items count too)
   const allPhotos = [...nc.photos.filter((p) => p.status !== "superseded"), ...uploads.filter((q) => q.meta?.kind === "photo").map((q) => ({ stage: q.meta?.stage }))];
@@ -56,18 +56,19 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const [stage, setStage] = useState<"pre" | "mid" | "final">(firstMissing);
   const [note, setNote] = useState(nc.installer_note ?? "");
   const missing = nc.requires_stages ? [...STAGES.filter(([k]) => !has[k]).map(([, l]) => `${l} photo`), ...(has.video ? [] : ["video"])] : [];
-  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, stage };
+  const [orig, setOrig] = useState(false);
+  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, stage, orig: orig ? "1" : "0" };
 
   const pickGallery = async () => {
     const r = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ["images", "videos"],
       allowsMultipleSelection: true,
       selectionLimit: 0, // no fixed photo limit per NC (0 = unlimited)
-      quality: 1, // no re-compression of photos
+      quality: 1, // photos are compressed by the upload queue (or kept original when chosen)
       exif: true,
-      // iOS: hand over the original file (no HEVC->H.264 transcode / downscale)
       preferredAssetRepresentationMode: ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
-      videoExportPreset: ImagePicker.VideoExportPreset.Passthrough,
+      // iOS: compress gallery videos to H.264 1080p unless "Original quality" is on
+      videoExportPreset: orig ? ImagePicker.VideoExportPreset.Passthrough : ImagePicker.VideoExportPreset.H264_1920x1080,
     });
     if (r.canceled) return;
     const photos = r.assets.filter((a) => a.type !== "video");
@@ -78,7 +79,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     for (const a of photos) {
       await enqueueUpload(project.id, nc.id, a.uri, a.mimeType || "image/jpeg", {
         // captured_at only from the file's own EXIF; GPS is never claimed for gallery media
-        kind: "photo", source: "gallery", stage, captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
+        kind: "photo", source: "gallery", stage, original: orig || undefined, captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       });
     }
     for (const video of okVideos) {
@@ -153,6 +154,10 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
                   </Pressable>
                 ))}
               </View>
+              <Pressable onPress={() => setOrig((o) => !o)} style={s.origRow} testID={`original-quality-${nc.number}`}>
+                <Feather name={orig ? "check-square" : "square"} size={18} color={colors.onSurface} />
+                <Text style={s.stageText}>Original quality (larger, slower upload)</Text>
+              </Pressable>
               {nc.requires_stages ? (
                 <Text style={[s.muted, missing.length ? { color: colors.onWarning } : { color: colors.onSuccess }]} testID={`mandatory-${nc.number}`}>
                   {missing.length ? `Still needed: ${missing.join(", ")}` : "All required evidence added (pre, mid, final photos and video)"}
@@ -257,6 +262,7 @@ const useStyles = makeStyles((c) => ({
   muted: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.sm },
   stage: { flex: 1, minHeight: 44, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", borderWidth: BORDER, borderRadius: radius.pill, borderColor: c.border },
+  origRow: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 44 },
   stageText: { fontFamily: fonts.text, fontSize: 14, fontWeight: "600", color: c.onSurface },
   local: { width: 72, height: 72, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },
   localTag: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: c.warning, alignItems: "center" },

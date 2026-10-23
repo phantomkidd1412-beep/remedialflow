@@ -155,3 +155,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - PDF: REMEDIAL WORKS CARRIED OUT + one photo per stage; staff pdf_include override (PUT /api/evidence/{fid}/pdf-include); VIDEO EVIDENCE line
 - Settings: auto_approve_risks, human_signoff_required
 - Pending: Phase 2 (compression/upload UX, native build), Phase 4 (batch upload, web, push)
+
+## Phase 2 + Phase 4 (iteration 30, preview)
+- Queue: per-attempt photo compression (expo-image-manipulator, <=2048px, JPEG 0.82, skip <=1280px), "Original quality" option, statuses Pending/Compressing/Uploading/Synced/Failed - Retry; video camera 1080p 8 Mbps; iOS gallery video H.264 1080p export
+- Backend variant uploads in parallel; push deep links /job/{pid} | /project/{pid}; hourly deadline reminders (day before scheduled visit)
+- Staff batch upload /batch/{pid}: drag-drop (web), pick, NC + stage per file, progress/retry/cancel via shared queue
+- Needs native build: compression, camera settings, push (google-services.json)

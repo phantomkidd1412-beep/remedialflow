@@ -249,6 +249,7 @@ export default function StaffProject() {
       <Sheet visible={menuOpen} onClose={() => setMenuOpen(false)} title="Project actions" testID="project-actions-sheet">
         {p.source_report ? <Btn title="View TrustMark PDF" icon="file-text" variant="outline" onPress={menu(() => openReport(id).then(() => toast("Inspection PDF downloaded")).catch((e) => toast(e.message)))} testID="open-report-button" /> : null}
         <Btn title="Download evidence" icon="download" variant="outline" onPress={menu(() => { toast("Preparing evidence pack…"); return openExport(id).catch((e) => toast(e.message)); })} testID="export-project-button" />
+        <Btn title="Batch upload evidence" icon="upload" variant="outline" onPress={menu(() => router.push(`/batch/${id}`))} testID="batch-upload-button" />
         <Btn title="Export to Dropbox" icon="upload-cloud" variant="outline" onPress={menu(sendToDropbox)} testID="export-dropbox-button" />
         <Btn title="Audit history" icon="list" variant="outline" onPress={menu(() => setAuditOpen(true))} testID="audit-trail-button" />
         <Btn title="Add NC" icon="plus" variant="outline" onPress={menu(() => setAddOpen(true))} testID="add-nc-button" />

@@ -5,13 +5,14 @@ import { AppState, Platform } from "react-native";
 import NetInfo from "@react-native-community/netinfo";
 import { storage } from "@/src/utils/storage";
 import { uploadChunked, uploadForm } from "@/src/utils/upload";
+import { compressPhoto } from "@/src/utils/compress";
 import { authed, BASE, readError } from "@/src/api";
 import { queryClient } from "@/src/query-client";
 import { useAuth } from "@/src/auth";
 
 export type EvidenceMeta = {
   kind: "photo" | "video";
-  source: "in_app_camera" | "gallery";
+  source: "in_app_camera" | "gallery" | "employee_upload";
   captured_at: string | null;
   tz: string;
   tz_offset_min: number;
@@ -20,6 +21,7 @@ export type EvidenceMeta = {
   accuracy_m: number | null;
   duration_s?: number | null;
   stage?: "pre" | "mid" | "final";
+  original?: boolean; // upload the photo at original quality (no on-device compression)
 };
 
 export type QueueItem = {
@@ -31,7 +33,7 @@ export type QueueItem = {
   mime?: string;
   meta?: EvidenceMeta;
   userId?: string; // owner: items only sync for the installer who captured them
-  status: "pending" | "uploading" | "uploaded" | "failed";
+  status: "pending" | "compressing" | "uploading" | "uploaded" | "failed";
   error?: string;
   createdAt: string;
   note?: string; // submit only: installer's short description of the work
@@ -39,7 +41,7 @@ export type QueueItem = {
 };
 
 /** Per-NC evidence state shown to the installer. null = nothing on the phone, show the server status. */
-export type EvidenceState = { key: "failed" | "submitting" | "uploading" | "submitted" | "pending"; label: string; error?: string; failed: QueueItem[] };
+export type EvidenceState = { key: "failed" | "submitting" | "compressing" | "uploading" | "submitted" | "pending"; label: string; error?: string; failed: QueueItem[] };
 
 export function evidenceState(queued: QueueItem[]): EvidenceState | null {
   const sub = queued.find((q) => q.type === "submit");
@@ -48,6 +50,7 @@ export function evidenceState(queued: QueueItem[]): EvidenceState | null {
   if (failed.length) return { key: "failed", label: "Upload Failed", error: failed[0].error, failed };
   if (sub?.status === "uploading") return { key: "submitting", label: "Submitting", failed };
   if (ups.some((q) => q.status === "uploading")) return { key: "uploading", label: "Uploading", failed };
+  if (ups.some((q) => q.status === "compressing")) return { key: "compressing", label: "Compressing", failed };
   if (sub?.status === "uploaded") return { key: "submitted", label: "Submitted", failed };
   if (sub || ups.length) return { key: "pending", label: "Pending Upload", failed };
   return null;
@@ -77,7 +80,7 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-export const STATUS_LABEL: Record<QueueItem["status"], string> = { pending: "Pending Upload", uploading: "Uploading", uploaded: "Uploaded", failed: "Upload Failed" };
+export const STATUS_LABEL: Record<QueueItem["status"], string> = { pending: "Pending", compressing: "Compressing", uploading: "Uploading", uploaded: "Synced", failed: "Failed - Retry" };
 
 /** Server refused the item: keep it on the phone and tell the installer what to do. */
 function refusal(status: number, msg: string) {
@@ -92,7 +95,7 @@ type Ctx = {
   progress: { done: number; total: number } | null;
   pct: Record<string, number>; // live upload fraction (0..1) per queue item id; in-memory only
   retryFailed: () => void;
-  enqueueUpload: (projectId: string, ncId: string, uri: string, mime: string, meta: EvidenceMeta) => Promise<void>;
+  enqueueUpload: (projectId: string, ncId: string, uri: string, mime: string, meta: EvidenceMeta) => Promise<string>;
   enqueueSubmit: (projectId: string, ncId: string, note?: string) => Promise<void>;
   discard: (id: string) => Promise<void>;
   clearAll: () => Promise<void>;
@@ -162,6 +165,14 @@ export function QueueProvider({ children }: PropsWithChildren) {
         );
         if (!next) break;
         setProgress({ done, total: done + own.filter((i) => i.type === "upload" && (i.status === "pending" || i.status === "uploading")).length });
+        // photos are compressed fresh for each attempt into a temp file; the queued original is kept until synced
+        let sendUri = next.uri!;
+        let tmp: string | null = null;
+        if (next.type === "upload" && next.mime?.startsWith("image") && !next.meta?.original) {
+          await patch(next.id, { status: "compressing", error: undefined });
+          tmp = await compressPhoto(next.uri!);
+          if (tmp) sendUri = tmp;
+        }
         await patch(next.id, { status: "uploading", error: undefined });
         let r: Response;
         try {
@@ -172,19 +183,20 @@ export function QueueProvider({ children }: PropsWithChildren) {
               lastPct.current = f;
               setPct((m) => ({ ...m, [next.id]: f }));
             };
-            const meta = JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(next.uri!) });
+            const meta = JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(sendUri), compressed: !!tmp });
             r = await withTimeout(authed((t) =>
               next.mime?.includes("video")
                 ? // videos: resumable 8 MB chunks, so no single request approaches the ~100 MB gateway limit
-                  uploadChunked(BASE, { ncId: next.ncId, clientId: next.id, uri: next.uri!, mime: next.mime!, meta, token: t, onProgress })
+                  uploadChunked(BASE, { ncId: next.ncId, clientId: next.id, uri: sendUri, mime: next.mime!, meta, token: t, onProgress })
                 : uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
                     headers: t ? { Authorization: `Bearer ${t}` } : {},
                     fields: { meta },
-                    files: { file: { uri: next.uri!, name: "photo.jpg", mimeType: next.mime } },
+                    files: { file: { uri: sendUri, name: "photo.jpg", mimeType: tmp ? "image/jpeg" : next.mime } },
                     onProgress,
                   }),
             ), next.mime?.includes("video") ? VIDEO_UPLOAD_TIMEOUT : UPLOAD_TIMEOUT).finally(() => {
               lastPct.current = 0;
+              if (tmp) removeFile(tmp);
               setPct((m) => {
                 const { [next.id]: _, ...rest } = m;
                 return rest;
@@ -244,7 +256,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
       const list: QueueItem[] = raw ? JSON.parse(String(raw)) : [];
       // interrupted uploads go back to pending (server de-duplicates by client_id); confirmed ones are released
       list.filter((i) => i.status === "uploaded").forEach((i) => removeFile(i.uri));
-      await save(list.filter((i) => i.status !== "uploaded").map((i) => (i.status === "uploading" ? { ...i, status: "pending" } : i)));
+      await save(list.filter((i) => i.status !== "uploaded").map((i) => (i.status === "uploading" || i.status === "compressing" ? { ...i, status: "pending" } : i)));
       process();
     })();
     const t = setInterval(() => process(), 15000);
@@ -265,6 +277,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
     const item: QueueItem = { id, type: "upload", projectId, ncId, uri: persistFile(uri, id, mime), mime, meta, userId: user?.id, status: "pending", createdAt: new Date().toISOString() };
     await save([...ref.current, item]);
     process();
+    return id;
   };
 
   const enqueueSubmit: Ctx["enqueueSubmit"] = async (projectId, ncId, note) => {

@@ -20,7 +20,9 @@ _ASSIGNED = ("New work assigned", "You have new work in RemedialFlow.")
 _ACTION = ("Action required", "A job needs your attention in RemedialFlow.")
 _REVIEW = ("Review needed", "Evidence is waiting for review in RemedialFlow.")
 PUSH_TEXT = {"assigned": _ASSIGNED, "action": _ACTION, "escalated": _REVIEW, "review": _REVIEW,
-             "project_ready": ("Project ready for review", "All NC evidence submitted. Ready for review.")}
+             "project_ready": ("Project ready for review", "All NC evidence submitted. Ready for review."),
+             "approved": ("Work approved", "Some of your NC work has been approved."),
+             "deadline": ("Site visit tomorrow", "You have a site visit scheduled for tomorrow.")}
 
 
 def _client() -> httpx.AsyncClient:
@@ -77,8 +79,13 @@ async def push_for(user_id: str, kind: str, key: str):
     if not text:
         return
     try:
-        if not await db.users.find_one({"_id": oid(user_id), "active": True, "push_active": True}, {"_id": 1}):
+        u = await db.users.find_one({"_id": oid(user_id), "active": True, "push_active": True}, {"role": 1})
+        if not u:
             return
-        await send_push([user_id], {"title": text[0], "message": text[1], "action_url": "/notifications"}, idempotency_key=key)
+        # deep link: key is "{category}:{project_id}:{ts}" -> open that project (installer: job view)
+        parts = key.split(":")
+        pid = parts[1] if len(parts) > 2 and len(parts[1]) == 24 else None
+        url = (f"/job/{pid}" if u.get("role") == "installer" else f"/project/{pid}") if pid else "/notifications"
+        await send_push([user_id], {"title": text[0], "message": text[1], "action_url": url}, idempotency_key=key)
     except Exception as e:
         log.warning("Push failed (non-blocking): %s", type(e).__name__)
