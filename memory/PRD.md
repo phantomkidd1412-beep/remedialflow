@@ -161,3 +161,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Backend variant uploads in parallel; push deep links /job/{pid} | /project/{pid}; hourly deadline reminders (day before scheduled visit)
 - Staff batch upload /batch/{pid}: drag-drop (web), pick, NC + stage per file, progress/retry/cancel via shared queue
 - Needs native build: compression, camera settings, push (google-services.json)
+
+## Final corrections (iteration 31, preview)
+- Installer NC card: generic TrustMark "Required work" boilerplate hidden; Pre/Mid/Final picker + checklist removed; only remediation video (+1 photo) mandatory for new NCs
+- PDF: Gemini arrange_photos at pack build (nc.pdf_ai cached by photo set; null stage when unsure; uncertain flag); staff stage labels via PUT /api/evidence/{fid}/pdf-include {stage} win; works description auto-drafted into export_note (source ai) when empty
+- Auto-approval: ai.blocked reasons shown to staff; SAFETY_RE on NC text forces human sign-off (AI risk label varied between runs); approved NCs notify installer
+- Root cause of "no auto-approval": Admin setting auto_verify = OFF in DB (left as user set it)
+- Real Gemini verified in-process on QA clones of real NC-01 evidence (scenarios B, C, D, E, video-missing; A with risk relabelled)

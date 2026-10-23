@@ -64,14 +64,14 @@ export default function BatchUpload() {
     if (!r.canceled) add(r.assets.map((a) => ({ uri: a.uri, mime: a.mimeType || (a.type === "video" ? "video/mp4" : "image/jpeg"), name: a.fileName || a.uri.split("/").pop() || "file" })));
   };
   const set = (key: string, patch: Partial<Row>) => setRows((r) => r.map((x) => (x.key === key ? { ...x, ...patch } : x)));
-  const ready = rows.length > 0 && rows.every((r) => r.ncId && (r.video || r.stage));
+  const ready = rows.length > 0 && rows.every((r) => r.ncId); // stage is optional: AI arranges photos in the PDF
 
   const upload = async () => {
-    if (!ready) return toast("Choose an NC and a stage for every photo first");
+    if (!ready) return toast("Choose an NC for every file first");
     const ids: string[] = [];
     for (const r of rows) {
       ids.push(await enqueueUpload(pid, r.ncId!, r.uri, r.mime, {
-        kind: r.video ? "video" : "photo", source: "employee_upload", stage: r.video ? undefined : r.stage!, original: orig || undefined,
+        kind: r.video ? "video" : "photo", source: "employee_upload", stage: r.video ? undefined : r.stage ?? undefined, original: orig || undefined,
         captured_at: null, ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       }));
     }
@@ -116,7 +116,7 @@ export default function BatchUpload() {
             {!r.video ? (
               <View style={s.row}>
                 {STAGES.map(([k, l]) => (
-                  <Pressable key={k} onPress={() => set(r.key, { stage: k })} style={[s.chip, r.stage === k && s.chipOn]} testID={`batch-stage-${k}`}>
+                  <Pressable key={k} onPress={() => set(r.key, { stage: r.stage === k ? null : k })} style={[s.chip, r.stage === k && s.chipOn]} testID={`batch-stage-${k}`}>
                     <Text style={[s.chipText, r.stage === k && { color: colors.onBrandSecondary }]}>{l}</Text>
                   </Pressable>
                 ))}

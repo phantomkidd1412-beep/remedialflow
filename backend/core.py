@@ -102,6 +102,7 @@ class AIResult(BaseModel):
     requests: List[str] = []  # precise evidence requests sent to the installer
     works_description: str = ""  # AI draft of the remedial works (from recorded info only)
     best: dict = {}  # stage -> file id chosen for the PDF
+    blocked: List[str] = []  # why automatic approval did not happen (shown to staff)
     feedback: str = ""
     concerns: List[str] = []
     model: str = ""
@@ -161,6 +162,7 @@ class EvidenceFile(BaseDocument):
     server_received_at: str = Field(default_factory=now_iso)
     status: str = "draft"  # draft | submitted | superseded
     stage: Optional[str] = None  # pre | mid | final (photos; None for historic evidence)
+    stage_source: Optional[str] = None  # installer | staff | ai (who set the stage; staff overrides AI in the PDF)
     pdf_include: Optional[bool] = None  # staff override of the PDF photo selection (None = automatic)
     client_id: Optional[str] = None  # idempotency key from device queue
     processing: str = "pending"  # pending | ready | failed

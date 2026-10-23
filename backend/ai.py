@@ -171,3 +171,42 @@ def get_pdf_extractor() -> PdfExtractor:
 
 def get_assessor() -> Assessor:
     return LlmAssessor(os.environ.get("AI_PROVIDER", "gemini"), os.environ.get("AI_MODEL", "gemini-3-flash-preview"))
+
+
+PHOTO_SYSTEM = """You arrange installer remediation photos for a TrustMark evidence PDF for ONE non-compliance (NC).
+You receive the NC wording, the installer note, any existing remedial-works text, and numbered installer photos (0-based, in upload
+order with capture times). Upload order alone does NOT prove the stage - judge by content.
+Choose at most ONE photo per stage:
+- pre: the original defect / condition before corrective work
+- mid: the corrective method or work in progress (concealed work before it was covered)
+- final: the completed remedial work
+Use null for a stage when no photo clearly shows it - never guess a label. Exclude duplicates, blurred and irrelevant photos.
+"extra": up to 2 further indexes ONLY if technically necessary (e.g. a second defect area or a measurement).
+"uncertain": true if any chosen stage is doubtful or a needed stage is missing.
+"description": 20-40 words, one or two professional sentences stating what was corrected and how, using ONLY what the NC, installer
+note and photos establish. Do not repeat the NC wording. Never invent materials or methods. Empty string if it cannot be established.
+Respond with ONLY JSON: {"pre": 0|null, "mid": 2|null, "final": 5|null, "extra": [], "uncertain": false, "description": "..."}"""
+
+
+async def arrange_photos(nc_text: str, required: str, installer_note: str, works_text: str, photos: List[bytes], times: List[str]) -> Optional[dict]:
+    """Gemini picks/labels the PDF photo sequence and drafts the works description. None when AI is unavailable."""
+    if not photos:
+        return None
+    try:
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"pdf-photos-{uuid.uuid4()}",
+                       system_message=PHOTO_SYSTEM).with_model(os.environ.get("AI_PROVIDER", "gemini"), os.environ.get("AI_MODEL", "gemini-3-flash-preview"))
+        listing = "\n".join(f"{i}: captured {t or 'unknown'}" for i, t in enumerate(times))
+        msg = UserMessage(text=f"NC: {nc_text[:1500]}\nRequired work: {required[:600]}\nInstaller note: {installer_note or '(none)'}\n"
+                               f"Existing remedial works text: {works_text or '(none)'}\nPhotos:\n{listing}",
+                          file_contents=[ImageContent(image_base64=base64.b64encode(b).decode()) for b in photos])
+        out = await chat.send_message(msg)
+        m = re.search(r"\{.*\}", out if isinstance(out, str) else str(out), re.S)
+        j = json.loads(m.group(0)) if m else {}
+        n = len(photos)
+        pick = lambda v: v if isinstance(v, int) and 0 <= v < n else None
+        return {"pre": pick(j.get("pre")), "mid": pick(j.get("mid")), "final": pick(j.get("final")),
+                "extra": [x for x in (j.get("extra") or []) if pick(x) is not None][:2], "uncertain": bool(j.get("uncertain")),
+                "description": " ".join(str(j.get("description") or "").split()[:60])}
+    except Exception as e:
+        log.warning("photo arrangement failed: %s", type(e).__name__)
+        return None

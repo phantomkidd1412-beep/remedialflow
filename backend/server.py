@@ -1021,12 +1021,13 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
     if kind == "video":  # multiple videos per NC: a new video never replaces or hides an earlier one
         await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"active_video_id": f.id}})
     elif m.get("stage") in STAGES:
-        await db.files.update_one({"_id": oid(f.id)}, {"$set": {"stage": m["stage"]}})
+        await db.files.update_one({"_id": oid(f.id)}, {"$set": {"stage": m["stage"], "stage_source": "staff" if m.get("source") == "employee_upload" else "installer"}})
         f.stage = m["stage"]
     return file_public(f)
 
 
 STAGES = ("pre", "mid", "final")
+SAFETY_RE = re.compile(r"\b(gas|electric\w*|wiring|fuse|consumer unit|fire|flue|combustion|carbon monoxide|CO alarm|boiler|structural|lintel|scaffold)\b", re.I)
 STAGE_NAME = {"pre": "pre-remediation", "mid": "mid-remediation", "final": "final-remediation"}
 
 
@@ -1034,7 +1035,8 @@ async def missing_mandatory(nc_id: str) -> List[str]:
     """Mandatory evidence for new NCs: at least one pre, mid and final photo and one video (all uploaded)."""
     have = await db.files.find({"nc_id": nc_id, "status": {"$in": ["draft", "submitted"]}, "kind": {"$in": ["photo", "video"]}},
                                {"kind": 1, "stage": 1}).to_list(5000)
-    miss = [f"a {STAGE_NAME[st]} photo" for st in STAGES if not any(f["kind"] == "photo" and f.get("stage") == st for f in have)]
+    # photos are arranged by AI at PDF time; only the remediation video is mandatory (plus at least one photo)
+    miss = [] if any(f["kind"] == "photo" for f in have) else ["at least one photo"]
     if not any(f["kind"] == "video" for f in have):
         miss.append("a video of this NC's remediation")
     return miss
@@ -1139,22 +1141,26 @@ async def run_assessment(nc_id: str, sub_id: str):
         status = {"ai_verified": "approved", "more_evidence_required": "more_evidence"}.get(ai.outcome, "employee_review")
         if res is not None:
             ai.status = {"more_evidence_required": "more_evidence", "potential_noncompliance": "potential_noncompliance"}.get(ai.outcome, "employee_review")
-        safety = nc.safety_critical or ai.risk == "safety"
+        # deterministic safety net: AI risk labels can vary between runs, so gas/electrical/fire/flue/CO/structural
+        # wording in the NC itself always forces human review
+        safety = nc.safety_critical or ai.risk == "safety" or bool(SAFETY_RE.search(" ".join([nc.original_text or "", nc.description or "", nc.required_work or ""])))
         if safety:
             # Safety-critical work always needs a competent human decision (incl. AI "more evidence" opinions).
             status = "employee_review"
             if ai.status == "more_evidence":
                 ai.status = "employee_review"
             reasons.append("Safety-critical: competent human review required")
+            if ai.outcome == "ai_verified":
+                ai.status = "ai_verified_signoff"
         if status == "approved":
             if not (s.auto_verify and s.auto_approve_low_risk):
-                reasons.append("Automatic approval disabled")
+                reasons.append("Automatic approval is switched off in Admin settings")
             if ai.risk not in s.auto_approve_risks:
                 reasons.append(f"'{ai.risk}' NCs are not eligible for automatic approval")
             if ai.method_demonstrated is False:
                 reasons.append("Corrective method not demonstrated")
             if nc.requires_stages and await missing_mandatory(nc_id):
-                reasons.append("Mandatory evidence incomplete")
+                reasons.append("Mandatory remediation video missing")
             if (ai.confidence or 0) < s.confidence_threshold:
                 reasons.append(f"Confidence {ai.confidence:.2f} below {s.confidence_threshold:.2f}")
             if s.location_policy == "reject" and any(not f.location_verified for f in photos):
@@ -1168,6 +1174,10 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append("AI technically verified - human sign-off required by policy")
             else:
                 ai.status = "ai_approved"
+        if status == "employee_review" and res is not None and not reasons and ai.outcome != "ai_verified":
+            reasons.append({"manual_review_required": "Technical uncertainty: AI could not confirm the work",
+                            "potential_noncompliance": "AI found possible non-compliance"}.get(ai.outcome, "AI assessment incomplete"))
+        ai.blocked = [r for r in reasons if not r.startswith("Location")] if status == "employee_review" else []
         if status == "more_evidence" and ai.requests:
             ai.feedback = " ".join(ai.requests)[:600]
         ai.concerns = ai.concerns + reasons + flags
@@ -1178,6 +1188,8 @@ async def run_assessment(nc_id: str, sub_id: str):
         await db.ncs.update_one({"_id": ObjectId(nc_id)}, {"$set": {"status": status, "ai": ai.model_dump(), "updated_at": now_iso(), **extra}})
         if status == "employee_review":
             await notify_reviewers(nc_id)
+        elif status == "approved":
+            await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "approved")
         elif status == "more_evidence":  # precise request goes straight to the installer, not to an employee
             await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "action", "more evidence needed: " + ai.feedback[:160])
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
@@ -1729,31 +1741,50 @@ async def retry_pending_packs():
 
 
 async def pdf_photo_groups(n: dict, files: list, get) -> list:
-    """[(heading, [jpeg])]: staff overrides win; otherwise one best photo per Pre/Mid/Final stage (AI pick, else the
-    sharpest non-duplicate); historic un-staged NCs keep up to 6 distinct photos. Originals are never removed."""
+    """[(heading, [jpeg])] for one NC. Order of authority: staff include/exclude + staff stage labels, then Gemini's
+    arrangement of the photos (cached per photo set), then a plain fallback. A stage is only labelled when known;
+    original TrustMark photos are handled separately and never labelled as installer evidence."""
     from evidence_pack import select_photos, readable
-    photos = [f for f in files if f["kind"] == "photo" and f["status"] != "superseded"]
+    from ai import arrange_photos
+    photos = [f for f in files if f["kind"] == "photo" and f["status"] != "superseded" and f.get("pdf_include") is not False]
 
     async def load(fs):
         return await run_in_threadpool(readable, [b for f in fs for b in [await get(f, "stamped", "display", "original")] if b])
     picked = [f for f in photos if f.get("pdf_include") is True]
-    pool = [f for f in photos if f.get("pdf_include") is not False]
-    staged = [f for f in pool if f.get("stage") in STAGES]
-    if not picked and not staged:
-        return [("REMEDIATION PHOTOGRAPHS", await run_in_threadpool(select_photos, await load(pool), 6))]
-    out = []
-    best = (n.get("ai") or {}).get("best") or {}
-    for st in STAGES:
-        if picked:
-            sel = [f for f in picked if f.get("stage") == st]
-        else:
-            cand = [f for f in staged if f.get("stage") == st]
-            sel = [f for f in cand if str(f["_id"]) == best.get(st)] or cand
-        imgs = await load(sel)
-        if imgs:
-            out.append((STAGE_NAME[st].upper() + " PHOTOGRAPH" + ("S" if picked and len(imgs) > 1 else ""),
-                        imgs if picked else await run_in_threadpool(select_photos, imgs, 1)))
-    extra = [f for f in picked if f.get("stage") not in STAGES]
+    pool = picked or photos
+    if not pool:
+        return []
+    staff_staged = {st: [f for f in pool if f.get("stage") == st and f.get("stage_source") == "staff"] for st in STAGES}
+    chosen = {st: v for st, v in staff_staged.items() if v}
+    extra = []
+    if picked and not chosen:  # staff hand-picked photos without stages: show exactly those
+        return [("REMEDIATION PHOTOGRAPHS", await load(picked))]
+    if len(chosen) < 3:
+        cand = sorted(pool, key=lambda f: f.get("captured_at") or f.get("server_received_at") or "")[:12]
+        key = hashlib.sha1(",".join(str(f["_id"]) for f in cand).encode()).hexdigest()[:16]
+        arr = (n.get("pdf_ai") or {}) if (n.get("pdf_ai") or {}).get("key") == key else None
+        if arr is None:
+            imgs = [b for f in cand for b in [await get(f, "display", "stamped", "original")]]
+            ok = [i for i, b in enumerate(imgs) if b]
+            res = await arrange_photos(n.get("original_text") or n.get("description", ""), n.get("required_work", ""), n.get("installer_note", ""),
+                                       n.get("export_note", ""), [imgs[i] for i in ok],
+                                       [str(cand[i].get("captured_at") or "") for i in ok])
+            if res is not None:
+                m = lambda v: str(cand[ok[v]]["_id"]) if v is not None else None
+                arr = {"key": key, "pre": m(res["pre"]), "mid": m(res["mid"]), "final": m(res["final"]),
+                       "extra": [m(x) for x in res["extra"]], "uncertain": res["uncertain"], "description": res["description"], "at": now_iso()}
+                await db.ncs.update_one({"_id": n["_id"]}, {"$set": {"pdf_ai": arr}})
+                n["pdf_ai"] = arr
+        if arr:
+            by = {str(f["_id"]): f for f in cand}
+            for st in STAGES:
+                if st not in chosen and by.get(arr.get(st)):
+                    chosen[st] = [by[arr[st]]]
+            extra = [by[i] for i in arr.get("extra") or [] if i in by]
+        elif not chosen:  # AI unavailable: no stage labels are guessed
+            return [("REMEDIATION PHOTOGRAPHS", await run_in_threadpool(select_photos, await load(pool), 3))]
+    out = [(STAGE_NAME[st].upper() + " PHOTOGRAPH", await load(chosen[st][:1] if st not in staff_staged or not staff_staged[st] else chosen[st]))
+           for st in STAGES if st in chosen]
     if extra:
         out.append(("ADDITIONAL SUPPORTING EVIDENCE", await load(extra)))
     return out
@@ -1761,6 +1792,7 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
 
 class PdfIncludeIn(BaseModel):
     include: Optional[bool] = None  # True = always in PDF, False = never, None = automatic
+    stage: Optional[str] = Field(default=None, pattern=r"^(pre|mid|final|auto)$")  # staff classification ("auto" = let AI decide)
 
 
 @api.put("/evidence/{fid}/pdf-include")
@@ -1769,9 +1801,12 @@ async def set_pdf_include(fid: str, body: PdfIncludeIn, u: User = Depends(staff)
     if not f or f["kind"] != "photo":
         raise HTTPException(404, "Photo not found")
     await get_nc(f["nc_id"], u)
-    await db.files.update_one({"_id": f["_id"]}, {"$set": {"pdf_include": body.include}})
-    await audit("evidence.pdf_selection", u.id, f"nc:{f['nc_id']}", {"file_id": fid, "include": body.include})
-    return {"ok": True, "pdf_include": body.include}
+    upd = {"pdf_include": body.include}
+    if body.stage:
+        upd.update({"stage": None, "stage_source": None} if body.stage == "auto" else {"stage": body.stage, "stage_source": "staff"})
+    await db.files.update_one({"_id": f["_id"]}, {"$set": upd})
+    await audit("evidence.pdf_selection", u.id, f"nc:{f['nc_id']}", {"file_id": fid, **upd})
+    return {"ok": True, **upd}
 
 
 async def build_evidence_pack(pid: str, p: dict):
@@ -1799,6 +1834,11 @@ async def build_evidence_pack(pid: str, p: dict):
         trust = await run_in_threadpool(drop_repeated, trust, rep)
         name = f"{n['number']}_{slug(n.get('description', ''))}"
         nvid = sum(1 for f in files if f["kind"] == "video" and f["status"] != "superseded")
+        if not (n.get("export_note") or "").strip():  # draft the works description instead of printing an empty section
+            desc = ((n.get("pdf_ai") or {}).get("description") or (n.get("ai") or {}).get("works_description") or "").strip()
+            if desc:
+                await db.ncs.update_one({"_id": n["_id"], "export_note_source": {"$ne": "staff"}}, {"$set": {"export_note": desc, "export_note_source": "ai"}})
+            n["export_note"] = desc or (n.get("installer_note") or "").strip()
         pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, nvid)
         entries.append((f"{name}.pdf", pdf))
         for f in files:

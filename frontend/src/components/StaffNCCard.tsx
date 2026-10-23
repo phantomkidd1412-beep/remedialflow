@@ -15,6 +15,7 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { colors } = useTheme();
   const [val, setVal] = useState(nc.export_note ?? "");
   const [busy, setBusy] = useState(false);
   const dirty = val.trim() !== (nc.export_note ?? "");
@@ -33,6 +34,8 @@ function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
   return (
     <>
       <Label>Remedial works carried out (PDF){nc.export_note_source === "ai" ? " · AI draft, please check" : ""}</Label>
+      {nc.pdf_ai?.uncertain ? <Text style={{ fontSize: 13, color: colors.onWarning }} testID={`pdf-uncertain-${nc.number}`}>AI was unsure about the photo order for the PDF. Please check the PDF stage labels on the photos.</Text> : null}
+      {!nc.export_note ? <Text style={{ fontSize: 13, color: colors.onWarning }}>No works description yet. It is drafted when the evidence pack is generated, or add one here.</Text> : null}
       {nc.installer_note ? <Text style={{ fontSize: 13 }} testID={`installer-note-${nc.number}`}>Installer note: {nc.installer_note}</Text> : null}
       <Field placeholder="20-40 words: what was corrected and how" value={val} onChangeText={setVal} multiline maxLength={600} testID={`export-note-${nc.number}`} />
       {dirty ? <Btn title="Save description" icon="save" variant="outline" small onPress={save} loading={busy} testID={`export-note-save-${nc.number}`} /> : null}
@@ -71,6 +74,17 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     qc.invalidateQueries({ queryKey: ["projects"] });
   };
 
+  // staff stage label for the PDF: AI -> PRE -> MID -> FINAL -> AI
+  const cycleStage = async (f: EvidenceFile) => {
+    const order = ["auto", "pre", "mid", "final"];
+    const cur = f.stage_source === "staff" && f.stage ? f.stage : "auto";
+    try {
+      await api(`/evidence/${f.id}/pdf-include`, { method: "PUT", body: { include: f.pdf_include ?? null, stage: order[(order.indexOf(cur) + 1) % 4] } });
+      qc.invalidateQueries({ queryKey: ["project", projectId] });
+    } catch (e: any) {
+      toast(e.message);
+    }
+  };
   // PDF photo selection override: automatic -> always include -> never include -> automatic
   const togglePdf = async (f: EvidenceFile) => {
     const next = f.pdf_include == null ? true : f.pdf_include ? false : null;
@@ -171,6 +185,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
               <Text style={s.mono}>{nc.ai.feedback}</Text>
               {nc.ai.concerns.map((c, i) => <Text key={i} style={s.concern}>⚑ {c}</Text>)}
               {nc.ai.requests?.length ? <Text style={s.mono}>Requested from installer: {nc.ai.requests.join(" ")}</Text> : null}
+              {nc.ai.blocked?.length && nc.status !== "approved" ? <Text style={s.concern} testID={`staff-nc-blocked-${nc.number}`}>Not auto-approved: {nc.ai.blocked.join("; ")}</Text> : null}
               <Text style={s.muted}>{nc.ai.model}</Text>
             </View>
           ) : null}
@@ -218,7 +233,8 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             {nc.photos.map((f, i) => (
               <View key={f.id} style={{ gap: 2 }}>
                 <Thumb f={f} size={88} onPress={() => setPv({ files: nc.photos, i })} testID={`staff-photo-${f.id}`} />
-                <Text style={s.tag}>{f.stage ? `${f.stage.toUpperCase()}·` : ""}{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
+                <Pressable onPress={() => cycleStage(f)} testID={`pdf-stage-${f.id}`}><Text style={[s.tag, f.stage_source === "staff" && { fontWeight: "700" }]}>{f.stage_source === "staff" && f.stage ? `PDF ${f.stage.toUpperCase()}` : "STAGE: AI"}</Text></Pressable>
+                <Text style={s.tag}>{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
                 <Pressable onPress={() => togglePdf(f)} style={[s.restore, f.pdf_include === true && { backgroundColor: colors.success }, f.pdf_include === false && { backgroundColor: colors.error }]} testID={`pdf-include-${f.id}`}>
                   <Text style={[s.tag, f.pdf_include === true && { color: colors.onSuccess }, f.pdf_include === false && { color: colors.onError }]}>{f.pdf_include === true ? "IN PDF" : f.pdf_include === false ? "NOT IN PDF" : "PDF: AUTO"}</Text>
                 </Pressable>

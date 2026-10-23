@@ -3,7 +3,10 @@ import { Image } from "expo-image";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { NCItem, ProjectRow, DONE, EvidenceFile, STAGES, useMediaConfig } from "@/src/projects";
+import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
+
+// TrustMark boilerplate repeated on every NC (admin instructions, not remedial work): hidden from installers
+const GENERIC_WORK = /as the retrofit installer for this project|data warehouse|retrofit portal|see inspection report/i;
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Field, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
@@ -52,12 +55,10 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     pre: allPhotos.some((p) => p.stage === "pre"), mid: allPhotos.some((p) => p.stage === "mid"), final: allPhotos.some((p) => p.stage === "final"),
     video: (nc.videos ?? []).some((v) => v.status !== "superseded") || uploads.some((q) => q.meta?.kind === "video"),
   };
-  const firstMissing = (["pre", "mid", "final"] as const).find((k) => !has[k]) ?? "final";
-  const [stage, setStage] = useState<"pre" | "mid" | "final">(firstMissing);
   const [note, setNote] = useState(nc.installer_note ?? "");
-  const missing = nc.requires_stages ? [...STAGES.filter(([k]) => !has[k]).map(([, l]) => `${l} photo`), ...(has.video ? [] : ["video"])] : [];
+  const missing = nc.requires_stages ? [...(allPhotos.length ? [] : ["a photo"]), ...(has.video ? [] : ["a remediation video"])] : [];
   const [orig, setOrig] = useState(false);
-  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, stage, orig: orig ? "1" : "0" };
+  const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, orig: orig ? "1" : "0" };
 
   const pickGallery = async () => {
     const r = await ImagePicker.launchImageLibraryAsync({
@@ -79,7 +80,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
     for (const a of photos) {
       await enqueueUpload(project.id, nc.id, a.uri, a.mimeType || "image/jpeg", {
         // captured_at only from the file's own EXIF; GPS is never claimed for gallery media
-        kind: "photo", source: "gallery", stage, original: orig || undefined, captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
+        kind: "photo", source: "gallery", original: orig || undefined, captured_at: exifDate(a.exif), ...tzInfo(), lat: null, lng: null, accuracy_m: null,
       });
     }
     for (const video of okVideos) {
@@ -140,28 +141,21 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
               <Text style={s.work} selectable>{nc.original_text}</Text>
             </>
           ) : null}
-          <Label>Required remedial work</Label>
-          <Text style={s.work}>{nc.required_work}</Text>
+          {nc.required_work && !GENERIC_WORK.test(nc.required_work) ? (
+            <>
+              <Label>Required remedial work</Label>
+              <Text style={s.work}>{nc.required_work}</Text>
+            </>
+          ) : null}
 
           {!done ? (
             <>
-              <Label>Photo stage</Label>
-              <View style={s.actions} testID={`stage-picker-${nc.number}`}>
-                {STAGES.map(([k, l]) => (
-                  <Pressable key={k} onPress={() => setStage(k)} style={[s.stage, stage === k && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID={`stage-${k}-${nc.number}`}>
-                    <Feather name={has[k] ? "check-circle" : "circle"} size={14} color={has[k] ? colors.onSuccess : colors.muted} />
-                    <Text style={[s.stageText, stage === k && { color: colors.onBrandSecondary }]}>{l}</Text>
-                  </Pressable>
-                ))}
-              </View>
               <Pressable onPress={() => setOrig((o) => !o)} style={s.origRow} testID={`original-quality-${nc.number}`}>
                 <Feather name={orig ? "check-square" : "square"} size={18} color={colors.onSurface} />
                 <Text style={s.stageText}>Original quality (larger, slower upload)</Text>
               </Pressable>
-              {nc.requires_stages ? (
-                <Text style={[s.muted, missing.length ? { color: colors.onWarning } : { color: colors.onSuccess }]} testID={`mandatory-${nc.number}`}>
-                  {missing.length ? `Still needed: ${missing.join(", ")}` : "All required evidence added (pre, mid, final photos and video)"}
-                </Text>
+              {nc.requires_stages && !has.video ? (
+                <Text style={[s.muted, { color: colors.onWarning }]} testID={`mandatory-${nc.number}`}>A remediation video is required for this NC</Text>
               ) : null}
             </>
           ) : null}
