@@ -182,3 +182,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Help & contact (mailto info@networksurveyltd.uk, src/support.ts) on login + ProfileView
 - Account deletion: POST /api/auth/delete-account (password), DELETE /api/admin/users/{uid}; anonymise_user in auth.py keeps _id (evidence/audit linked as "Deleted user"), revokes sessions, blocks sole-admin self-delete
 - app.json ios.config.usesNonExemptEncryption=false; react-native-webview removed
+
+## App Store submission prep
+- Public privacy page GET /api/privacy (backend/privacy_page.py, own CSP allowing inline styles); copy in memory/remedialflow-privacy-policy.html
+- Submission pack: memory/APP_STORE_SUBMISSION.md (screenshots via TestFlight, review contact, content rights, demo setup)
+- Flag: app icon is Emergent template logo -> needs own 1024 icon + new build

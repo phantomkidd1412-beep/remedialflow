@@ -2006,6 +2006,8 @@ from phase10 import router as p10_router  # noqa: E402  (imports server helpers 
 app.include_router(p10_router)
 from guidance import router as guidance_router  # noqa: E402
 app.include_router(guidance_router)
+from privacy_page import router as privacy_router  # noqa: E402
+app.include_router(privacy_router)
 from push import router as push_router  # noqa: E402
 from dropbox_link import router as dropbox_router, load_dropbox  # noqa: E402
 app.include_router(dropbox_router)
