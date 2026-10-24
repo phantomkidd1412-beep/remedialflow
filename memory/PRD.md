@@ -187,3 +187,5 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Public privacy page GET /api/privacy (backend/privacy_page.py, own CSP allowing inline styles); copy in memory/remedialflow-privacy-policy.html
 - Submission pack: memory/APP_STORE_SUBMISSION.md (screenshots via TestFlight, review contact, content rights, demo setup)
 - Flag: app icon is Emergent template logo -> needs own 1024 icon + new build
+- Icon/splash/adaptive/favicon replaced with approved RF design (memory/icon-proposal); iPad support decision pending
+- iPhone-only from Build 104 (ios.supportsTablet=false)

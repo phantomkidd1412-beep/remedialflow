@@ -1,4 +1,6 @@
-# RemedialFlow — App Store submission pack (iOS 1.0.2, Build 103)
+# RemedialFlow — App Store submission pack (iOS 1.0.2; submit Build 104)
+
+Build 104 changes: own RF icon + launch screen, iPhone-only. Privacy policy still has [CONFIRM] items: do NOT give Apple the URL until they are filled in.
 
 ## 1. Screenshots (genuine, captured on device via TestFlight)
 Simulators aren't available in this environment, and Build 103 can't run in Xcode Simulator (TestFlight builds are device-only).
@@ -7,7 +9,7 @@ Screenshots taken on a real device with TestFlight are genuine, and they come ou
 | App Store Connect slot | Device to capture on | Native PNG size (portrait) |
 |---|---|---|
 | iPhone 6.3" (Dynamic Island) | iPhone 15 Pro / 16 / 16 Pro / 17 | 1179 × 2556 (16 Pro: 1206 × 2622) |
-| iPad 13" | iPad Pro 12.9" (3rd gen+) / iPad Pro 13" / iPad Air 13" | 2048 × 2732 or 2064 × 2752 |
+| iPad 13" | NOT REQUIRED from Build 104 (iPhone-only, supportsTablet=false) | — |
 
 Other iPads (10.9"/11") produce sizes that are **not** accepted in the 13" slot.
 If you have no 13" iPad, choose one:
@@ -49,7 +51,7 @@ Use a real person who can answer Apple during review (e.g. you, info@networksurv
 ## 4. Content Rights
 - Select: **"No, it does not contain, show, or access third-party content"** only if you confirm the two points below. Otherwise select **"Yes"**, and confirm you hold the rights or permission.
   - TrustMark inspection reports and photos that users import are your business documents/third-party content. Be sure you have the right to process them.
-- **Action needed: the app icon is the Emergent template "e" logo (assets/images/icon.png, 512×512).** It isn't your branding, and Apple may reject it under 2.3.8/4.1.
+- DONE (Build 104): app icon + launch screen replaced with the approved RF design (memory/icon-proposal). Previously: the app icon was the Emergent template "e" logo (assets/images/icon.png, 512×512).** It isn't your branding, and Apple may reject it under 2.3.8/4.1.
   - Replace it with your own 1024×1024 RemedialFlow icon. This needs a **new build** (Build 104).
 - Fonts: Archivo and Space Mono (SIL Open Font License). Icons: Feather (MIT). Both are fine.
 - "TrustMark" is referred to by name only. No TrustMark logo is used.

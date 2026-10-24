@@ -8,8 +8,10 @@
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "supportsTablet": true,
-      "config": { "usesNonExemptEncryption": false },
+      "supportsTablet": false,
+      "config": {
+        "usesNonExemptEncryption": false
+      },
       "bundleIdentifier": "com.emergent.fieldevidenceapp.pnhb44",
       "infoPlist": {
         "NSCameraUsageDescription": "Capture timestamped remediation evidence photos and videos",
@@ -21,7 +23,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#FD6002"
       },
       "package": "com.emergent.fieldevidenceapp.pnhb44",
       "permissions": [
@@ -43,9 +45,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
+          "imageWidth": 180,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#FFFFFF"
         }
       ],
       "expo-font",
