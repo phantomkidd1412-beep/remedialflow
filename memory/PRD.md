@@ -189,3 +189,4 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Flag: app icon is Emergent template logo -> needs own 1024 icon + new build
 - Icon/splash/adaptive/favicon replaced with approved RF design (memory/icon-proposal); iPad support decision pending
 - iPhone-only from Build 104 (ios.supportsTablet=false)
+- Deploy fix: removed .env ignore rules from .gitignore (deployment needs backend/.env + frontend/.env)

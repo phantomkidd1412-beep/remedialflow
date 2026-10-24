@@ -82,12 +82,7 @@ memory/test_credentials.md
 android-sdk/tests/sample_big.mp4
 tests/sample_big.mp4
 
-# --- Secrets & environment (real values never committed; templates stay tracked) ---
-.env
-.env.*
-**/.env
-**/.env.*
-!**/.env.example
+# --- Secrets (backend/.env and frontend/.env must stay included: the Emergent deployment needs them) ---
 *.pem
 *.key
 *.p8
@@ -126,6 +121,5 @@ test_reports/
 
 # Real customer report used by a local test (contains property data)
 tests/p419977.pdf
-*.env
 credentials.json
 .credentials

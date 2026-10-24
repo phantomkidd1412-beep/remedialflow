@@ -6,7 +6,7 @@ import { api } from "@/src/api";
 import { usesNativeTabs } from "@/src/navigation";
 import { Badge, Empty, ErrorBlock, Loading, money, fmtDate } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
-import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { BORDER, radius, fonts, makeStyles, space } from "@/src/theme";
 
 type Earn = { id: string; project_id: string; ref: string; address: string; amount: number; currency: string; status: string; earned_at: string; paid_at?: string | null; ncs?: string[] };
 type Potential = { project_id: string; ref: string; address: string; amount: number; ncs: string[]; ncs_done: number };
