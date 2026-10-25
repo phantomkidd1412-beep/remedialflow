@@ -123,3 +123,6 @@ test_reports/
 tests/p419977.pdf
 credentials.json
 .credentials
+.env
+.env.*
+*.env
