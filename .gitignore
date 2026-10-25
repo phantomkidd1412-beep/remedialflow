@@ -123,6 +123,6 @@ test_reports/
 tests/p419977.pdf
 credentials.json
 .credentials
-.env
-.env.*
-*.env
+# Deployment needs these settings files included
+!backend/.env
+!frontend/.env
