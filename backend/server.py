@@ -27,6 +27,7 @@ from media import process_photo, video_frames, make_playback, demo_trustmark_ima
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from guidance import match_guidance, guidance_text, suggest_from_review
 from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope_gate
+from coverage import evaluate as coverage_evaluate, installer_request as coverage_request
 from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -756,6 +757,7 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         d = n.model_dump()
         if u.role == "installer":
             d.pop("scope", None)  # staff-only analysis
+            d.pop("coverage", None)
         d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
                  video_versions=len(videos), video_required=bool(n.requires_stages and p.require_video is not False),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
@@ -1183,6 +1185,14 @@ async def run_assessment(nc_id: str, sub_id: str):
             flags.append("Includes gallery uploads")
         if not refs:
             flags.append("No TrustMark reference photo")
+        cov3 = None
+        if s.coverage_check_enabled:  # Phase 3: scope + photo tags -> coverage; never approves on its own
+            try:
+                ev = await coverage_evaluate(nc_id)
+                cov3, sc3 = ev["coverage"], ev["scope"]
+            except Exception as e:
+                log.warning("coverage check failed: %s", type(e).__name__)
+                cov3, sc3 = {"status": "unverified", "reason": "Coverage check unavailable"}, None
         status = {"ai_verified": "approved", "more_evidence_required": "more_evidence"}.get(ai.outcome, "employee_review")
         if res is not None:
             ai.status = {"more_evidence_required": "more_evidence", "potential_noncompliance": "potential_noncompliance"}.get(ai.outcome, "employee_review")
@@ -1212,7 +1222,10 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append("Location not verified")
             if s.gallery_policy == "manual_review" and any(f.source == "gallery" for f in media):
                 reasons.append("Gallery uploads need review")
-            if s.location_scope_enabled:  # Phase 1: multi-location / uncertain scope -> employee review (never rejection)
+            if cov3 is not None:  # Phase 3 supersedes the Phase 1 gate when enabled
+                if cov3["status"] != "complete":
+                    reasons.append(f"Location coverage {cov3['status']}: {cov3['reason']}")
+            elif s.location_scope_enabled:  # Phase 1: multi-location / uncertain scope -> employee review (never rejection)
                 sc = await ensure_scope(nc_id)
                 cov = scope_coverage(sc, await db.files.find({"nc_id": nc_id}, {"kind": 1, "status": 1, "pdf_include": 1, "location_id": 1}).to_list(5000))
                 gr = scope_gate(sc, cov)
@@ -1225,6 +1238,13 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append("AI technically verified - human sign-off required by policy")
             else:
                 ai.status = "ai_approved"
+        if cov3 is not None and cov3["status"] == "incomplete" and sc3 and not safety and ai.outcome in ("ai_verified", "more_evidence_required"):
+            # confirmed missing locations -> existing "More evidence required" flow (safety / uncertain AI verdicts stay with an employee)
+            status = ai.status = "more_evidence"
+            ai.requests = list(ai.requests or []) + [coverage_request(sc3, cov3)]
+            reasons = [r for r in reasons if not r.startswith("Location coverage")]
+        elif cov3 is not None and cov3["status"] != "complete" and status == "employee_review" and not any(r.startswith("Location coverage") for r in reasons):
+            reasons.append(f"Location coverage {cov3['status']}: {cov3['reason']}")  # shown to the reviewer
         if status == "employee_review" and res is not None and not reasons and ai.outcome != "ai_verified":
             reasons.append({"manual_review_required": "Technical uncertainty: AI could not confirm the work",
                             "potential_noncompliance": "AI found possible non-compliance"}.get(ai.outcome, "AI assessment incomplete"))
@@ -1243,7 +1263,7 @@ async def run_assessment(nc_id: str, sub_id: str):
             await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "approved")
         elif status == "more_evidence":  # precise request goes straight to the installer, not to an employee
             await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "action", "more evidence needed: " + ai.feedback[:160])
-        if s.photo_classification_enabled:  # Phase 2: metadata-only tagging in the background; decisions above unaffected
+        if s.photo_classification_enabled and cov3 is None:  # Phase 2: metadata-only tagging in the background; decisions above unaffected
             schedule_classification(nc_id)
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
         await recompute_project(nc.project_id)
@@ -2020,6 +2040,8 @@ from guidance import router as guidance_router  # noqa: E402
 app.include_router(guidance_router)
 from scope import router as scope_router  # noqa: E402
 app.include_router(scope_router)
+from coverage import router as coverage_router  # noqa: E402
+app.include_router(coverage_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402

@@ -237,9 +237,9 @@ async def enabled() -> bool:
     return bool((await get_settings()).location_scope_enabled)
 
 
-async def ensure_scope(nc_id: str) -> Optional[dict]:
-    """Assessment hook: (re)extract when enabled and the NC wording changed. Never raises; staff overrides are kept."""
-    if not await enabled():
+async def ensure_scope(nc_id: str, force: bool = False) -> Optional[dict]:
+    """Assessment hook: (re)extract when enabled (or forced by Phase 3) and the NC wording changed. Never raises; staff overrides are kept."""
+    if not force and not await enabled():
         return None
     try:
         nc = await db.ncs.find_one({"_id": oid(nc_id)})

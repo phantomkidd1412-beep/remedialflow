@@ -207,3 +207,12 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Fixes: door "threshold sill" no longer read as a window (scope.py); "front of the side elevation" = one elevation (scope.py);
   later batches (>16 photos) now get up to 6 reference photos from earlier batches so locations/component names link across batches (photo_class.py).
 - Tests: 58 passed combined (1 intermittent API login-test failure seen once, passed on re-run). QA data removed; real files classified 0.
+
+## Phase 3 — Coverage-gated assessment (preview only, flag OFF) — Jun 2026
+- New `backend/coverage.py`; flag `Settings.coverage_check_enabled` (default False). Hook in `server.run_assessment`.
+- complete / incomplete / unverified from Phase 1 scope + Phase 2 tags. Only "after"/"verification" photos demonstrate work;
+  one location counts once (location_id or location_group); untagged photos only raise max-possible coverage.
+- Incomplete (confirmed) + AI verified/more-evidence + not safety -> existing "More evidence required" with named missing locations.
+  Unverified -> Employee Review. Never approves by itself. Test/measurement/certificate NCs need a verification photo.
+- `ncs.coverage` stored (hidden from installers); GET /api/ncs/{id}/coverage (staff, read-only).
+- Tests: 80 passed serially (`-n 0`, needed: xdist workers race on global settings flags). Real-photo dry run: 3 NCs, no writes.

@@ -139,6 +139,7 @@ class NC(BaseDocument):
     installer_note: str = ""  # installer's short description of the work done
     requires_stages: bool = False  # new NCs: pre/mid/final photos + a video are mandatory (historic NCs unaffected)
     scope: Optional[dict] = None  # location-aware scope (scope.py); absent unless the feature is enabled
+    coverage: Optional[dict] = None  # Phase 3 evidence coverage (coverage.py); absent unless the feature is enabled
     reviewed_by: Optional[str] = None
     updated_at: str = Field(default_factory=now_iso)
 
@@ -201,6 +202,7 @@ class Settings(BaseModel):
     payment_terms: str = "Paid monthly for completed jobs"
     location_scope_enabled: bool = False  # Phase 1 location-aware scope; OFF until explicitly approved
     photo_classification_enabled: bool = False  # Phase 2 photo location/stage/duplicate tagging; metadata only, OFF by default
+    coverage_check_enabled: bool = False  # Phase 3 coverage-gated assessment (coverage.py); OFF until explicitly approved
 
 
 async def get_settings() -> Settings:
