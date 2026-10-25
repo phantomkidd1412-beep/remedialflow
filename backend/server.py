@@ -1857,13 +1857,16 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
         return await run_in_threadpool(readable, [b for f in fs for b in [await get(f, "stamped", "display", "original")] if b])
     picked = [f for f in photos if f.get("pdf_include") is True]
     pool = picked or photos
+    smart_on = (await get_settings()).smart_pdf_enabled
+    if smart_on:  # Location-Aware Evidence ON: one coverage line on EVERY PDF path (smart or existing layout), set once
+        from smart_pdf import coverage_note, scope_for
+        n["coverage_note"] = coverage_note(n, scope_for(n), photos)
     if not pool:
         return []
-    if (await get_settings()).smart_pdf_enabled and not picked:
+    if smart_on and not picked:
         from smart_pdf import plan, scope_for, usable
         if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing behaviour below
-            groups, note = plan(n, photos, scope_for(n))
-            n["coverage_note"] = note
+            groups, _ = plan(n, photos, scope_for(n))  # same note as above (same inputs) - not added twice
             out = []
             for head, items in groups:
                 pairs = [(b, c) for f, c in items for b in [await get(f, "stamped", "display", "original")] if b]

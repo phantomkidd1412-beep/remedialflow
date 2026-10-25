@@ -96,20 +96,23 @@ def scope_for(nc: dict) -> Optional[dict]:
     return {**merge(rule_extract(t), None, t, None), "method": "rules_preview"} if t.strip() else None
 
 
+NOT_ASSESSED = "Evidence coverage has not been assessed."
+NOT_CONFIRMED = "Evidence coverage has not been confirmed."
+
+
 def coverage_note(nc: dict, scope: Optional[dict], photos: List[dict]) -> str:
-    """One factual line; never implies full evidence unless Phase 3 rules say complete."""
-    if not scope:
-        return ""
+    """One factual line (Location-Aware Evidence ON, every PDF path). Complete single-location -> no line.
+    Untagged photos -> 'not assessed' (never a shortfall). Missing locations are only named from Phase 3 rules."""
+    if not scope or any(not isinstance(f.get("classification"), dict) for f in photos):
+        return NOT_ASSESSED
     cov = verify(scope, [{**f, "status": "submitted"} for f in photos], needs_verification(nc))
-    if not scope.get("expected_count"):
-        return "The number of affected locations has not been confirmed."
-    if scope["expected_count"] < 2:
-        return "" if cov["status"] == "complete" else "Evidence of the completed work has not been fully confirmed."
-    one, many = NOUN.get(scope.get("scope_type"), ("location", "locations"))
+    if cov["status"] == "unverified":
+        return NOT_CONFIRMED
     exp = cov["expected"]
+    if exp == 1:
+        return "" if cov["status"] == "complete" else "Evidence of the completed work has not been provided."
+    one, many = NOUN.get(scope.get("scope_type"), ("location", "locations"))
     if cov["status"] == "complete":
         return f"Evidence shown for all {exp} {many}."
-    if cov["status"] == "incomplete":
-        names = f" Outstanding: {', '.join(cov['missing'][:12])}." if cov.get("missing") else ""
-        return f"Evidence of completed work shown for {cov['max_possible']} of {exp} {many}.{names}"
-    return f"{exp} {many} in scope; not every photograph has been matched to an individual {one}."
+    names = f" Outstanding: {', '.join(cov['missing'][:12])}." if cov.get("missing") else ""
+    return f"Evidence of completed work shown for {cov['max_possible']} of {exp} {many}.{names}"

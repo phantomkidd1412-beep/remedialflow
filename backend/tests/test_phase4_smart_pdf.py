@@ -75,7 +75,7 @@ def test_verification_and_staff_stage_override():
 
 def test_no_scope_single_section_plain_headings():
     g, note = plan({}, [ph(1, None, stage="before"), ph(2, None)], None)
-    assert [h for h, _ in g] == ["BEFORE REMEDIATION", "COMPLETED WORK"] and note == ""
+    assert [h for h, _ in g] == ["BEFORE REMEDIATION", "COMPLETED WORK"] and note == "Evidence coverage has not been assessed."
 
 
 def test_usable_requires_tags_on_every_photo():
@@ -133,4 +133,4 @@ def test_pdf_photo_groups_wiring(flag, monkeypatch):
     flag(True)
     n2 = {"_id": "y", "original_text": W8}
     g_on = LOOP.run_until_complete(server.pdf_photo_groups(n2, untagged, get))
-    assert [h for h, _ in g_on] == [h for h, _ in g_off] and "coverage_note" not in n2  # untagged -> existing behaviour unchanged
+    assert [h for h, _ in g_on] == [h for h, _ in g_off] and n2["coverage_note"] == "Evidence coverage has not been assessed."  # existing layout + safeguard line

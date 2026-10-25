@@ -249,3 +249,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Tests: tests/test_location_evidence_switch.py 4 passed. Flags OFF.
 - Open finding (not changed): coverage note only printed on the smart-PDF path; staff hand-picked photos or untagged photos
   fall back to legacy PDF with no coverage line even if nc.coverage is incomplete/unverified.
+
+## PDF coverage safeguard — Jun 2026
+- With smart_pdf_enabled (Location-Aware Evidence ON) `server.pdf_photo_groups` sets one `coverage_note` on EVERY path
+  (smart or existing layout, incl. staff hand-picked). Wording (`smart_pdf.coverage_note`): complete multi -> "Evidence shown for all N …";
+  complete single -> none; incomplete -> "…X of N… Outstanding: …"; unverified -> "Evidence coverage has not been confirmed.";
+  any untagged photo / no scope -> "Evidence coverage has not been assessed." Switch OFF -> unchanged.
+- Tests: test_pdf_coverage_safeguard.py (12) + Phase 4/5 targeted = 29 passed.
