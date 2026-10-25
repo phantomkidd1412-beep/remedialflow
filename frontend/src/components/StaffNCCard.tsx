@@ -10,6 +10,7 @@ import { Badge, Btn, Feather, Field, Label, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { SafetyToggle } from "@/src/components/SafetyToggle";
+import { EvidenceReview } from "@/src/components/EvidenceReview";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 /** "Remedial works carried out" text on the NC PDF: AI drafts it from recorded information; staff edit before export. */
@@ -259,6 +260,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           </ScrollView>
 
           <ExportNote nc={nc} projectId={projectId} />
+          <EvidenceReview nc={nc} />
 
           <Label>Assigned installer</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>

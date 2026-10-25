@@ -1672,6 +1672,11 @@ async def pack_fingerprint(pid: str, p: dict) -> str:
     raw = json.dumps([p.get("ref"), p.get("address"), p.get("postcode"),
                       [[str(n["_id"]), n.get("number"), n.get("status"), n.get("original_text"), n.get("export_note"), n.get("title")] for n in ncs],
                       [[str(f["_id"]), f.get("nc_id"), f.get("status"), f.get("kind"), bool(f.get("excluded")), f.get("stage"), f.get("pdf_include")] for f in files]], default=str)
+    if (await get_settings()).smart_pdf_enabled:  # Phase 4/5: tag + scope corrections change the PDF, so they make a new pack version
+        tags = await db.files.find({"project_id": pid, "kind": "photo"}, {"classification": 1}).sort("_id", 1).to_list(20000)
+        sc = await db.ncs.find({"project_id": pid}, {"scope.expected_count": 1, "scope.locations": 1}).sort("number", 1).to_list(500)
+        raw += json.dumps([[str(f["_id"]), {k: (f.get("classification") or {}).get(k) for k in ("location_id", "location_group", "stage", "dup_of", "component")}]
+                           for f in tags] + [n.get("scope") for n in sc], default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -1831,9 +1836,9 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
     if not pool:
         return []
     if (await get_settings()).smart_pdf_enabled and not picked:
-        from smart_pdf import plan, usable
+        from smart_pdf import plan, scope_for, usable
         if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing behaviour below
-            groups, note = plan(n, photos, n.get("scope"))
+            groups, note = plan(n, photos, scope_for(n))
             n["coverage_note"] = note
             out = []
             for head, items in groups:
@@ -2055,6 +2060,8 @@ from scope import router as scope_router  # noqa: E402
 app.include_router(scope_router)
 from coverage import router as coverage_router  # noqa: E402
 app.include_router(coverage_router)
+from staff_review import router as staff_review_router  # noqa: E402
+app.include_router(staff_review_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402

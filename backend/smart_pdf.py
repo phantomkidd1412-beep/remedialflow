@@ -28,9 +28,12 @@ def usable(photos: List[dict]) -> bool:
 
 
 def _stage(f: dict) -> str:
+    c = f.get("classification") or {}
+    if (c.get("staff") or {}).get("stage") in ORDER:  # Phase 5 staff stage correction wins
+        return c["staff"]["stage"]
     if f.get("stage_source") == "staff" and f.get("stage") in STAFF_STAGE:
         return STAFF_STAGE[f["stage"]]
-    st = (f.get("classification") or {}).get("stage")
+    st = c.get("stage")
     return st if st in ORDER else "uncertain"
 
 
@@ -84,11 +87,24 @@ def plan(nc: dict, photos: List[dict], scope: Optional[dict]) -> Tuple[List[Tupl
     return out, coverage_note(nc, scope, photos)
 
 
+def scope_for(nc: dict) -> Optional[dict]:
+    """Stored scope, else the rule-based reading of the NC wording (no AI, nothing stored)."""
+    if nc.get("scope"):
+        return nc["scope"]
+    from scope import merge, rule_extract
+    t = " ".join(x for x in [nc.get("original_text") or "", nc.get("description") or "", nc.get("required_work") or ""] if x)
+    return {**merge(rule_extract(t), None, t, None), "method": "rules_preview"} if t.strip() else None
+
+
 def coverage_note(nc: dict, scope: Optional[dict], photos: List[dict]) -> str:
-    """One factual line for multi-location NCs; empty when the scope is unknown or a single location (existing wording kept)."""
-    if not scope or not scope.get("expected_count") or scope["expected_count"] < 2:
+    """One factual line; never implies full evidence unless Phase 3 rules say complete."""
+    if not scope:
         return ""
     cov = verify(scope, [{**f, "status": "submitted"} for f in photos], needs_verification(nc))
+    if not scope.get("expected_count"):
+        return "The number of affected locations has not been confirmed."
+    if scope["expected_count"] < 2:
+        return "" if cov["status"] == "complete" else "Evidence of the completed work has not been fully confirmed."
     one, many = NOUN.get(scope.get("scope_type"), ("location", "locations"))
     exp = cov["expected"]
     if cov["status"] == "complete":

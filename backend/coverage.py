@@ -98,7 +98,8 @@ async def evaluate(nc_id: str) -> dict:
     from scope import ensure_scope
     from core import oid
     sc = await ensure_scope(nc_id, force=True)
-    await classify_nc(nc_id)  # synchronous here: the decision needs the tags; AI unavailable => untagged => unverified
+    if await db.files.count_documents({"nc_id": nc_id, "kind": "photo", "status": {"$in": ["draft", "submitted"]}, "classification": {"$exists": False}}):
+        await classify_nc(nc_id)  # only when new photos are untagged; AI unavailable => untagged => unverified
     nc = await db.ncs.find_one({"_id": oid(nc_id)})
     files = await db.files.find({"nc_id": nc_id, "kind": "photo"}, {"kind": 1, "status": 1, "pdf_include": 1, "classification": 1}).to_list(5000)
     cov = verify(sc, files, needs_verification(nc))

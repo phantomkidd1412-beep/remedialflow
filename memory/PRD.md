@@ -225,3 +225,19 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   and staff didn't force-include. Captions from stored labels only. One coverage line for multi-location NCs.
 - `evidence_pack.nc_pdf` accepts optional (jpeg, caption) entries and `coverage_note`; legacy input renders as before.
 - Tests: test_phase4_smart_pdf.py 10 passed; consolidated Phases 1–4 + iter34/35 API: 82 passed (real-AI tests skipped for credits).
+
+## Phase 5 — Staff review controls (preview only, flag OFF) — Jun 2026
+- New `backend/staff_review.py` (flag `staff_review_enabled`): GET /api/ncs/{id}/evidence-review, POST .../evidence-review/classify
+  (explicit, skips AI when nothing new unless force), PUT /api/ncs/{id}/scope (staff count + labels + required basis; history kept).
+  Photo corrections reuse PUT /api/evidence/{fid}/classification and /pdf-include.
+- Phase 3 evaluate now only re-classifies when untagged photos exist. Phase 4 staff stage correction wins in PDF.
+- Pack fingerprint includes tags + scope only when smart_pdf_enabled -> corrections produce a new pack version; old versions untouched.
+- Frontend: `src/components/EvidenceReview.tsx` in StaffNCCard (renders nothing when flag off). No installer changes.
+- Tests: test_phase5_staff_review.py 8 passed; consolidated Phases 1–5 + iter34/35: 90 passed.
+
+## Pre-production integration check (preview) — Jun 2026
+- Browser check of staff panel with all 5 flags on (synthetic QA data, metadata only); flags restored OFF, QA data removed.
+- Changes: location/stage now dropdown sheets + PDF include chip in panel; review shows labels from previewed scope;
+  smart PDF uses rule-based scope when none stored (`smart_pdf.scope_for`); coverage note now also for unknown count /
+  unconfirmed single-location NCs. Phase 4+5 tests: 18 passed.
+- Enable/disable: PUT /api/settings (admin, audited) with the 5 flags; recommended next: one combined toggle in existing Admin Settings.
