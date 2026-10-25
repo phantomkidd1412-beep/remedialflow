@@ -1830,6 +1830,19 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
     pool = picked or photos
     if not pool:
         return []
+    if (await get_settings()).smart_pdf_enabled and not picked:
+        from smart_pdf import plan, usable
+        if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing behaviour below
+            groups, note = plan(n, photos, n.get("scope"))
+            n["coverage_note"] = note
+            out = []
+            for head, items in groups:
+                pairs = [(b, c) for f, c in items for b in [await get(f, "stamped", "display", "original")] if b]
+                ok = set(map(id, await run_in_threadpool(readable, [b for b, _ in pairs])))
+                pairs = [(b, c) for b, c in pairs if id(b) in ok]  # unreadable images are skipped, never fatal
+                if pairs:
+                    out.append((head, pairs))
+            return out
     staff_staged = {st: [f for f in pool if f.get("stage") == st and f.get("stage_source") == "staff"] for st in STAGES}
     chosen = {st: v for st, v in staff_staged.items() if v}
     extra = []

@@ -114,24 +114,30 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
         nonlocal y
         if not imgs:
             return
-        prepared = [_pdf_image(b) for b in imgs]
+        caps = [i[1] if isinstance(i, tuple) else "" for i in imgs]  # optional (jpeg, caption) entries (Phase 4)
+        prepared = [_pdf_image(i[0] if isinstance(i, tuple) else i) for i in imgs]
         full = W - 2 * M
         cols = 1 if len(prepared) == 1 else 2
         cw = (full - GAP * (cols - 1)) / cols
         cap = 330 if cols == 1 else 250
         rows = [prepared[i:i + cols] for i in range(0, len(prepared), cols)]
+        crow = [caps[i:i + cols] for i in range(0, len(caps), cols)]
         first_h = max(min(cw / a, cap) for _, a in rows[0])
         if y + 22 + first_h > H - M:  # keep the heading with its first row of photos
             new_page()
         heading(title)
-        for row in rows:
+        for row, rcaps in zip(rows, crow):
             rh = max(min(cw / a, cap) for _, a in row)
-            if y + rh > H - M:
+            ch = 12 if any(rcaps) else 0
+            if y + rh + ch > H - M:
                 new_page()
             for i, (b, a) in enumerate(row):
                 x = M + i * (cw + GAP)
                 page.insert_image(pymupdf.Rect(x, y, x + cw, y + rh), stream=b, keep_proportion=True)
-            y += rh + GAP
+                if rcaps[i]:
+                    page.insert_textbox(pymupdf.Rect(x, y + rh + 1, x + cw, y + rh + ch + 2), rcaps[i], fontsize=7.5, fontname="helv",
+                                        color=BLACK, align=1)
+            y += rh + ch + GAP
 
     addr = f"{project.get('address', '')}{', ' + project['postcode'] if project.get('postcode') else ''}"
     text(addr, 14, True, 2)
@@ -144,6 +150,8 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
     # Short description of the works (AI-drafted from recorded information, staff-editable), before the photographs.
     heading("REMEDIAL WORKS CARRIED OUT")
     text((nc.get("export_note") or "").strip() or "No details recorded.", 10)
+    if nc.get("coverage_note"):  # Phase 4 only: one factual line for multi-location NCs
+        text(nc["coverage_note"], 9.5)
     groups = [(t, imgs) for t, imgs in remediation if imgs]
     for t, imgs in groups:
         photos(t, imgs)

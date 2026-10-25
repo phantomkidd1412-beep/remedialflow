@@ -203,6 +203,7 @@ class Settings(BaseModel):
     location_scope_enabled: bool = False  # Phase 1 location-aware scope; OFF until explicitly approved
     photo_classification_enabled: bool = False  # Phase 2 photo location/stage/duplicate tagging; metadata only, OFF by default
     coverage_check_enabled: bool = False  # Phase 3 coverage-gated assessment (coverage.py); OFF until explicitly approved
+    smart_pdf_enabled: bool = False  # Phase 4 location/stage-organised PDF photos from stored tags (smart_pdf.py); OFF by default
 
 
 async def get_settings() -> Settings:

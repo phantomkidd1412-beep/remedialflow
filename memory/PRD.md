@@ -216,3 +216,12 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   Unverified -> Employee Review. Never approves by itself. Test/measurement/certificate NCs need a verification photo.
 - `ncs.coverage` stored (hidden from installers); GET /api/ncs/{id}/coverage (staff, read-only).
 - Tests: 80 passed serially (`-n 0`, needed: xdist workers race on global settings flags). Real-photo dry run: 3 NCs, no writes.
+
+## Phase 4 — Smart PDF photo selection (preview only, flag OFF) — Jun 2026
+- New `backend/smart_pdf.py`; flag `Settings.smart_pdf_enabled` (default False). Hook in `server.pdf_photo_groups`.
+- Used only when every candidate photo already has Phase 2 tags and staff haven't hand-picked photos; otherwise existing behaviour.
+  No AI calls in the smart path. No per-NC cap. Sections: location (scope order) -> stage (before/during/completed/measurement/supporting);
+  unnamed groups "Location not identified (n)"; untagged "Other photographs". Duplicates dropped only if Phase 2 dup_of target is shown
+  and staff didn't force-include. Captions from stored labels only. One coverage line for multi-location NCs.
+- `evidence_pack.nc_pdf` accepts optional (jpeg, caption) entries and `coverage_note`; legacy input renders as before.
+- Tests: test_phase4_smart_pdf.py 10 passed; consolidated Phases 1–4 + iter34/35 API: 82 passed (real-AI tests skipped for credits).
