@@ -26,6 +26,7 @@ from storage import storage, evidence_path, SYSTEM, property_folder_name, media_
 from media import process_photo, video_frames, make_playback, demo_trustmark_image, pdf_text_and_images
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from guidance import match_guidance, guidance_text, suggest_from_review
+from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope_gate
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
 from security import PRODUCTION, check_production_config, install_log_redaction, security_headers
@@ -752,6 +753,8 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         photos = [file_public(f) for f in fs if f.kind == "photo" and f.status != "superseded"]
         videos = [file_public(f) for f in fs if f.kind == "video"]  # every video, incl. ones previously marked superseded
         d = n.model_dump()
+        if u.role == "installer":
+            d.pop("scope", None)  # staff-only analysis
         d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
                  video_versions=len(videos), video_required=bool(n.requires_stages and p.require_video is not False),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
@@ -1208,6 +1211,12 @@ async def run_assessment(nc_id: str, sub_id: str):
                 reasons.append("Location not verified")
             if s.gallery_policy == "manual_review" and any(f.source == "gallery" for f in media):
                 reasons.append("Gallery uploads need review")
+            if s.location_scope_enabled:  # Phase 1: multi-location / uncertain scope -> employee review (never rejection)
+                sc = await ensure_scope(nc_id)
+                cov = scope_coverage(sc, await db.files.find({"nc_id": nc_id}, {"kind": 1, "status": 1, "pdf_include": 1, "location_id": 1}).to_list(5000))
+                gr = scope_gate(sc, cov)
+                if gr:
+                    reasons.append(gr)
             if reasons:
                 status = "employee_review"
             elif s.human_signoff_required:
@@ -1218,7 +1227,7 @@ async def run_assessment(nc_id: str, sub_id: str):
         if status == "employee_review" and res is not None and not reasons and ai.outcome != "ai_verified":
             reasons.append({"manual_review_required": "Technical uncertainty: AI could not confirm the work",
                             "potential_noncompliance": "AI found possible non-compliance"}.get(ai.outcome, "AI assessment incomplete"))
-        ai.blocked = [r for r in reasons if not r.startswith("Location")] if status == "employee_review" else []
+        ai.blocked = [r for r in reasons if r != "Location not verified"] if status == "employee_review" else []
         if status == "more_evidence" and ai.requests:
             ai.feedback = " ".join(ai.requests)[:600]
         ai.concerns = ai.concerns + reasons + flags
@@ -2006,6 +2015,8 @@ from phase10 import router as p10_router  # noqa: E402  (imports server helpers 
 app.include_router(p10_router)
 from guidance import router as guidance_router  # noqa: E402
 app.include_router(guidance_router)
+from scope import router as scope_router  # noqa: E402
+app.include_router(scope_router)
 from privacy_page import router as privacy_router  # noqa: E402
 app.include_router(privacy_router)
 from push import router as push_router  # noqa: E402

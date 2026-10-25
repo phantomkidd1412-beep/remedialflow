@@ -185,6 +185,12 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             </>
           ) : null}
           {nc.ai?.guidance?.length ? <Text style={s.muted} testID={`staff-nc-guidance-${nc.number}`}>AI used guidance: {nc.ai.guidance.map((g) => `${g.title} (v${g.version})`).join(", ")}</Text> : null}
+          {nc.scope ? (
+            <Text style={s.muted} testID={`staff-nc-scope-${nc.number}`}>
+              Scope: {nc.scope.scope_status === "confirmed" ? `${nc.scope.expected_count} location(s)` : "not confirmed"} · {nc.scope.scope_type.replace("_", " ")}
+              {nc.scope.locations?.length ? ` · ${nc.scope.locations.map((l) => l.label).join(", ")}` : ""}
+            </Text>
+          ) : null}
 
           {nc.ai ? (
             <View style={s.ai} testID={`staff-nc-ai-${nc.number}`}>

@@ -62,7 +62,8 @@ export type NCItem = {
   id: string; number: string; description: string; original_text?: string; required_work: string; safety_critical: boolean; status: string;
   assigned_installer_id?: string | null; assigned_installer_name?: string | null; approved_by?: string | null; approved_at?: string | null; rejection_source?: string | null; reopen_history?: { at: string; source: string; note?: string }[];
   ai?: { outcome: string; confidence: number | null; status?: string; feedback: string; concerns: string[]; requests?: string[]; blocked?: string[]; guidance?: { id: string; version: number; title: string }[]; model: string; at: string } | null;
-  installer_note?: string; requires_stages?: boolean; video_required?: boolean; export_note_source?: string; pdf_ai?: { uncertain?: boolean } | null;
+  installer_note?: string; requires_stages?: boolean; video_required?: boolean;
+  scope?: { scope_type: string; quantifier: string; expected_count: number | null; scope_status: "confirmed" | "uncertain"; locations: { id: string; label: string }[] } | null; export_note_source?: string; pdf_ai?: { uncertain?: boolean } | null;
   review_note: string; export_note?: string; trustmark: EvidenceFile[]; trustmark_hidden?: EvidenceFile[]; photos: EvidenceFile[]; videos?: EvidenceFile[]; video: EvidenceFile | null; video_versions: number; draft_count: number;
   text_history?: { original_text: string; replaced_at: string }[];
 };

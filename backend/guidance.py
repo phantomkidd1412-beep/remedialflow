@@ -17,7 +17,7 @@ from storage import SYSTEM, storage
 router = APIRouter(prefix="/api")
 admin = require("admin")
 CONTENT = ("title", "measure", "keywords", "defect", "evidence_required", "photos_to_collect", "photo_details",
-           "video_guidance", "insufficient_examples", "request_example", "references", "review_notes")
+           "video_guidance", "insufficient_examples", "request_example", "references", "review_notes", "scope_type")
 
 
 class GuidanceIn(BaseModel):
@@ -33,6 +33,8 @@ class GuidanceIn(BaseModel):
     request_example: str = Field(default="", max_length=1000)
     references: str = Field(default="", max_length=2000)
     review_notes: str = Field(default="", max_length=2000)
+    # Location-aware scope hint (optional; "" = not set). Used only when Settings.location_scope_enabled.
+    scope_type: str = Field(default="", pattern="^(|window|habitable_room|wet_room|elevation|junction|component|other|single)$")
 
 
 def _clean(body: GuidanceIn) -> dict:
@@ -98,7 +100,7 @@ async def create_guidance(body: GuidanceIn, u: User = Depends(admin)):
 async def edit_guidance(gid: str, body: GuidanceIn, u: User = Depends(admin)):
     g = await _get(gid)
     new = _clean(body)
-    if all(g.get(k) == new[k] for k in CONTENT):
+    if all((g.get(k) if g.get(k) is not None else ("" if k == "scope_type" else None)) == new[k] for k in CONTENT):
         return {"ok": True, "version": g.get("version", 1)}
     v, ts = g.get("version", 1) + 1, now_iso()
     snapshot = {k: g.get(k) for k in CONTENT}  # previous content kept for audit

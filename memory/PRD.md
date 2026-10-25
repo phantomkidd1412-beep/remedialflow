@@ -190,3 +190,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Icon/splash/adaptive/favicon replaced with approved RF design (memory/icon-proposal); iPad support decision pending
 - iPhone-only from Build 104 (ios.supportsTablet=false)
 - Deploy fix: removed .env ignore rules from .gitignore (deployment needs backend/.env + frontend/.env)
+
+## Location-aware PDF — Phase 1 (scope foundation, preview only, flag OFF by default)
+- backend/scope.py: ncs.scope schema, rule_extract + Gemini ai_extract (quote-verified), merge, coverage (complete/incomplete/unverified via files.location_id), gate_reason (blocks auto-approval only), GET /api/ncs/{id}/scope, POST /api/ncs/{id}/scope/extract
+- Settings.location_scope_enabled (default False); run_assessment hook only when enabled; guidance.scope_type optional
+- StaffNCCard read-only scope line; tests/test_phase1_scope.py (15 pass)
