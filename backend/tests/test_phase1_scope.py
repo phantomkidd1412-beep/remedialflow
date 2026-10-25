@@ -9,6 +9,7 @@ import requests
 from bson import ObjectId
 
 sys.path.insert(0, "/app/backend")
+sys.path.insert(0, "/app/backend/tests")
 from scope import coverage, gate_reason, merge, rule_extract  # noqa: E402
 
 BASE = os.environ.get("RF_BASE", "http://localhost:8001")
@@ -29,6 +30,9 @@ def sc(t):
     ("Gaps at roof and wall junctions at the eaves.", "junction", None, "uncertain"),
     ("Insulation continuity not maintained around the external wall bracket.", "component", 1, "confirmed"),
     ("Trickle vents missing in three bedrooms.", "habitable_room", 3, "confirmed"),
+    # real-photo test findings: a door threshold sill is not a window; "front of the side elevation" is ONE elevation
+    ("Weathering concern where the threshold sill to the kitchen door on the rear elevation has detached.", "component", 1, "confirmed"),
+    ("Clearance not achieved above the gas pipe tee. This is located towards the front of the side elevation.", "elevation", 1, "confirmed"),
 ])
 def test_rules(text, stype, count, status):
     s = sc(text)
@@ -73,10 +77,11 @@ def test_ai_quote_must_exist_in_text():
 def qa():
     from auth import ph
     from core import db, now_iso
-    loop = asyncio.new_event_loop()
+    from _loop import LOOP as loop  # shared loop: Motor binds to the first loop used (combined-suite fix)
     pw = "QaScope-" + ObjectId().__str__()[-8:]
 
     async def setup():
+        await db.users.delete_many({"email": {"$regex": r"^qa\.scope\."}})  # leftovers from an interrupted run
         ids = {}
         for role in ("admin", "employee", "installer"):
             r = await db.users.insert_one({"email": f"qa.scope.{role}@example.com", "name": f"QA {role}", "role": role, "active": True,

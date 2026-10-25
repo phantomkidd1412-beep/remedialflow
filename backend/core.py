@@ -200,6 +200,7 @@ class Settings(BaseModel):
     currency: str = "GBP"
     payment_terms: str = "Paid monthly for completed jobs"
     location_scope_enabled: bool = False  # Phase 1 location-aware scope; OFF until explicitly approved
+    photo_classification_enabled: bool = False  # Phase 2 photo location/stage/duplicate tagging; metadata only, OFF by default
 
 
 async def get_settings() -> Settings:

@@ -18,8 +18,8 @@ SINGLE = "Insulation continuity not maintained around the external wall bracket.
 ALLROOMS = "Background ventilation not provided in all habitable rooms."
 SAFETY = "Gas meter box bracket fixing compromises the gas supply pipe."
 
-LOOP = asyncio.new_event_loop()
-asyncio.set_event_loop(LOOP)
+sys.path.insert(0, "/app/backend/tests")
+from _loop import LOOP  # noqa: E402
 
 
 def run(coro):
@@ -51,7 +51,12 @@ def env():
         p = await db.projects.insert_one({"ref": "QA-ITER34", "address": "QA TEST 1 Example Road", "postcode": "QA1 1AA", "installer_id": ids["installer"],
                                           "rate": 0, "status": "active", "require_video": False, "deleted": None, "created_at": now_iso(), "updated_at": now_iso()})
         pid = str(p.inserted_id)
-        img_path = await storage.aput(f"qa-iter34/{pid}/p.jpg", jpeg(), "image/jpeg")
+        img_path = "qa-mem:no-storage-write"  # never write test evidence to real storage/Dropbox; reads are served in-memory below
+        _orig_aget = storage.aget
+
+        async def mem_aget(path, *a, **k):
+            return (jpeg(), "image/jpeg") if str(path).startswith("qa-mem:") else await _orig_aget(path, *a, **k)
+        storage.aget = mem_aget  # in-process only (run_assessment is called in this process)
         return pid, img_path
 
     pid, img_path = run(setup())
@@ -212,8 +217,7 @@ def test_review_and_exports_when_off(env):
     assert link.status_code == 200
     z = requests.get(BASE + link.json()["url"], timeout=120)
     assert z.status_code == 200 and z.content[:2] == b"PK"
-    d = requests.post(f"{BASE}/api/projects/{env['pid']}/export-dropbox", headers=e, timeout=120)
-    assert d.status_code in (200, 409), d.text
+    # Export to Dropbox deliberately NOT called: preview is connected to the real business Dropbox.
 
 
 def test_guidance_scope_type(env):

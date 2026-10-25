@@ -27,6 +27,7 @@ from media import process_photo, video_frames, make_playback, demo_trustmark_ima
 from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from guidance import match_guidance, guidance_text, suggest_from_review
 from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope_gate
+from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
 from security import PRODUCTION, check_production_config, install_log_redaction, security_headers
@@ -1242,6 +1243,8 @@ async def run_assessment(nc_id: str, sub_id: str):
             await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "approved")
         elif status == "more_evidence":  # precise request goes straight to the installer, not to an employee
             await nc_notify(await db.ncs.find_one({"_id": ObjectId(nc_id)}), nc.assigned_installer_id, "action", "more evidence needed: " + ai.feedback[:160])
+        if s.photo_classification_enabled:  # Phase 2: metadata-only tagging in the background; decisions above unaffected
+            schedule_classification(nc_id)
         await audit("ai.assessed", None, f"nc:{nc_id}", {"submission_id": sub_id, **ai.model_dump(), "final_status": status})
         await recompute_project(nc.project_id)
     except Exception:
@@ -2017,6 +2020,8 @@ from guidance import router as guidance_router  # noqa: E402
 app.include_router(guidance_router)
 from scope import router as scope_router  # noqa: E402
 app.include_router(scope_router)
+from photo_class import router as photo_class_router  # noqa: E402
+app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402
 app.include_router(privacy_router)
 from push import router as push_router  # noqa: E402

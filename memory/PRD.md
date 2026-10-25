@@ -195,3 +195,15 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - backend/scope.py: ncs.scope schema, rule_extract + Gemini ai_extract (quote-verified), merge, coverage (complete/incomplete/unverified via files.location_id), gate_reason (blocks auto-approval only), GET /api/ncs/{id}/scope, POST /api/ncs/{id}/scope/extract
 - Settings.location_scope_enabled (default False); run_assessment hook only when enabled; guidance.scope_type optional
 - StaffNCCard read-only scope line; tests/test_phase1_scope.py (15 pass)
+
+## Location-aware PDF — Phase 2 (photo classification, preview only, flag OFF by default)
+- backend/photo_class.py: files.classification {location_id/label/group/uncertain, component, stage before|during|after|verification|uncertain, relevant, dup_group/dup_of, phash, source ai|staff|mixed, staff overrides}; files.location_id mirror
+- Gemini per-NC batch (16) + deterministic build(): union of AI-declared same-location links only, labels must be scope labels (never invented), contradictory groups -> uncertain, duplicates = same location + stage + component + dHash<=6
+- Settings.photo_classification_enabled (False); background task after run_assessment when enabled; endpoints GET /api/ncs/{id}/photos/classification, POST /api/ncs/{id}/photos/classify (409 off), PUT /api/evidence/{fid}/classification (staff wins)
+- tests: tests/_loop.py shared loop fixes combined-suite errors; test_phase2_photos.py; combined phase1+iter34+phase2 = 38 passed
+
+## Phase 2 real-photo validation (preview, read-only) — Jun 2026
+- Dry run on 46 real preview photos (3 NCs, 280 Dallow Road); no DB writes, flags stayed off.
+- Fixes: door "threshold sill" no longer read as a window (scope.py); "front of the side elevation" = one elevation (scope.py);
+  later batches (>16 photos) now get up to 6 reference photos from earlier batches so locations/component names link across batches (photo_class.py).
+- Tests: 58 passed combined (1 intermittent API login-test failure seen once, passed on re-run). QA data removed; real files classified 0.

@@ -44,7 +44,8 @@ WET = ["bathroom", "en-suite", "ensuite", "shower room", "utility room", "utilit
 ELEV = ["front", "rear", "back", "side", "left", "right", "gable", "north", "south", "east", "west"]
 # (scope_type, regex for the noun) - order = precedence when several match
 NOUNS = [
-    ("window", r"windows?|window sills?|sills?|end caps?|window reveals?|trickle vents? in (?:the )?windows?"),
+    ("window", r"windows?|window sills?|(?<!threshold )(?<!door )sills?|end caps?|window reveals?|trickle vents? in (?:the )?windows?"),
+    ("component", r"threshold sills?|door thresholds?|door sills?|thresholds?"),  # door thresholds are not windows
     ("habitable_room", r"habitable rooms?|bedrooms?|living rooms?|lounges?|dining rooms?"),
     ("wet_room", r"wet rooms?|bathrooms?|en-?suites?|shower rooms?|utility rooms?|kitchens?|wcs?\b"),
     ("elevation", r"elevations?|gable walls?|gables?"),
@@ -93,7 +94,8 @@ def rule_extract(text: str) -> dict:
             if lab not in named:
                 named.append(lab)
     elif stype == "elevation":
-        for e in re.findall(r"\b(" + "|".join(ELEV) + r")\b(?=[^.]*\belevations?\b)", low):
+        # "towards the front of the side elevation" = a position on ONE elevation, not a second elevation
+        for e in re.findall(r"\b(" + "|".join(ELEV) + r")\b(?!-hand)(?! of\b)(?=[^.]*\belevations?\b)", low):
             lab = f"{e.title()} elevation"
             if lab not in named:
                 named.append(lab)
