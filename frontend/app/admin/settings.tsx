@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { Badge, Btn, Feather, Field, Label, Loading, Sheet, money, useToast } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
+import { LocationEvidenceSwitch } from "@/src/components/LocationEvidenceSwitch";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
@@ -194,6 +195,7 @@ export default function SettingsScreen() {
         <Field label="Min AI confidence to auto-verify (0–1)" value={String(f.confidence_threshold)} onChangeText={(v) => set({ confidence_threshold: v as any })} keyboardType="decimal-pad" testID="setting-confidence" />
 
         <Text style={s.section}>EVIDENCE ACCEPTANCE</Text>
+        <LocationEvidenceSwitch />
         <Label>Photos with Location Not Verified</Label>
         <Choice value={f.location_policy} options={[["accept_flag", "Accept + flag"], ["reject", "Reject"], ["accept", "Accept"]]} onChange={(v) => set({ location_policy: v })} testID="setting-location-policy" />
         <Label>Gallery uploads</Label>

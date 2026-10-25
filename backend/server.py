@@ -372,9 +372,33 @@ async def read_settings(u: User = Depends(staff)):
 
 @api.put("/settings")
 async def write_settings(body: Settings, u: User = Depends(admin)):
+    cur = await get_settings()  # the location-aware flags are only changed by their own audited switch below
+    body = body.model_copy(update={k: getattr(cur, k) for k in LOCATION_FLAGS})
     await db.settings.update_one({"_id": "global"}, {"$set": body.model_dump()}, upsert=True)
     await audit("settings.updated", u.id, "settings", body.model_dump())
     return body.model_dump()
+
+
+LOCATION_FLAGS = ("location_scope_enabled", "photo_classification_enabled", "coverage_check_enabled", "smart_pdf_enabled", "staff_review_enabled")
+
+
+class LocationEvidenceIn(BaseModel):
+    enabled: bool
+
+
+@api.get("/settings/location-evidence")
+async def read_location_evidence(u: User = Depends(admin)):
+    s = await get_settings()
+    on = [k for k in LOCATION_FLAGS if getattr(s, k)]
+    return {"state": "on" if len(on) == len(LOCATION_FLAGS) else "off" if not on else "partial", "flags": {k: getattr(s, k) for k in LOCATION_FLAGS}}
+
+
+@api.put("/settings/location-evidence")
+async def write_location_evidence(body: LocationEvidenceIn, u: User = Depends(admin)):
+    """One admin switch for all five location-aware features (Phases 1-5). Applies immediately; audited."""
+    await db.settings.update_one({"_id": "global"}, {"$set": {k: body.enabled for k in LOCATION_FLAGS}}, upsert=True)
+    await audit("settings.location_evidence_" + ("enabled" if body.enabled else "disabled"), u.id, "settings", {k: body.enabled for k in LOCATION_FLAGS})
+    return await read_location_evidence(u)
 
 
 # ---------------- dashboard / projects ----------------

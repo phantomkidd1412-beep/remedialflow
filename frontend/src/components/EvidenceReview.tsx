@@ -132,7 +132,7 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
         {options.map((o) => {
           const cur = picker && (picker.kind === "loc" ? picker.photo.location_id : picker.photo.stage ?? "uncertain") === o.v;
           return (
-            <Pressable key={String(o.v)} style={[s.opt, cur && { borderColor: colors.primary }]} onPress={() => pick(o.v)} testID={`review-opt-${o.v ?? "none"}`}>
+            <Pressable key={String(o.v)} style={[s.opt, cur && { borderColor: colors.brandPrimary }]} onPress={() => pick(o.v)} testID={`review-opt-${o.v ?? "none"}`}>
               <Text style={s.optText}>{o.t}{cur ? "  ✓" : ""}</Text>
             </Pressable>
           );

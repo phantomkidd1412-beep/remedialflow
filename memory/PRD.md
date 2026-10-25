@@ -241,3 +241,11 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   smart PDF uses rule-based scope when none stored (`smart_pdf.scope_for`); coverage note now also for unknown count /
   unconfirmed single-location NCs. Phase 4+5 tests: 18 passed.
 - Enable/disable: PUT /api/settings (admin, audited) with the 5 flags; recommended next: one combined toggle in existing Admin Settings.
+
+## Location-Aware Evidence master switch — Jun 2026
+- Admin Settings -> EVIDENCE ACCEPTANCE: "Location-Aware Evidence" switch (src/components/LocationEvidenceSwitch.tsx).
+- GET/PUT /api/settings/location-evidence (admin only): sets all 5 flags together, state on/off/partial, audited
+  (settings.location_evidence_enabled / _disabled). PUT /api/settings now never changes the 5 flags.
+- Tests: tests/test_location_evidence_switch.py 4 passed. Flags OFF.
+- Open finding (not changed): coverage note only printed on the smart-PDF path; staff hand-picked photos or untagged photos
+  fall back to legacy PDF with no coverage line even if nc.coverage is incomplete/unverified.
