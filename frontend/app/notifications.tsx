@@ -43,7 +43,7 @@ export default function Notifications() {
       <FlatList
         data={q.data?.items ?? []}
         keyExtractor={(n) => n.id}
-        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
         renderItem={({ item }) => {
           const [bg, fg, icon] = TONE(colors)[item.kind] ?? [colors.surfaceSecondary, colors.onSurface, "bell"];

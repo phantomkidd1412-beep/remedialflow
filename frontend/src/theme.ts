@@ -1,6 +1,6 @@
 // Design tokens (from /app/design_guidelines.json). Light + dark themes, user-selectable (Light / Dark / Auto).
 import { useMemo, useSyncExternalStore } from "react";
-import { Appearance, Platform, StyleSheet, useColorScheme } from "react-native";
+import { Appearance, ImageStyle, Platform, StyleSheet, TextStyle, useColorScheme, ViewStyle } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 export type ColorScheme = "light" | "dark";
@@ -129,8 +129,10 @@ export function useTheme(): { scheme: ColorScheme; colors: ThemeColors } {
   return { scheme, colors: themes[scheme] ?? themes.light };
 }
 
-export function makeStyles<T extends StyleSheet.NamedStyles<T> | StyleSheet.NamedStyles<any>>(
-  factory: (colors: ThemeColors) => T & StyleSheet.NamedStyles<any>,
+type NamedStyles<T> = { [P in keyof T]: ViewStyle | TextStyle | ImageStyle };
+
+export function makeStyles<T extends NamedStyles<T> | NamedStyles<any>>(
+  factory: (colors: ThemeColors) => T & NamedStyles<any>,
 ): () => T {
   return function useStyles(): T {
     const { colors } = useTheme();

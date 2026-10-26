@@ -44,7 +44,7 @@ export default function Review() {
           data={q.data}
           keyExtractor={(g) => g.project_id}
           contentContainerStyle={[s.list, { paddingBottom: (usesNativeTabs ? insets.bottom : 0) + space.xl }]}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           renderItem={({ item }) => (
             <Pressable style={({ pressed }) => [s.card, pressed && { backgroundColor: colors.surfaceSecondary }]} onPress={() => router.push(`/review/${item.project_id}`)} testID={`review-group-${item.ref}`}>
               <View style={{ flex: 1, gap: 4 }}>

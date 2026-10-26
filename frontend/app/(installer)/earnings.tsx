@@ -63,7 +63,7 @@ export default function Earnings() {
         <FlatList
           data={rows[tab]}
           keyExtractor={(r) => r.key}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: (usesNativeTabs ? insets.bottom : 0) + space.xl }]}
           ListHeaderComponent={
             <View style={{ gap: space.md, marginBottom: space.md }}>

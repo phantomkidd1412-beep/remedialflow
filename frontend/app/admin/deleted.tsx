@@ -64,7 +64,7 @@ export default function DeletedProjects() {
         <FlatList
           data={q.data ?? []}
           keyExtractor={(d) => d.id}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           keyboardShouldPersistTaps="handled"
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="trash-2" text={term ? "No deleted projects match your search" : "No deleted projects"} />}

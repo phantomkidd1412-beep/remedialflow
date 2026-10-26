@@ -123,7 +123,7 @@ export default function Jobs() {
           )}
           renderItem={({ item, section }) => <JobCard p={item} section={section.key as Key} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}
           contentContainerStyle={s.list}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           onEndReached={() => q.hasNextPage && q.fetchNextPage()}
           ListEmptyComponent={<Empty icon="clipboard" text={filter === "all" ? "No jobs assigned" : `No ${TITLES[filter as Key].toLowerCase()} jobs`} />}
           initialNumToRender={8}

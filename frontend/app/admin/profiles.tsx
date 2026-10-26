@@ -38,7 +38,7 @@ export default function Profiles() {
         <FlatList
           data={q.data ?? []}
           keyExtractor={(p) => p.id}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="layers" text="No profiles yet. Staff can save a confirmed NC checklist as a profile." />}
           renderItem={({ item: p }) => (

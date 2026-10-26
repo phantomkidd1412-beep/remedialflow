@@ -60,7 +60,7 @@ export default function Activity() {
           ListHeaderComponent={header}
           keyboardShouldPersistTaps="handled"
           onEndReached={() => q.hasNextPage && !q.isFetchingNextPage && q.fetchNextPage()}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="activity" text="No activity found" />}
           renderItem={({ item: i }) => (
@@ -73,7 +73,7 @@ export default function Activity() {
               <Text style={s.meta}>{i.record_type}{i.reference ? ` · ${i.reference}` : ""}{i.data?.ref && i.record_type !== "project" ? ` · ${i.data.ref}` : ""}</Text>
             </View>
           )}
-          ListFooterComponent={q.isFetchingNextPage ? <Loading /> : null}
+          ListFooterComponent={q.isFetchingNextPage ? <Loading /> : undefined}
         />
       )}
     </View>

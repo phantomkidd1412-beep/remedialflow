@@ -325,4 +325,11 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   staff-marked, so PDF (checklist_plan), coverage/staff panel and assessment gate agree; recommendations don't re-suggest held items
   (also part of the cache fingerprint). Hold is lifted only by an explicit staff choice (Replace/Choose photo or checklist marking).
 
+## Expo SDK 58 upgrade (preview) — Jun 2026
+- expo 57.0.29 -> ^58.0.0 (58.0.19), react-native 0.88.0, react 19.3.0, expo-router ~58.0.26; `expo install --fix`; expo-doctor 20/20.
+- Code: upload.ts awaits FileHandle.readBytes (async in SDK 58); theme.ts own NamedStyles type (removed from RN types);
+  RefreshControl onRefresh returns void; activity ListFooter undefined; batch ref typing; TabsShell imports expo-router/native-tabs.
+- Native builds must be regenerated for SDK 58 (existing iOS Build 104 is SDK 57).
+
+
   while the panel says "No suitable photo found".

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ComponentRef, useEffect, useRef, useState } from "react";
 import { FlatList, Image, Platform, Pressable, ScrollView, Text, View } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
@@ -27,7 +27,7 @@ export default function BatchUpload() {
   const [sent, setSent] = useState<string[]>([]); // queue item ids created by this screen
   const [orig, setOrig] = useState(false);
   const [cancelled, setCancelled] = useState<string[]>([]);
-  const drop = useRef<View>(null);
+  const drop = useRef<ComponentRef<typeof View>>(null);
 
   const add = (files: { uri: string; mime: string; name: string }[]) =>
     setRows((r) => [

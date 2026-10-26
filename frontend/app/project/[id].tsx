@@ -219,7 +219,7 @@ export default function StaffProject() {
       <FlatList
         data={ncs}
         keyExtractor={(n) => n.id}
-        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
         ListHeaderComponent={
           <View style={{ gap: space.sm, marginBottom: space.sm }}>

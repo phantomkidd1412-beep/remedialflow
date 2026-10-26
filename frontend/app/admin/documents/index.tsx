@@ -30,7 +30,7 @@ export default function Documents() {
           data={q.data ?? []}
           keyExtractor={(d) => d.id}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           ListHeaderComponent={<UploadBox onDone={(d) => { qc.invalidateQueries({ queryKey: ["documents"] }); toast(`Uploaded: ${d.pages} pages read`); router.push(`/admin/documents/${d.id}`); }} />}
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="file-text" text="No technical documents yet" />}

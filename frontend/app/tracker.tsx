@@ -112,7 +112,7 @@ export default function Tracker() {
           keyExtractor={(r) => r.id}
           ListHeaderComponent={header}
           keyboardShouldPersistTaps="handled"
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="bar-chart-2" text="No projects in this period" />}
           renderItem={({ item: r }) => (

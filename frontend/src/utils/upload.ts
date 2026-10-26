@@ -130,7 +130,7 @@ export async function uploadChunked(base: string, o: ChunkOpts): Promise<Respons
       const h = file.open();
       try {
         h.offset = s;
-        return h.readBytes(e - s);
+        return await h.readBytes(e - s); // async since SDK 58
       } finally {
         h.close();
       }

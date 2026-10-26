@@ -45,7 +45,7 @@ export default function JobDetail() {
           <NCCard nc={item} project={p} expanded={firstOpen === item.id} onToggle={toggle} queued={items.filter((i) => i.ncId === item.id)} />
         )}
         contentContainerStyle={s.list}
-        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+        refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
         ListEmptyComponent={<Text style={s.progText}>No NCs present.</Text>}
       />
       <SyncBar projectId={p.id} inTabs={false} />

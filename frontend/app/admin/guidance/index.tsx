@@ -45,7 +45,7 @@ export default function GuidanceList() {
         <FlatList
           data={q.data ?? []}
           keyExtractor={(g) => g.id}
-          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
           ListHeaderComponent={
             <View style={{ gap: space.sm }}>
