@@ -126,6 +126,3 @@ credentials.json
 # Deployment needs these settings files included
 !backend/.env
 !frontend/.env
-.env
-.env.*
-*.env
