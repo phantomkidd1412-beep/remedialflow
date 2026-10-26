@@ -313,3 +313,12 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Frontend: src/components/RecommendationsPanel.tsx in EvidenceReview; admin profiles show good/rejected counts + "Update of vN".
 - Tests: test_recommend.py (9) + test_recommend_http.py (10, testing agent) + regression; 70 + 22 passed.
 
+
+
+## Knowledge Index end-to-end test — Jun 2026
+- tests/test_kb_e2e.py: ONE synthetic gas-tee NC through docs -> profile checklist -> recommend (1 mocked AI call, cache) ->
+  accept/replace/reject -> proposed profile -> PDF. Sample: /app/test_reports/samples/NC-E2E_knowledge_index.pdf.
+- Fixed (confirmed): a photo staff REJECTED for a requirement was still auto-used for it in PDF/coverage via stage-tag match.
+  Now files.rejected_items[] (set on reject/replace, cleared if later chosen) is skipped by checklist.item_evidence.
+- Open (needs user decision): after rejecting, another same-stage-tagged photo can still be auto-used in the PDF for that requirement
+  while the panel says "No suitable photo found".

@@ -80,7 +80,7 @@ def item_evidence(item: dict, photos: List[dict]) -> dict:
     auto = []
     for f in ok:
         c = f.get("classification") or {}
-        if f.get("checklist_item") or c.get("relevant") is False or c.get("dup_of"):
+        if f.get("checklist_item") or c.get("relevant") is False or c.get("dup_of") or item["id"] in (f.get("rejected_items") or []):
             continue
         st = (c.get("staff") or {}).get("stage") or c.get("stage")
         if st == item["stage"] and (not item.get("locations") or c.get("location_id") in item["locations"]):

@@ -318,6 +318,10 @@ async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
         rec.update(state="replaced", file_id=body.file_id, source="staff", reason="Chosen by staff", uncertain=False)
         ex.update(action="replace_rec", file_id=body.file_id)
     await db.learning_examples.insert_one(ex)
+    if ex.get("rejected_file_id"):  # staff said "not this photo for this requirement": PDF/coverage never auto-use it for it
+        await db.files.update_one({"_id": oid(ex["rejected_file_id"])}, {"$addToSet": {"rejected_items": item_id}})
+    if ex.get("file_id"):
+        await db.files.update_one({"_id": oid(ex["file_id"])}, {"$pull": {"rejected_items": item_id}})
     await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {f"photo_recs.items.{item_id}": rec}})
     await audit(f"nc.recommendation_{body.action}", u.id, f"nc:{nc_id}", {"item_id": item_id, "file_id": ex.get("file_id"), "rejected": ex.get("rejected_file_id")})
     return await view(nc_id)
