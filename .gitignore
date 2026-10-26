@@ -82,7 +82,7 @@ memory/test_credentials.md
 android-sdk/tests/sample_big.mp4
 tests/sample_big.mp4
 
-# --- Secrets (backend/.env and frontend/.env must stay included: the Emergent deployment needs them) ---
+# --- Secrets (backend/.env and frontend/.env are NEVER committed; deployed values come from Emergent Deployment Panel -> Secrets) ---
 *.pem
 *.key
 *.p8
@@ -123,6 +123,9 @@ test_reports/
 tests/p419977.pdf
 credentials.json
 .credentials
-# Deployment needs these settings files included
-!backend/.env
-!frontend/.env
+# Secrets: never commit/push .env files. Deployed values live in Emergent Deployment Panel -> Secrets.
+.env
+.env.*
+*.env
+!*.env.example
+!.env.example
