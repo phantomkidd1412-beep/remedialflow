@@ -54,7 +54,7 @@ def _fp(cl: dict, photos: List[dict], prof: Optional[dict]) -> str:
     """Cache key: checklist version, photos AND their current tags (staff stage/location corrections invalidate the cache)."""
     tags = sorted((str(f["_id"]), _stage(f), (f.get("classification") or {}).get("location_id"), (f.get("classification") or {}).get("relevant"),
                    (f.get("classification") or {}).get("dup_of")) for f in photos)
-    raw = json.dumps([cl.get("v"), [i["id"] for i in cl["items"]], tags, prof and [str(prof["_id"]), prof.get("version")]], default=str)
+    raw = json.dumps([cl.get("v"), [i["id"] for i in cl["items"]], sorted(cl.get("held") or []), tags, prof and [str(prof["_id"]), prof.get("version")]], default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -188,9 +188,13 @@ async def build(nc_id: str, force: bool = False, ai=None) -> dict:
     marked = {f.get("checklist_item") for f in photos if f.get("checklist_item")}
     keep = {k: v for k, v in ((cur or {}).get("items") or {}).items() if v.get("state") in ("accepted", "replaced")}
     items, todo = {}, []
+    held = set(cl.get("held") or [])
     for it in cl["items"]:
         if it["id"] in marked or it["id"] in keep:
             items[it["id"]] = keep.get(it["id"]) or {"file_id": None, "source": "staff", "reason": "Marked by staff", "uncertain": False, "state": "accepted", "candidates": []}
+            continue
+        if it["id"] in held:  # staff rejected the suggestion: no new suggestion until staff choose a photo
+            items[it["id"]] = {"file_id": None, "source": "none", "reason": "Rejected by staff; choose a photo", "uncertain": False, "state": "rejected", "candidates": []}
             continue
         r = rule_pick(it, photos, rejected.get(it["id"], set()))
         items[it["id"]] = {**r, "state": "pending"}
@@ -318,6 +322,10 @@ async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
         rec.update(state="replaced", file_id=body.file_id, source="staff", reason="Chosen by staff", uncertain=False)
         ex.update(action="replace_rec", file_id=body.file_id)
     await db.learning_examples.insert_one(ex)
+    if body.action == "reject":  # keep the requirement unfulfilled until staff explicitly choose a photo
+        await db.ncs.update_one({"_id": nc["_id"]}, {"$addToSet": {"checklist.held": item_id}})
+    else:
+        await db.ncs.update_one({"_id": nc["_id"]}, {"$pull": {"checklist.held": item_id}})
     if ex.get("rejected_file_id"):  # staff said "not this photo for this requirement": PDF/coverage never auto-use it for it
         await db.files.update_one({"_id": oid(ex["rejected_file_id"])}, {"$addToSet": {"rejected_items": item_id}})
     if ex.get("file_id"):

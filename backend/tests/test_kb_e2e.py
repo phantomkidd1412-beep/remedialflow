@@ -161,6 +161,7 @@ def test_end_to_end(e2e):
     assert v["it-before"]["state"] == "accepted" and v["it-before"]["source"] == "staff"
     assert v["it-after"]["state"] == "replaced" and v["it-after"]["file_id"] == f[5]
     assert v["it-tape"]["state"] == "rejected" and v["it-tape"]["file_id"] is None
+    assert run(db.ncs.find_one({"_id": ObjectId(nid)}))["checklist"]["held"] == ["it-tape"]
     assert any("No suitable photo" in x for x in v["it-tape"]["flags"]) and any("Measurement" in x for x in v["it-tape"]["flags"])  # missing evidence flagged
     marks = {str(x["_id"]): x.get("checklist_item") for x in run(db.files.find({"nc_id": nid}).to_list(20))}
     assert marks[f[0]] == "it-before" and marks[f[5]] == "it-after" and marks[f[4]] is None and marks[f[1]] is None
@@ -183,14 +184,32 @@ def test_end_to_end(e2e):
     groups = run(server.pdf_photo_groups(n, files, load))
     shown = [img for _, slots in groups for img, _ in slots]
     assert [len(slots) for _, slots in groups] == [1] * len(groups)
-    assert BLOB[f"qa-e2e:{f[0]}:stamped"] in shown and BLOB[f"qa-e2e:{f[5]}:stamped"] in shown
+    assert BLOB[f"qa-e2e:{f[0]}:stamped"] in shown and BLOB[f"qa-e2e:{f[5]}:stamped"] in shown  # other valid evidence unaffected
     assert BLOB[f"qa-e2e:{f[4]}:stamped"] not in shown, "replaced suggestion must not appear"
-    assert BLOB[f"qa-e2e:{f[1]}:stamped"] not in shown, "photo staff rejected for the measurement must not appear for it"
+    assert BLOB[f"qa-e2e:{f[1]}:stamped"] not in shown and BLOB[f"qa-e2e:{f[2]}:stamped"] not in shown, "no substitute after reject"
+    assert "Tape showing" not in " ".join(cap for _, slots in groups for _, cap in slots)
+    # consistent: staff checklist coverage + recommendations panel + assessment gate all say the requirement is unfulfilled
+    st = {c["id"]: c["state"] for c in run(checklist.view(nid))["coverage"]}
+    assert st == {"it-before": "staff", "it-tape": "missing", "it-after": "staff"}
+    assert recs(run(recommend.get_recs(nid, staff)))["it-tape"]["file_id"] is None
+    assert any("Tape showing" in r for r in run(checklist.gate_reasons(nid)))
+    n_calls = len(calls)
+    again = recs(run(recommend.run_recs(nid, recommend.RunIn(force=True), staff)))
+    assert again["it-tape"]["state"] == "rejected" and again["it-tape"]["file_id"] is None and len(calls) == n_calls  # not re-suggested
     pdf = nc_pdf({"address": "QA TEST 9 Example Road", "postcode": "QA1 1AA", "ref": "QA-E2E"}, {**n, "export_note": ""}, [scene(900)], groups)
     os.makedirs(OUT, exist_ok=True)
     open(f"{OUT}/NC-E2E_knowledge_index.pdf", "wb").write(pdf)
     txt = " ".join(pg.get_text() for pg in pymupdf.open(stream=pdf, filetype="pdf"))
     assert not [w for w in INTERNAL if w.lower() in txt.lower()], txt
+
+    # 8. explicit staff choice fulfils it again (via the existing marking control)
+    run(checklist.mark(f[2], checklist.MarkIn(item_id="it-tape"), staff))
+    n = run(db.ncs.find_one({"_id": ObjectId(nid)}))
+    groups = run(server.pdf_photo_groups(n, run(db.files.find({"nc_id": nid}).to_list(20)), load))
+    shown = [img for _, slots in groups for img, _ in slots]
+    assert BLOB[f"qa-e2e:{f[2]}:stamped"] in shown and BLOB[f"qa-e2e:{f[1]}:stamped"] not in shown and len(shown) == 3
+    assert {c["id"]: c["state"] for c in run(checklist.view(nid))["coverage"]}["it-tape"] == "staff"
+    assert recs(run(recommend.get_recs(nid, staff)))["it-tape"]["file_id"] == f[2]
 
 
 def _pdf(pages):

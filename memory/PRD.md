@@ -321,4 +321,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Fixed (confirmed): a photo staff REJECTED for a requirement was still auto-used for it in PDF/coverage via stage-tag match.
   Now files.rejected_items[] (set on reject/replace, cleared if later chosen) is skipped by checklist.item_evidence.
 - Open (needs user decision): after rejecting, another same-stage-tagged photo can still be auto-used in the PDF for that requirement
+- RESOLVED (Jun 2026): reject now adds the item to ncs.checklist.held; checklist.item_evidence returns "missing" for held items unless
+  staff-marked, so PDF (checklist_plan), coverage/staff panel and assessment gate agree; recommendations don't re-suggest held items
+  (also part of the cache fingerprint). Hold is lifted only by an explicit staff choice (Replace/Choose photo or checklist marking).
+
   while the panel says "No suitable photo found".

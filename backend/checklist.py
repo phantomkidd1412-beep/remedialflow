@@ -71,12 +71,15 @@ async def match_profile(nc: dict, scope: Optional[dict]) -> Optional[dict]:
     return best and {**best, "signals": sig}
 
 
-def item_evidence(item: dict, photos: List[dict]) -> dict:
-    """staff-marked photos first; otherwise photos whose stored stage/location confidently match the item."""
+def item_evidence(item: dict, photos: List[dict], held=()) -> dict:
+    """staff-marked photos first; otherwise photos whose stored stage/location confidently match the item.
+    held = requirements where staff rejected the suggestion: nothing is substituted until staff choose a photo."""
     ok = [f for f in photos if f.get("pdf_include") is not False and f.get("status") != "superseded"]
     marked = [f for f in ok if f.get("checklist_item") == item["id"]]
     if marked:
         return {"state": "staff", "files": marked}
+    if item["id"] in (held or ()):
+        return {"state": "missing", "files": []}
     auto = []
     for f in ok:
         c = f.get("classification") or {}
@@ -89,7 +92,7 @@ def item_evidence(item: dict, photos: List[dict]) -> dict:
 
 
 def coverage(cl: Optional[dict], photos: List[dict]) -> List[dict]:
-    return [{"id": it["id"], "title": it["title"], "stage": it["stage"], "state": item_evidence(it, photos)["state"]}
+    return [{"id": it["id"], "title": it["title"], "stage": it["stage"], "state": item_evidence(it, photos, (cl or {}).get("held"))["state"]}
             for it in (cl or {}).get("items") or []]
 
 
@@ -255,8 +258,9 @@ async def confirm(nc_id: str, body: ChecklistIn, u: User = Depends(staff)):
     items = norm_items([i.model_dump() for i in body.items], scope_for(nc), [])
     hist = (old.get("history") or []) + ([{"items": old.get("items"), "status": old.get("status"), "at": now_iso()}] if old.get("items") else [])
     cl = {**old, "items": items, "status": "confirmed", "confirmed_by": u.id, "confirmed_at": now_iso(), "v": (old.get("v") or 0) + 1, "history": hist[-20:]}
-    await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {"checklist": cl}})
     valid = {i["id"] for i in items}
+    cl["held"] = [h for h in old.get("held") or [] if h in valid]
+    await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {"checklist": cl}})
     await db.files.update_many({"nc_id": nc_id, "checklist_item": {"$nin": list(valid) + [None]}}, {"$set": {"checklist_item": None}})
     await audit("nc.checklist_confirmed", u.id, f"nc:{nc_id}", {"items": [i["title"] for i in items], "version": cl["v"]})
     return await view(nc_id)
@@ -283,6 +287,8 @@ async def mark(fid: str, body: MarkIn, u: User = Depends(staff)):
     if body.item_id and body.item_id not in {i["id"] for i in cl.get("items") or []}:
         raise HTTPException(400, "Unknown checklist item")
     await db.files.update_one({"_id": f["_id"]}, {"$set": {"checklist_item": body.item_id}})
+    if body.item_id:  # explicit staff choice lifts a "rejected - keep unfulfilled" hold
+        await db.ncs.update_one({"_id": nc["_id"]}, {"$pull": {"checklist.held": body.item_id}})
     item = next((i for i in cl.get("items") or [] if i["id"] == body.item_id), None)
     await db.learning_examples.insert_one({"nc_id": f["nc_id"], "file_id": fid, "item_id": body.item_id, "item_title": item and item["title"],
                                            "item_stage": item and item["stage"], "previous_item_id": f.get("checklist_item"),
@@ -352,11 +358,12 @@ def checklist_plan(nc: dict, photos: List[dict]) -> Optional[list]:
     requirement. Requirements without a photo are left out silently. None when no requirement has a photo (caller falls back)."""
     from smart_pdf import HEAD, ORDER
     items = (nc.get("checklist") or {}).get("items") or []
+    held = (nc.get("checklist") or {}).get("held") or []
     used, out = set(), []
     for st in ORDER:
         slots = []
         for it in [i for i in items if i["stage"] == st]:
-            fs = [f for f in item_evidence(it, photos)["files"] if str(f["_id"]) not in used]
+            fs = [f for f in item_evidence(it, photos, held)["files"] if str(f["_id"]) not in used]
             if fs:
                 slots.append((fs, it["title"]))
                 used.update(str(f["_id"]) for f in fs)
