@@ -47,7 +47,12 @@ export default function GuidanceList() {
           keyExtractor={(g) => g.id}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => q.refetch()} />}
           contentContainerStyle={[s.list, { paddingBottom: insets.bottom + space.xl }]}
-          ListHeaderComponent={<Btn title="New guidance entry" icon="plus" onPress={() => router.push("/admin/guidance/new")} testID="guidance-new" />}
+          ListHeaderComponent={
+            <View style={{ gap: space.sm }}>
+              <Btn title="New guidance entry" icon="plus" onPress={() => router.push("/admin/guidance/new")} testID="guidance-new" />
+              <Btn title="NC evidence profiles" icon="layers" variant="outline" onPress={() => router.push("/admin/profiles")} testID="guidance-profiles" />
+            </View>
+          }
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="book-open" text="No guidance entries yet" />}
           renderItem={({ item: g }) => (
             <Pressable style={s.card} onPress={() => router.push(`/admin/guidance/${g.id}`)} testID={`guidance-row-${g.id}`}>

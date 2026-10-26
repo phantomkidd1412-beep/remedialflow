@@ -5,9 +5,10 @@ import { api } from "@/src/api";
 import { EvidenceFile, NCItem } from "@/src/projects";
 import { Btn, Field, Label, Sheet, useToast } from "@/src/ui";
 import { Thumb } from "@/src/components/Media";
+import { ChecklistPanel, ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type RPhoto = { id: string; classified: boolean; pdf_include: boolean | null; staff: string[]; location_id: string | null; location_label: string | null; location_group: string | null; stage: string | null; component: string | null; dup_of: string | null; relevant: boolean | null };
+type RPhoto = { id: string; classified: boolean; pdf_include: boolean | null; checklist_item?: string | null; staff: string[]; location_id: string | null; location_label: string | null; location_group: string | null; stage: string | null; component: string | null; dup_of: string | null; relevant: boolean | null };
 type Review = {
   enabled: boolean; unclassified?: number; photos?: RPhoto[];
   scope?: { scope_type: string; expected_count: number | null; scope_status: string; method?: string; locations: { id: string; label: string }[]; basis?: string[] };
@@ -29,9 +30,11 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
   const [count, setCount] = useState("");
   const [labels, setLabels] = useState("");
   const [basis, setBasis] = useState("");
-  const [picker, setPicker] = useState<{ photo: RPhoto; kind: "loc" | "stage" } | null>(null);
+  const [picker, setPicker] = useState<{ photo: RPhoto; kind: "loc" | "stage" | "item" } | null>(null);
   const r = q.data;
+  const cq = useChecklist(nc.id, !!r?.enabled);
   if (!r?.enabled) return null;
+  const citems = cq.data?.checklist?.items ?? [];
   const locs = r.scope?.locations ?? [];
   const byId: Record<string, EvidenceFile> = Object.fromEntries(nc.photos.map((f) => [f.id, f]));
   const idx = (id: string) => (r.photos ?? []).findIndex((p) => p.id === id) + 1;
@@ -54,7 +57,13 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
   const pick = (value: string | null) => {
     const p = picker;
     setPicker(null);
-    if (p) correct(p.photo, p.kind === "loc" ? { location_id: value } : { stage: value });
+    if (!p) return;
+    if (p.kind === "item")
+      return run(async () => {
+        qc.setQueryData(["checklist", nc.id], await api(`/evidence/${p.photo.id}/checklist-item`, { method: "PUT", body: { item_id: value } }));
+        return api<Review>(`/ncs/${nc.id}/evidence-review`);
+      }, "Best photo saved");
+    correct(p.photo, p.kind === "loc" ? { location_id: value } : { stage: value });
   };
   const setPdf = (p: RPhoto) =>
     run(async () => {
@@ -62,7 +71,10 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
       qc.invalidateQueries({ queryKey: ["project"] });
       return api<Review>(`/ncs/${nc.id}/evidence-review`);
     }, "PDF selection saved");
-  const options = picker?.kind === "loc" ? [{ v: null, t: "Location not identified" }, ...locs.map((l) => ({ v: l.id, t: l.label }))] : STAGES.map((v) => ({ v, t: STAGE_TXT[v] }));
+  const options =
+    picker?.kind === "loc" ? [{ v: null, t: "Location not identified" }, ...locs.map((l) => ({ v: l.id, t: l.label }))]
+    : picker?.kind === "item" ? [{ v: null, t: "Not a checklist photo" }, ...citems.map((i) => ({ v: i.id, t: `${ITEM_STAGE[i.stage]} · ${i.title}` }))]
+    : STAGES.map((v) => ({ v, t: STAGE_TXT[v] }));
   const classify = (force = false) => run(() => api(`/ncs/${nc.id}/evidence-review/classify`, { method: "POST", body: { force } }), "Photos classified");
   const saveScope = () =>
     run(async () => {
@@ -116,6 +128,11 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
               <Pressable style={s.chip} onPress={() => setPicker({ photo: p, kind: "stage" })} disabled={busy || !p.classified} testID={`review-stage-${p.id}`}>
                 <Text style={s.tag}>{STAGE_TXT[p.stage ?? "uncertain"]} ▾</Text>
               </Pressable>
+              {citems.length ? (
+                <Pressable style={[s.chip, p.checklist_item ? { borderColor: colors.brandPrimary } : null]} onPress={() => setPicker({ photo: p, kind: "item" })} disabled={busy} testID={`review-item-${p.id}`}>
+                  <Text style={s.tag} numberOfLines={1}>{citems.find((i) => i.id === p.checklist_item)?.title ?? "BEST FOR…"} ▾</Text>
+                </Pressable>
+              ) : null}
               <Pressable style={[s.chip, p.pdf_include === false && { backgroundColor: colors.error }]} onPress={() => setPdf(p)} disabled={busy} testID={`review-pdf-${p.id}`}>
                 <Text style={[s.tag, p.pdf_include === false && { color: colors.onError }]}>{p.pdf_include === false ? "EXCLUDED" : p.pdf_include ? "ALWAYS IN PDF" : "PDF: AUTO"}</Text>
               </Pressable>
@@ -128,9 +145,9 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
           ))}
         </ScrollView>
       ) : null}
-      <Sheet visible={!!picker} onClose={() => setPicker(null)} title={picker?.kind === "loc" ? "Photo location" : "Remediation stage"} testID="review-picker">
+      <Sheet visible={!!picker} onClose={() => setPicker(null)} title={picker?.kind === "loc" ? "Photo location" : picker?.kind === "item" ? "Best photo for checklist item" : "Remediation stage"} testID="review-picker">
         {options.map((o) => {
-          const cur = picker && (picker.kind === "loc" ? picker.photo.location_id : picker.photo.stage ?? "uncertain") === o.v;
+          const cur = picker && (picker.kind === "loc" ? picker.photo.location_id : picker.kind === "item" ? picker.photo.checklist_item ?? null : picker.photo.stage ?? "uncertain") === o.v;
           return (
             <Pressable key={String(o.v)} style={[s.opt, cur && { borderColor: colors.brandPrimary }]} onPress={() => pick(o.v)} testID={`review-opt-${o.v ?? "none"}`}>
               <Text style={s.optText}>{o.t}{cur ? "  ✓" : ""}</Text>
@@ -138,6 +155,7 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
           );
         })}
       </Sheet>
+      <ChecklistPanel ncId={nc.id} number={nc.number} />
       <Text style={s.small}>Tap a location or stage to correct it. Corrections override the AI for future assessments and PDFs. Photos are never deleted.</Text>
     </View>
   );

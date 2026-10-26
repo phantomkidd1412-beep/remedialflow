@@ -265,3 +265,18 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   captions only for measurement/test component. Single-photo steps laid out two per row.
 - Stamped (timestamped) copy still preferred. No AI calls added. Samples: /app/test_reports/samples/*.pdf.
 - Tests: test_concise_pdf.py (10) + phase3/4/5 targeted: all passing.
+
+## Knowledge Index Phase 1 — NC checklist, best-photo marking, profiles (preview, switch OFF) — Jun 2026
+- New `backend/checklist.py`: ncs.checklist (draft|confirmed|auto; source ai|profile|staff; items with stage, locations,
+  measurement, criterion, sources {guidance_id, doc_id, doc_version, clause, page}); files.checklist_item (staff best photo);
+  db.learning_examples (every marking); db.nc_profiles (versioned: proposed -> approved -> superseded/retired).
+- Profile match: 5 rule signals (defect, component, requirement, measure, location); component must overlap;
+  confident (>=4) -> checklist auto-filled, no AI; uncertain (2-3) -> draft + staff review; none -> ONE AI draft.
+- Assessment hook (switch ON, approved branch only): uncertain match / missing items on confirmed|auto checklist -> staff review.
+  Unconfirmed AI drafts never judge. Never approves.
+- PDF (switch ON + checklist): one photo per requirement (staff-marked first, else matched stage/location), caption = requirement;
+  missing silently omitted; falls back to concise rules. Pack fingerprint includes checklist + markings.
+- Endpoints: GET/PUT /api/ncs/{id}/checklist, POST .../checklist/draft, POST .../checklist/save-profile,
+  PUT /api/evidence/{fid}/checklist-item, GET /api/admin/profiles, PUT /api/admin/profiles/{id}/status.
+- Frontend: src/components/ChecklistPanel.tsx (in EvidenceReview, + "BEST FOR…" photo picker), app/admin/profiles.tsx,
+  link on admin guidance screen. Tests: tests/test_checklist.py (8); consolidated targeted 64 passed. Browser-checked.

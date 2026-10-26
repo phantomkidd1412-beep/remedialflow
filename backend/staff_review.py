@@ -25,7 +25,7 @@ async def review(nc_id: str) -> dict:
     from coverage import needs_verification, verify
     nc = await db.ncs.find_one({"_id": oid(nc_id)})
     files = await db.files.find({"nc_id": nc_id, "kind": "photo", "status": {"$in": ["draft", "submitted"]}},
-                                {"classification": 1, "pdf_include": 1, "stage": 1, "stage_source": 1, "status": 1, "kind": 1}).sort("server_received_at", 1).to_list(500)
+                                {"classification": 1, "pdf_include": 1, "stage": 1, "stage_source": 1, "status": 1, "kind": 1, "checklist_item": 1}).sort("server_received_at", 1).to_list(500)
     sc = nc.get("scope")
     if not sc:  # preview of the rule-based scope only (no AI, nothing stored)
         from smart_pdf import scope_for
@@ -35,7 +35,7 @@ async def review(nc_id: str) -> dict:
     for f in files:
         c = f.get("classification") or {}
         photos.append({"id": str(f["_id"]), "classified": bool(c), "staff": sorted(k for k in (c.get("staff") or {}) if k not in ("by", "at")),
-                       "pdf_include": f.get("pdf_include"), **{k: c.get(k) for k in FIELDS}})
+                       "pdf_include": f.get("pdf_include"), "checklist_item": f.get("checklist_item"), **{k: c.get(k) for k in FIELDS}})
         if photos[-1]["location_id"] and not photos[-1]["location_label"]:
             photos[-1]["location_label"] = names.get(photos[-1]["location_id"])  # label from the (previewed) scope
     return {"enabled": True, "scope": sc, "coverage": verify(sc, files, needs_verification(nc)), "photos": photos,

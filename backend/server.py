@@ -28,6 +28,7 @@ from ai import get_assessor, AssessmentInput, get_pdf_extractor
 from guidance import match_guidance, guidance_text, suggest_from_review
 from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope_gate
 from coverage import evaluate as coverage_evaluate, installer_request as coverage_request
+from checklist import gate_reasons as checklist_gate
 from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -782,6 +783,7 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
         if u.role == "installer":
             d.pop("scope", None)  # staff-only analysis
             d.pop("coverage", None)
+            d.pop("checklist", None)
         d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
                  video_versions=len(videos), video_required=bool(n.requires_stages and p.require_video is not False),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
@@ -1249,6 +1251,11 @@ async def run_assessment(nc_id: str, sub_id: str):
             if cov3 is not None:  # Phase 3 supersedes the Phase 1 gate when enabled
                 if cov3["status"] != "complete":
                     reasons.append(f"Location coverage {cov3['status']}: {cov3['reason']}")
+                try:  # evidence checklist: can only send the NC to staff review
+                    reasons += await checklist_gate(nc_id)
+                except Exception as e:
+                    log.warning("checklist gate failed: %s", type(e).__name__)
+                    reasons.append("Evidence checklist could not be checked")
             elif s.location_scope_enabled:  # Phase 1: multi-location / uncertain scope -> employee review (never rejection)
                 sc = await ensure_scope(nc_id)
                 cov = scope_coverage(sc, await db.files.find({"nc_id": nc_id}, {"kind": 1, "status": 1, "pdf_include": 1, "location_id": 1}).to_list(5000))
@@ -1697,10 +1704,10 @@ async def pack_fingerprint(pid: str, p: dict) -> str:
                       [[str(n["_id"]), n.get("number"), n.get("status"), n.get("original_text"), n.get("export_note"), n.get("title")] for n in ncs],
                       [[str(f["_id"]), f.get("nc_id"), f.get("status"), f.get("kind"), bool(f.get("excluded")), f.get("stage"), f.get("pdf_include")] for f in files]], default=str)
     if (await get_settings()).smart_pdf_enabled:  # Phase 4/5: tag + scope corrections change the PDF, so they make a new pack version
-        tags = await db.files.find({"project_id": pid, "kind": "photo"}, {"classification": 1}).sort("_id", 1).to_list(20000)
-        sc = await db.ncs.find({"project_id": pid}, {"scope.expected_count": 1, "scope.locations": 1}).sort("number", 1).to_list(500)
-        raw += json.dumps([[str(f["_id"]), {k: (f.get("classification") or {}).get(k) for k in ("location_id", "location_group", "stage", "dup_of", "component")}]
-                           for f in tags] + [n.get("scope") for n in sc], default=str)
+        tags = await db.files.find({"project_id": pid, "kind": "photo"}, {"classification": 1, "checklist_item": 1}).sort("_id", 1).to_list(20000)
+        sc = await db.ncs.find({"project_id": pid}, {"scope.expected_count": 1, "scope.locations": 1, "checklist.items": 1}).sort("number", 1).to_list(500)
+        raw += json.dumps([[str(f["_id"]), f.get("checklist_item"), {k: (f.get("classification") or {}).get(k) for k in ("location_id", "location_group", "stage", "dup_of", "component")}]
+                           for f in tags] + [[n.get("scope"), n.get("checklist")] for n in sc], default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -1859,19 +1866,29 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
     pool = picked or photos
     if not pool:
         return []
+
+    async def slots_out(sections):  # ONE clearest photo per slot (stamped copy keeps its timestamp)
+        out = []
+        for head, slots in sections:
+            pairs = []
+            for cands, cap in slots:
+                imgs = await load(cands)
+                if imgs:
+                    pairs.append((await run_in_threadpool(best, imgs), cap))
+            if pairs:
+                out.append((head, pairs))
+        return out
+    if (await get_settings()).smart_pdf_enabled and (n.get("checklist") or {}).get("items"):
+        from checklist import checklist_plan  # one photo per checklist requirement, staff-marked first
+        sections = checklist_plan(n, photos)
+        if sections:
+            out = await slots_out(sections)
+            if out:
+                return out
     if (await get_settings()).smart_pdf_enabled and not picked:
         from smart_pdf import plan, scope_for, usable
         if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing layout below
-            out = []
-            for head, slots in plan(n, photos, scope_for(n)):
-                pairs = []
-                for cands, cap in slots:  # ONE clearest photo per evidence step (stamped copy keeps its timestamp)
-                    imgs = await load(cands)
-                    if imgs:
-                        pairs.append((await run_in_threadpool(best, imgs), cap))
-                if pairs:
-                    out.append((head, pairs))
-            return out
+            return await slots_out(plan(n, photos, scope_for(n)))
     staff_staged = {st: [f for f in pool if f.get("stage") == st and f.get("stage_source") == "staff"] for st in STAGES}
     chosen = {st: v for st, v in staff_staged.items() if v}
     extra = []
@@ -2098,6 +2115,8 @@ from coverage import router as coverage_router  # noqa: E402
 app.include_router(coverage_router)
 from staff_review import router as staff_review_router  # noqa: E402
 app.include_router(staff_review_router)
+from checklist import router as checklist_router  # noqa: E402
+app.include_router(checklist_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402

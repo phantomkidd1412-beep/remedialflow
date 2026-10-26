@@ -195,6 +195,11 @@ def assess(env, monkeypatch, text, tags, flag=True, number="NC-01", **stub):
                                                                                        "relevant": True, "dup_of": None, "source": "ai"}}})
         return {}
     monkeypatch.setattr(photo_class, "classify_nc", fake_classify)
+    import checklist
+
+    async def no_draft(*a, **k):  # checklist drafting is covered in test_checklist.py; no real AI here
+        return None
+    monkeypatch.setattr(checklist, "ai_draft", no_draft)
     run(db.settings.update_one({"_id": "global"}, {"$set": {"coverage_check_enabled": flag, "location_scope_enabled": False,
                                                             "photo_classification_enabled": False, "auto_verify": True}}))
 
