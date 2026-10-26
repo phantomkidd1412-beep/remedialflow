@@ -256,3 +256,12 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   complete single -> none; incomplete -> "…X of N… Outstanding: …"; unverified -> "Evidence coverage has not been confirmed.";
   any untagged photo / no scope -> "Evidence coverage has not been assessed." Switch OFF -> unchanged.
 - Tests: test_pdf_coverage_safeguard.py (12) + Phase 4/5 targeted = 29 passed.
+
+## Concise evidence PDF fix — Jun 2026
+- Both PDF layouts: ONE clearest photo (evidence_pack.best, sharpness) per evidence step — per stage, or per (location, stage) for
+  confirmed multi-location NCs. Staff-picked (pdf_include True) photos always kept; excluded never shown. AI "extra" photos dropped when
+  near-identical (dHash <= 10) to a shown photo. TrustMark originals: near-identical copies shown once.
+- No internal wording in PDFs: coverage line removed (coverage stays in staff panel); no "Location not identified" headings;
+  captions only for measurement/test component. Single-photo steps laid out two per row.
+- Stamped (timestamped) copy still preferred. No AI calls added. Samples: /app/test_reports/samples/*.pdf.
+- Tests: test_concise_pdf.py (10) + phase3/4/5 targeted: all passing.

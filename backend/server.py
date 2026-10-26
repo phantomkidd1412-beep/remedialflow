@@ -1849,7 +1849,7 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
     """[(heading, [jpeg])] for one NC. Order of authority: staff include/exclude + staff stage labels, then Gemini's
     arrangement of the photos (cached per photo set), then a plain fallback. A stage is only labelled when known;
     original TrustMark photos are handled separately and never labelled as installer evidence."""
-    from evidence_pack import select_photos, readable
+    from evidence_pack import select_photos, readable, best, distinct
     from ai import arrange_photos
     photos = [f for f in files if f["kind"] == "photo" and f["status"] != "superseded" and f.get("pdf_include") is not False]
 
@@ -1857,21 +1857,18 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
         return await run_in_threadpool(readable, [b for f in fs for b in [await get(f, "stamped", "display", "original")] if b])
     picked = [f for f in photos if f.get("pdf_include") is True]
     pool = picked or photos
-    smart_on = (await get_settings()).smart_pdf_enabled
-    if smart_on:  # Location-Aware Evidence ON: one coverage line on EVERY PDF path (smart or existing layout), set once
-        from smart_pdf import coverage_note, scope_for
-        n["coverage_note"] = coverage_note(n, scope_for(n), photos)
     if not pool:
         return []
-    if smart_on and not picked:
+    if (await get_settings()).smart_pdf_enabled and not picked:
         from smart_pdf import plan, scope_for, usable
-        if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing behaviour below
-            groups, _ = plan(n, photos, scope_for(n))  # same note as above (same inputs) - not added twice
+        if usable(photos):  # every photo already tagged (Phase 2): no AI call here; otherwise the existing layout below
             out = []
-            for head, items in groups:
-                pairs = [(b, c) for f, c in items for b in [await get(f, "stamped", "display", "original")] if b]
-                ok = set(map(id, await run_in_threadpool(readable, [b for b, _ in pairs])))
-                pairs = [(b, c) for b, c in pairs if id(b) in ok]  # unreadable images are skipped, never fatal
+            for head, slots in plan(n, photos, scope_for(n)):
+                pairs = []
+                for cands, cap in slots:  # ONE clearest photo per evidence step (stamped copy keeps its timestamp)
+                    imgs = await load(cands)
+                    if imgs:
+                        pairs.append((await run_in_threadpool(best, imgs), cap))
                 if pairs:
                     out.append((head, pairs))
             return out
@@ -1904,10 +1901,21 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
             extra = [by[i] for i in arr.get("extra") or [] if i in by]
         elif not chosen:  # AI unavailable: no stage labels are guessed
             return [("REMEDIATION PHOTOGRAPHS", await run_in_threadpool(select_photos, await load(pool), 3))]
-    out = [(STAGE_NAME[st].upper() + " PHOTOGRAPH", await load(chosen[st][:1] if st not in staff_staged or not staff_staged[st] else chosen[st]))
-           for st in STAGES if st in chosen]
-    if extra:
-        out.append(("ADDITIONAL SUPPORTING EVIDENCE", await load(extra)))
+    out, shown = [], []
+    for st in STAGES:  # ONE photo per stage; staff-picked photos of a stage are all kept
+        if st not in chosen:
+            continue
+        forced = [f for f in chosen[st] if f.get("pdf_include") is True]
+        imgs = await load(forced) if forced else await load(chosen[st])
+        if imgs and not forced:
+            imgs = [await run_in_threadpool(best, imgs)]
+        if imgs:
+            out.append((STAGE_NAME[st].upper() + " PHOTOGRAPH", imgs))
+            shown += imgs
+    if extra:  # AI "extra" photos only when they show something not already shown
+        ex = await run_in_threadpool(distinct, await load(extra), shown)
+        if ex:
+            out.append(("ADDITIONAL SUPPORTING EVIDENCE", ex))
     return out
 
 
@@ -1931,7 +1939,7 @@ async def set_pdf_include(fid: str, body: PdfIncludeIn, u: User = Depends(staff)
 
 
 async def build_evidence_pack(pid: str, p: dict):
-    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable
+    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable, distinct
     ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
     entries, vcount, prepared = [], {}, []
 
@@ -1953,6 +1961,7 @@ async def build_evidence_pack(pid: str, p: dict):
     rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
     for n, files, trust, rem in prepared:
         trust = await run_in_threadpool(drop_repeated, trust, rep)
+        trust = await run_in_threadpool(distinct, trust, [], 4)  # near-identical copies of the same TrustMark photo shown once
         name = f"{n['number']}_{slug(n.get('description', ''))}"
         nvid = sum(1 for f in files if f["kind"] == "video" and f["status"] != "superseded")
         if not (n.get("export_note") or "").strip():  # draft the works description instead of printing an empty section

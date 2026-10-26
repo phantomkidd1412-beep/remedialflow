@@ -204,4 +204,4 @@ def test_pdf_regenerates_from_corrections(qa):
     g = run(server.pdf_photo_groups(n, files, get))
     heads = [h for h, _ in g]
     assert heads == ["WINDOW 1 - COMPLETED WORK", "WINDOW 2 - MEASUREMENT / TEST EVIDENCE", "WINDOW 3 - COMPLETED WORK"], heads
-    assert n["coverage_note"] == "Evidence shown for all 3 windows."
+    assert "coverage_note" not in n  # coverage status stays in the staff panel, never in the PDF

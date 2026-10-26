@@ -50,6 +50,26 @@ def select_photos(photos: List[bytes], limit: int = 6) -> List[bytes]:
     return [b for _, b in chosen]
 
 
+SAME = 10  # dHash bits: at or below this two photos show substantially the same view
+
+
+def best(photos: List[bytes]) -> bytes:
+    """The clearest photo (sharpness + lighting) of candidates for ONE evidence step."""
+    return max(photos, key=sharpness)
+
+
+def distinct(photos: List[bytes], against: List[bytes] = (), d: int = SAME) -> List[bytes]:
+    """Keep order; drop photos that are near-identical to an earlier kept one or to any photo in `against`."""
+    seen = [dhash(b) for b in against]
+    out = []
+    for b in photos:
+        h = dhash(b)
+        if all(bin(h ^ s).count("1") > d for s in seen):
+            out.append(b)
+            seen.append(h)
+    return out
+
+
 def repeated_hashes(per_nc: List[List[bytes]]) -> set:
     """dHashes of images that appear on 2+ NCs (logos, headers, footers) - excluded from 'before' photos."""
     seen: List[Tuple[int, int]] = []  # (hash, nc_index)
@@ -139,6 +159,28 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
                                         color=BLACK, align=1)
             y += rh + ch + GAP
 
+    def tiles(pair):
+        """Two single-photo steps side by side, each with its own heading and optional caption."""
+        nonlocal y
+        cw = (W - 2 * M - GAP) / 2
+        items = []
+        for title, imgs in pair:
+            i0 = imgs[0]
+            b, a = _pdf_image(i0[0] if isinstance(i0, tuple) else i0)
+            items.append((title, b, min(cw / a, 250), i0[1] if isinstance(i0, tuple) else ""))
+        rh = max(h for _, _, h, _ in items)
+        ch = 12 if any(c for *_, c in items) else 0
+        if y + 22 + rh + ch > H - M:
+            new_page()
+        y += 6
+        for k, (title, b, h, c) in enumerate(items):
+            x = M + k * (cw + GAP)
+            page.insert_textbox(pymupdf.Rect(x, y, x + cw, y + 18), title, fontsize=9.5, fontname="hebo", color=BLACK)
+            page.insert_image(pymupdf.Rect(x, y + 17, x + cw, y + 17 + rh), stream=b, keep_proportion=True)
+            if c:
+                page.insert_textbox(pymupdf.Rect(x, y + 18 + rh, x + cw, y + 20 + rh + ch), c, fontsize=7.5, fontname="helv", color=BLACK, align=1)
+        y += 17 + rh + ch + GAP
+
     addr = f"{project.get('address', '')}{', ' + project['postcode'] if project.get('postcode') else ''}"
     text(addr, 14, True, 2)
     text(f"Project Reference: {project['ref']}   |   NC Reference: {nc['number']}", 10, False, 4)
@@ -150,11 +192,16 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
     # Short description of the works (AI-drafted from recorded information, staff-editable), before the photographs.
     heading("REMEDIAL WORKS CARRIED OUT")
     text((nc.get("export_note") or "").strip() or "No details recorded.", 10)
-    if nc.get("coverage_note"):  # Phase 4 only: one factual line for multi-location NCs
-        text(nc["coverage_note"], 9.5)
     groups = [(t, imgs) for t, imgs in remediation if imgs]
-    for t, imgs in groups:
-        photos(t, imgs)
+    i = 0
+    while i < len(groups):  # one-photo steps sit two per row (a lone last one keeps half width - no oversized images)
+        if len(groups[i][1]) == 1:
+            pair = [groups[i]] + ([groups[i + 1]] if i + 1 < len(groups) and len(groups[i + 1][1]) == 1 else [])
+            tiles(pair)
+            i += len(pair)
+        else:
+            photos(*groups[i])
+            i += 1
     if not groups:
         heading("REMEDIATION PHOTOGRAPHS")
         text("Not yet supplied.", 10)
