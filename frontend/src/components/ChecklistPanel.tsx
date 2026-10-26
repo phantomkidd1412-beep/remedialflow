@@ -36,6 +36,7 @@ export function ChecklistPanel({ ncId, number }: { ncId: string; number: string 
       const res = await fn();
       if (res?.coverage) qc.setQueryData(["checklist", ncId], res);
       qc.invalidateQueries({ queryKey: ["evidence-review", ncId] });
+      qc.invalidateQueries({ queryKey: ["photo-recs", ncId] });
       toast(ok);
     } catch (e: any) {
       toast(e.message);
@@ -75,7 +76,7 @@ export function ChecklistPanel({ ncId, number }: { ncId: string; number: string 
       {(cl.notes ?? []).map((n, i) => <Text key={i} style={[s.small, { color: colors.error }]} testID={`checklist-note-${i}`}>{n}</Text>)}
       {editing.map((it) => (
         <View key={it.id} style={s.row} testID={`checklist-item-${it.id}`}>
-          <Text style={[s.mark, { color: state[it.id] === "missing" || !state[it.id] ? colors.error : colors.success }]}>{state[it.id] === "staff" ? "✓✓" : state[it.id] === "ai" ? "✓" : "○"}</Text>
+          <Text style={[s.mark, state[it.id] === "missing" || !state[it.id] ? { color: colors.onSurface } : { color: colors.onSuccess, backgroundColor: colors.success, borderRadius: radius.sm, textAlign: "center", overflow: "hidden" }]}>{state[it.id] === "staff" ? "✓✓" : state[it.id] === "ai" ? "✓" : "○"}</Text>
           <View style={{ flex: 1 }}>
             <Text style={s.item}>{ITEM_STAGE[it.stage]} · {it.title}{it.measurement ? ` (${it.measurement})` : ""}</Text>
             {(it.sources ?? []).filter((x) => x.doc_id).map((x, i) => (

@@ -8,8 +8,8 @@ import { ITEM_STAGE } from "@/src/components/ChecklistPanel";
 import { BORDER, radius, fonts, makeStyles, space } from "@/src/theme";
 
 type Profile = { id: string; key: string; version: number; status: "proposed" | "approved" | "superseded" | "retired"; name: string;
-  items: { id: string; title: string; stage: string }[]; examples: Record<string, string[]>; learning_examples: number; created_at: string;
-  signals: Record<string, string[]> };
+  items: { id: string; title: string; stage: string }[]; examples: Record<string, string[]>; bad_examples?: Record<string, string[]>; learning_examples: number; created_at: string;
+  signals: Record<string, string[]>; change?: string; based_on?: { version: number } | null };
 
 /** Admin: reusable NC-type evidence profiles. Proposed versions need approval; earlier approved versions are kept as superseded. */
 export default function Profiles() {
@@ -45,8 +45,9 @@ export default function Profiles() {
             <View style={s.card} testID={`profile-${p.id}`}>
               <Text style={s.title}>{p.name} · v{p.version}</Text>
               <Text style={s.meta} testID={`profile-status-${p.id}`}>{p.status.toUpperCase()} · {fmtDate(p.created_at)} · {p.learning_examples} staff markings · {(p.signals?.component ?? []).join(", ")}</Text>
+              {p.based_on ? <Text style={s.meta} testID={`profile-change-${p.id}`}>Update of v{p.based_on.version}{p.change ? ` · ${p.change}` : ""}</Text> : null}
               {p.items.map((i) => (
-                <Text key={i.id} style={s.item}>• {ITEM_STAGE[i.stage]} · {i.title} ({(p.examples?.[i.id] ?? []).length} example{(p.examples?.[i.id] ?? []).length === 1 ? "" : "s"})</Text>
+                <Text key={i.id} style={s.item}>• {ITEM_STAGE[i.stage]} · {i.title} ({(p.examples?.[i.id] ?? []).length} good{(p.bad_examples?.[i.id] ?? []).length ? `, ${(p.bad_examples?.[i.id] ?? []).length} rejected` : ""} example{(p.examples?.[i.id] ?? []).length === 1 ? "" : "s"})</Text>
               ))}
               <View style={s.actions}>
                 {p.status === "proposed" ? <Btn title="Approve" small onPress={() => setStatus(p, "approved")} style={{ flex: 1 }} testID={`profile-approve-${p.id}`} /> : null}

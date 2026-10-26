@@ -38,7 +38,7 @@ async def seed():
                                                       "items": [{"id": "it-a", "title": "Gas tee and clearance before work", "stage": "before", "locations": [], "measurement": "", "criterion": "", "sources": []},
                                                                 {"id": "it-b", "title": "Tape showing 250mm above tee", "stage": "verification", "locations": [], "measurement": ">=250mm", "criterion": "", "sources": []},
                                                                 {"id": "it-c", "title": "Vent cover fitted", "stage": "after", "locations": [], "measurement": "", "criterion": "", "sources": []}]}})).inserted_id)
-    for k, st in enumerate(["before", "verification", "during"]):
+    for k, st in enumerate(["before", "verification", "during", "after"]):
         await db.files.insert_one({"project_id": pid, "nc_id": nid, "kind": "photo", "status": "submitted", "source": "in_app_camera", "pdf_include": None, "sha256": f"kb{k}",
                                    "size": 1, "mime": "image/jpeg", "uploaded_by": u["installer"], "processing": "ready", "location_verified": True,
                                    "paths": {"display": f"qa-mem:{k}"}, "server_received_at": f"2026-01-01T00:0{k}:00",

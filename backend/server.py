@@ -30,6 +30,7 @@ from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope
 from coverage import evaluate as coverage_evaluate, installer_request as coverage_request
 from checklist import gate_reasons as checklist_gate
 from documents import router as documents_router, refs_for_assessment as docs_refs, refs_text as docs_text, gate_reasons as docs_gate
+from recommend import router as recommend_router
 from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -2121,6 +2122,7 @@ app.include_router(staff_review_router)
 from checklist import router as checklist_router  # noqa: E402
 app.include_router(checklist_router)
 app.include_router(documents_router)
+app.include_router(recommend_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402

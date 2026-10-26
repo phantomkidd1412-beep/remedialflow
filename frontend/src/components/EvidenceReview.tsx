@@ -7,6 +7,7 @@ import { Btn, Field, Label, Sheet, useToast } from "@/src/ui";
 import { Thumb } from "@/src/components/Media";
 import { ChecklistPanel, ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
 import { ReferencesPanel } from "@/src/components/ReferencesPanel";
+import { RecommendationsPanel } from "@/src/components/RecommendationsPanel";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type RPhoto = { id: string; classified: boolean; pdf_include: boolean | null; checklist_item?: string | null; staff: string[]; location_id: string | null; location_label: string | null; location_group: string | null; stage: string | null; component: string | null; dup_of: string | null; relevant: boolean | null };
@@ -47,6 +48,7 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
       if (res?.enabled) qc.setQueryData(key, res);
       else qc.invalidateQueries({ queryKey: key });
       qc.invalidateQueries({ queryKey: ["evidence-review", nc.id] });
+      qc.invalidateQueries({ queryKey: ["photo-recs", nc.id] });
       toast(ok);
     } catch (e: any) {
       toast(e.message);
@@ -157,6 +159,7 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
         })}
       </Sheet>
       <ChecklistPanel ncId={nc.id} number={nc.number} />
+      <RecommendationsPanel ncId={nc.id} number={nc.number} photos={byId} />
       <ReferencesPanel ncId={nc.id} number={nc.number} />
       <Text style={s.small}>Tap a location or stage to correct it. Corrections override the AI for future assessments and PDFs. Photos are never deleted.</Text>
     </View>

@@ -299,3 +299,17 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Tests: tests/test_documents.py (7) + test_documents_http.py (12, testing agent) + targeted regression = 73 passed.
 - Limitations: no OCR for scanned PDFs; no document delete (append-only); library admin screens usable while switch OFF
   (no effect on assessments); keyword retrieval may miss differently-worded passages.
+
+## Knowledge Index Phase 3 — AI photo recommendations (preview, switch OFF) — Jun 2026
+- New `backend/recommend.py`: ncs.photo_recs (cached by checklist v + photo ids + photo tags + profile version). Staff press only.
+  Needs confirmed/auto checklist. Rules first (unique unmarked photo with matching stage/location, staff-rejected excluded);
+  ONE AI call only for unsettled requirements (≤12 NC photos + ≤4 approved-profile good/bad example images + approved doc extracts).
+  Staff-marked photos always win and are never sent to AI. Suggestions never mark photos / change PDF or coverage until Accepted.
+- Flags per requirement (staff attention): no photo, AI unsure, measurement/test must be checked by staff, no approved example.
+- Actions: PUT /api/ncs/{id}/recommendations/{item} accept|reject|replace -> normal staff marking + learning_examples
+  (accept_rec/reject_rec/replace_rec with rejected_file_id). POST /api/ncs/{id}/recommendations (run, {force}),
+  GET same, POST .../propose-profile -> NEW proposed profile version (examples + bad_examples merged with approved base;
+  repeat press updates the same pending proposal). Only APPROVED profiles supply examples.
+- Frontend: src/components/RecommendationsPanel.tsx in EvidenceReview; admin profiles show good/rejected counts + "Update of vN".
+- Tests: test_recommend.py (9) + test_recommend_http.py (10, testing agent) + regression; 70 + 22 passed.
+

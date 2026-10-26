@@ -321,8 +321,8 @@ async def save_profile(nc_id: str, body: ProfileIn, u: User = Depends(staff)):
 
 # ---------------- admin: profiles ----------------
 def _pub(p: dict) -> dict:
-    return {"id": str(p["_id"]), **{k: p.get(k) for k in ("key", "version", "status", "name", "signals", "items", "examples", "guidance_ids",
-                                                         "source_nc", "learning_examples", "created_at", "approved_at")}}
+    return {"id": str(p["_id"]), **{k: p.get(k) for k in ("key", "version", "status", "name", "signals", "items", "examples", "bad_examples", "guidance_ids",
+                                                         "source_nc", "learning_examples", "created_at", "approved_at", "change", "based_on")}}
 
 
 @router.get("/admin/profiles")
