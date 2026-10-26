@@ -7,7 +7,7 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 
 export type CItem = { id: string; title: string; stage: string; locations: string[]; measurement: string; criterion: string; sources: any[] };
 export type CView = {
-  checklist: { status: "draft" | "confirmed" | "auto"; source: string; match?: { rating: string; score: number } | null; items: CItem[] } | null;
+  checklist: { status: "draft" | "confirmed" | "auto"; source: string; match?: { rating: string; score: number } | null; items: CItem[]; notes?: string[] } | null;
   coverage: { id: string; title: string; stage: string; state: "staff" | "ai" | "missing" }[];
 };
 export const ITEM_STAGE: Record<string, string> = { before: "BEFORE", during: "DURING", after: "COMPLETED", verification: "MEASURE/TEST" };
@@ -72,10 +72,16 @@ export function ChecklistPanel({ ncId, number }: { ncId: string; number: string 
     <View style={s.box} testID={`checklist-${number}`}>
       <Label>Evidence checklist</Label>
       <Text style={[s.small, cl.status === "draft" && { color: colors.onSurface, fontWeight: "700" }]} testID={`checklist-status-${number}`}>{label}</Text>
+      {(cl.notes ?? []).map((n, i) => <Text key={i} style={[s.small, { color: colors.error }]} testID={`checklist-note-${i}`}>{n}</Text>)}
       {editing.map((it) => (
         <View key={it.id} style={s.row} testID={`checklist-item-${it.id}`}>
           <Text style={[s.mark, { color: state[it.id] === "missing" || !state[it.id] ? colors.error : colors.success }]}>{state[it.id] === "staff" ? "✓✓" : state[it.id] === "ai" ? "✓" : "○"}</Text>
-          <Text style={s.item}>{ITEM_STAGE[it.stage]} · {it.title}{it.measurement ? ` (${it.measurement})` : ""}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={s.item}>{ITEM_STAGE[it.stage]} · {it.title}{it.measurement ? ` (${it.measurement})` : ""}</Text>
+            {(it.sources ?? []).filter((x) => x.doc_id).map((x, i) => (
+              <Text key={i} style={s.small} testID={`checklist-source-${it.id}-${i}`}>Source: {x.title} {/^v/i.test(String(x.doc_version)) ? x.doc_version : `v${x.doc_version}`}, p.{x.page}{x.clause ? `, clause ${x.clause}` : ""}</Text>
+            ))}
+          </View>
           <Pressable onPress={() => setItems(editing.filter((x) => x.id !== it.id))} hitSlop={10} testID={`checklist-remove-${it.id}`}>
             <Text style={s.small}>✕</Text>
           </Pressable>

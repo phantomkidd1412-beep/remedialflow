@@ -29,6 +29,7 @@ from guidance import match_guidance, guidance_text, suggest_from_review
 from scope import ensure_scope, coverage as scope_coverage, gate_reason as scope_gate
 from coverage import evaluate as coverage_evaluate, installer_request as coverage_request
 from checklist import gate_reasons as checklist_gate
+from documents import router as documents_router, refs_for_assessment as docs_refs, refs_text as docs_text, gate_reasons as docs_gate
 from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -1178,6 +1179,7 @@ async def run_assessment(nc_id: str, sub_id: str):
         reasons: List[str] = []
         video_req = nc.requires_stages and await project_requires_video(nc.project_id)
         guides = await match_guidance(" ".join([nc.original_text or "", nc.description or "", nc.required_work or ""]))
+        doc_refs = await docs_refs(nc_id) if s.staff_review_enabled else None  # approved technical documents (keyword, no AI)
         gimgs = []
         for g in guides:
             for gid in (g.get("example_photo_ids") or [])[:1]:
@@ -1188,7 +1190,7 @@ async def run_assessment(nc_id: str, sub_id: str):
             res = await get_assessor().assess(AssessmentInput(nc.number, nc.description, nc.required_work,
                                                              nc.safety_critical, refs, evid, nc.original_text, labels,
                                                              nc.installer_note, nc.requires_stages, video_req,
-                                                             guidance_text(guides), gimgs))
+                                                             "\n\n".join(x for x in [guidance_text(guides), docs_text(doc_refs)] if x), gimgs))
         except Exception as e:
             log.exception("AI failed")
             res = None
@@ -1253,6 +1255,7 @@ async def run_assessment(nc_id: str, sub_id: str):
                     reasons.append(f"Location coverage {cov3['status']}: {cov3['reason']}")
                 try:  # evidence checklist: can only send the NC to staff review
                     reasons += await checklist_gate(nc_id)
+                    reasons += docs_gate(doc_refs)  # conflicting approved guidance -> staff decide
                 except Exception as e:
                     log.warning("checklist gate failed: %s", type(e).__name__)
                     reasons.append("Evidence checklist could not be checked")
@@ -2117,6 +2120,7 @@ from staff_review import router as staff_review_router  # noqa: E402
 app.include_router(staff_review_router)
 from checklist import router as checklist_router  # noqa: E402
 app.include_router(checklist_router)
+app.include_router(documents_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402

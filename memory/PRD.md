@@ -280,3 +280,22 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   PUT /api/evidence/{fid}/checklist-item, GET /api/admin/profiles, PUT /api/admin/profiles/{id}/status.
 - Frontend: src/components/ChecklistPanel.tsx (in EvidenceReview, + "BEST FOR…" photo picker), app/admin/profiles.tsx,
   link on admin guidance screen. Tests: tests/test_checklist.py (8); consolidated targeted 64 passed. Browser-checked.
+
+
+## Knowledge Index Phase 2 — Master Documents Library (preview, switch OFF) — Jun 2026
+- New `backend/documents.py`: db.tech_docs (revision per upload: key lineage, rev, title, publisher, version, pub_date, category
+  pas|trustmark|building_regs|manufacturer|other, status draft|approved|superseded|retired, history), db.tech_doc_pages (PyMuPDF text
+  per page, Mongo text index; no AI on upload). PDF stored via existing HybridStorage (files kind=techdoc, signed file_url).
+- Retrieval (keyword, approved only): when switch ON — assessment adds extracts to AI guidance text; AI checklist draft gets [D#]
+  extracts, items cite them -> sources {doc_id, doc_version, clause, page}; AI measurements not in NC/approved text are removed + noted.
+  Clause numbers only read from page text. Flags: missing (shown only) / conflicting values across docs (-> staff review) /
+  checklist measurement not found. Optional staff "AI search" = ONE call that can only pick among keyword candidates.
+- Admin "Draft guidance" from ≤6 chosen pages = ONE AI call -> DRAFT db.guidance (source.type=document); invented clauses dropped.
+- Endpoints: POST/GET /api/admin/documents, GET/PUT /api/admin/documents/{id}, PUT .../status, POST .../replace,
+  GET .../search?q=, POST .../draft-guidance, GET /api/documents/{id}/pages/{n} (staff), GET /api/ncs/{id}/references,
+  POST /api/ncs/{id}/references/refresh {ai}.
+- Frontend: app/admin/documents/index.tsx + [id].tsx, src/components/DocUpload.tsx, ReferencesPanel.tsx (in EvidenceReview),
+  checklist item source lines + notes; link from AI Guidance screen. Installer UI unchanged.
+- Tests: tests/test_documents.py (7) + test_documents_http.py (12, testing agent) + targeted regression = 73 passed.
+- Limitations: no OCR for scanned PDFs; no document delete (append-only); library admin screens usable while switch OFF
+  (no effect on assessments); keyword retrieval may miss differently-worded passages.

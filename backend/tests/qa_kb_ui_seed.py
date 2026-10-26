@@ -20,6 +20,9 @@ async def clean():
     await db.nc_profiles.delete_many({"created_by": {"$in": us}})
     await db.login_attempts.delete_many({"email": {"$regex": r"^qa\.kbui\."}})
     await db.users.delete_many({"email": {"$regex": r"^qa\.kbui\."}})
+    for d in await db.tech_docs.find({"key": "qakbui"}).to_list(10):
+        await db.tech_doc_pages.delete_many({"doc_id": str(d["_id"])})
+    await db.tech_docs.delete_many({"key": "qakbui"})
     await db.settings.update_one({"_id": "global"}, {"$set": {k: False for k in FLAGS}})
 
 
@@ -40,6 +43,12 @@ async def seed():
                                    "size": 1, "mime": "image/jpeg", "uploaded_by": u["installer"], "processing": "ready", "location_verified": True,
                                    "paths": {"display": f"qa-mem:{k}"}, "server_received_at": f"2026-01-01T00:0{k}:00",
                                    "classification": {"v": 1, "location_id": None, "stage": st, "relevant": True, "dup_of": None, "component": "gas tee", "source": "ai"}})
+    did = str((await db.tech_docs.insert_one({"key": "qakbui", "rev": 1, "title": "QA PAS Gas Guide", "publisher": "QA Pub", "version": "2024", "pub_date": "2024-01",
+                                              "category": "pas", "status": "approved", "file_id": None, "sha256": "qakbui", "size": 1, "pages": 2, "text_pages": 2,
+                                              "extract_status": "ok", "replaces": None, "created_by": u["admin"], "created_at": now_iso(), "notes": "",
+                                              "history": [{"at": now_iso(), "by": u["admin"], "change": "uploaded"}]})).inserted_id)
+    await db.tech_doc_pages.insert_many([{"doc_id": did, "page": 1, "text": "Introduction"},
+                                         {"doc_id": did, "page": 2, "text": "4.2.1 Gas entry tee clearance\nA clearance of 250 mm shall be maintained above the gas pipe entry tee\nwhere a vent cover is fitted."}])
     await db.settings.update_one({"_id": "global"}, {"$set": {k: True for k in FLAGS}})
     print(pid, nid)
 

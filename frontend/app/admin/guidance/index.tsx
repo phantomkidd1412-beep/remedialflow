@@ -51,6 +51,7 @@ export default function GuidanceList() {
             <View style={{ gap: space.sm }}>
               <Btn title="New guidance entry" icon="plus" onPress={() => router.push("/admin/guidance/new")} testID="guidance-new" />
               <Btn title="NC evidence profiles" icon="layers" variant="outline" onPress={() => router.push("/admin/profiles")} testID="guidance-profiles" />
+              <Btn title="Technical documents" icon="file-text" variant="outline" onPress={() => router.push("/admin/documents")} testID="guidance-documents" />
             </View>
           }
           ListEmptyComponent={q.isLoading ? <Loading /> : <Empty icon="book-open" text="No guidance entries yet" />}

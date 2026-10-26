@@ -98,19 +98,22 @@ DRAFT_SYSTEM = """You draft a short evidence checklist for ONE building non-comp
 Use ONLY the NC wording, the TrustMark/required-work text and the approved guidance given. Never invent measurements or methods.
 Each item = one distinct piece of photographic evidence. stage: before | during | after | verification (verification = measurement,
 test or certificate). Include a verification item only when the NC/guidance requires a measurement, test or certificate.
-locations: names from the given scope list only (or []). 2-6 items.
-Respond with ONLY JSON: {"items": [{"title": "...", "stage": "...", "measurement": "", "criterion": "...", "locations": []}]}"""
+locations: names from the given scope list only (or []). 2-6 items. measurement: only a value written in the NC or the document
+extracts, else "". refs: numbers of the [D#] document extracts the item is based on (or []); never cite an extract that does not say it.
+Respond with ONLY JSON: {"items": [{"title": "...", "stage": "...", "measurement": "", "criterion": "...", "locations": [], "refs": []}]}"""
 
 
-async def ai_draft(nc: dict, scope: Optional[dict], guides: List[dict]) -> Optional[List[dict]]:
+async def ai_draft(nc: dict, scope: Optional[dict], guides: List[dict], passages: Optional[List[dict]] = None) -> Optional[List[dict]]:
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+    from documents import refs_text
     from guidance import guidance_text
     try:
         chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"checklist-{uuid.uuid4()}", system_message=DRAFT_SYSTEM).with_model(
             os.environ.get("AI_PROVIDER", "gemini"), os.environ.get("AI_MODEL", "gemini-3-flash-preview"))
         locs = [l["label"] for l in (scope or {}).get("locations") or []]
         out = await chat.send_message(UserMessage(text=f"NC: {_text(nc)[:2500]}\nScope locations: {', '.join(locs) or '(none)'}\n"
-                                                       f"Approved guidance:\n{guidance_text(guides)[:2500] or '(none)'}"))
+                                                       f"Approved guidance:\n{guidance_text(guides)[:2500] or '(none)'}\n"
+                                                       f"{refs_text({'passages': passages or []})[:3000] or 'Document extracts: (none)'}"))
         m = re.search(r"\{.*\}", out if isinstance(out, str) else str(out), re.S)
         return (json.loads(m.group(0)) if m else {}).get("items") or None
     except Exception as e:
@@ -149,13 +152,26 @@ async def ensure_checklist(nc_id: str, ai=None) -> Optional[dict]:
               "profile": {"key": p["key"], "version": p["version"], "id": str(p["_id"])},
               "match": {"rating": m["rating"], "score": m["score"], "signals": m["signals"]}, "items": norm_items(p["items"], sc, [])}
     else:
+        import inspect
+        import documents
         guides = await match_guidance(_text(nc))
-        raw = await (ai or ai_draft)(nc, sc, guides)
+        passages = await documents.retrieve(_text(nc))  # approved documents only; no AI
+        fn = ai or ai_draft
+        raw = await (fn(nc, sc, guides, passages) if len(inspect.signature(fn).parameters) >= 4 else fn(nc, sc, guides))
         if not raw:
             return None
         srcs = [{"guidance_id": g["id"], "title": g.get("title", ""), "doc_id": None, "doc_version": None, "clause": None, "page": None} for g in guides]
+        known = documents._vals(_text(nc) + " " + " ".join(p["_text"] for p in passages))
+        notes = []
+        for it in raw:
+            cited = [passages[int(r) - 1] for r in it.get("refs") or [] if str(r).isdigit() and 0 < int(r) <= len(passages)]
+            it["sources"] = srcs + [documents.source_of(p) for p in cited]
+            meas = str(it.get("measurement") or "")
+            if any(float(v) not in known.get(u.lower(), set()) for v, u in documents.MEAS_RX.findall(meas)):
+                notes.append(f"AI-suggested measurement '{meas}' removed from '{it.get('title')}': not stated in the NC or approved documents")
+                it["measurement"] = ""
         cl = {"status": "draft", "source": "ai", "profile": None, "match": {"rating": "none", "score": m["score"] if m else 0,
-              "signals": (m or {}).get("signals") or signals(nc, sc)}, "items": norm_items(raw, sc, srcs)}
+              "signals": (m or {}).get("signals") or signals(nc, sc)}, "items": norm_items(raw, sc, srcs), "notes": notes[:10]}
         if not cl["items"]:
             return None
     cl.update(v=1, created_at=now_iso(), history=[])
