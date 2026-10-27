@@ -11,6 +11,7 @@ import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { SafetyToggle } from "@/src/components/SafetyToggle";
 import { EvidenceReview } from "@/src/components/EvidenceReview";
+import { EvidenceGallery } from "@/src/components/EvidenceGallery";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 /** "Remedial works carried out" text on the NC PDF: AI drafts it from recorded information; staff edit before export. */
@@ -59,6 +60,7 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   const [view, setView] = useState<EvidenceFile | null>(null);
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [showHidden, setShowHidden] = useState(false);
+  const [details, setDetails] = useState<string | null>(null);
   const hiddenRefs = nc.trustmark_hidden ?? [];
 
   const setHidden = async (fid: string, excluded: boolean) => {
@@ -76,28 +78,6 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     qc.invalidateQueries({ queryKey: ["review-groups"] });
     qc.invalidateQueries({ queryKey: ["dashboard"] });
     qc.invalidateQueries({ queryKey: ["projects"] });
-  };
-
-  // staff stage label for the PDF: AI -> PRE -> MID -> FINAL -> AI
-  const cycleStage = async (f: EvidenceFile) => {
-    const order = ["auto", "pre", "mid", "final"];
-    const cur = f.stage_source === "staff" && f.stage ? f.stage : "auto";
-    try {
-      await api(`/evidence/${f.id}/pdf-include`, { method: "PUT", body: { include: f.pdf_include ?? null, stage: order[(order.indexOf(cur) + 1) % 4] } });
-      qc.invalidateQueries({ queryKey: ["project", projectId] });
-    } catch (e: any) {
-      toast(e.message);
-    }
-  };
-  // PDF photo selection override: automatic -> always include -> never include -> automatic
-  const togglePdf = async (f: EvidenceFile) => {
-    const next = f.pdf_include == null ? true : f.pdf_include ? false : null;
-    try {
-      await api(`/evidence/${f.id}/pdf-include`, { method: "PUT", body: { include: next } });
-      qc.invalidateQueries({ queryKey: ["project", projectId] });
-    } catch (e: any) {
-      toast(e.message);
-    }
   };
 
   const act = async (action: string) => {
@@ -242,25 +222,10 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
               ))}
             </ScrollView>
           ) : null}
-          <Label>Evidence ({nc.photos.length} photo{nc.photos.length === 1 ? "" : "s"})</Label>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-            {nc.photos.map((f, i) => (
-              <View key={f.id} style={{ gap: 2 }}>
-                <Thumb f={f} size={88} onPress={() => setPv({ files: nc.photos, i })} testID={`staff-photo-${f.id}`} />
-                <Pressable onPress={() => cycleStage(f)} testID={`pdf-stage-${f.id}`}><Text style={[s.tag, f.stage_source === "staff" && { fontWeight: "700" }]}>{f.stage_source === "staff" && f.stage ? `PDF ${f.stage.toUpperCase()}` : "STAGE: AI"}</Text></Pressable>
-                <Text style={s.tag}>{f.source === "in_app_camera" ? "APP" : f.source === "gallery" ? "GALLERY" : "STAFF"}{f.status === "draft" ? "·DRAFT" : ""}</Text>
-                <Pressable onPress={() => togglePdf(f)} style={[s.restore, f.pdf_include === true && { backgroundColor: colors.success }, f.pdf_include === false && { backgroundColor: colors.error }]} testID={`pdf-include-${f.id}`}>
-                  <Text style={[s.tag, f.pdf_include === true && { color: colors.onSuccess }, f.pdf_include === false && { color: colors.onError }]}>{f.pdf_include === true ? "IN PDF" : f.pdf_include === false ? "NOT IN PDF" : "PDF: AUTO"}</Text>
-                </Pressable>
-              </View>
-            ))}
-            <Pressable style={[s.add, { width: 88, height: 88 }]} onPress={() => upload("evidence")} testID={`add-evidence-${nc.number}`}>
-              <Feather name="upload" size={20} color={colors.onSurface} />
-            </Pressable>
-          </ScrollView>
+          <EvidenceGallery nc={nc} projectId={projectId} onUpload={() => upload("evidence")} onDetails={setDetails} />
 
           <ExportNote nc={nc} projectId={projectId} />
-          <EvidenceReview nc={nc} />
+          <EvidenceReview nc={nc} detailsFor={details} onDetailsClose={() => setDetails(null)} />
 
           <Label>Assigned installer</Label>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>

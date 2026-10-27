@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/src/api";
 import { EvidenceFile, NCItem } from "@/src/projects";
 import { Btn, Field, Label, Sheet, useToast } from "@/src/ui";
-import { Thumb } from "@/src/components/Media";
 import { ChecklistPanel, ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
 import { ReferencesPanel } from "@/src/components/ReferencesPanel";
 import { RecommendationsPanel } from "@/src/components/RecommendationsPanel";
@@ -20,7 +19,7 @@ const STAGES = ["before", "during", "after", "verification", "uncertain"];
 const STAGE_TXT: Record<string, string> = { before: "BEFORE", during: "DURING", after: "COMPLETED", verification: "TEST/MEASURE", uncertain: "STAGE ?" };
 
 /** Phase 5 staff-only review of AI location tags, stages, duplicates and expected locations. Renders nothing while the flag is off. */
-export function EvidenceReview({ nc }: { nc: NCItem }) {
+export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: NCItem; detailsFor?: string | null; onDetailsClose?: () => void }) {
   const s = useStyles();
   const { colors } = useTheme();
   const qc = useQueryClient();
@@ -68,12 +67,6 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
       }, "Best photo saved");
     correct(p.photo, p.kind === "loc" ? { location_id: value } : { stage: value });
   };
-  const setPdf = (p: RPhoto) =>
-    run(async () => {
-      await api(`/evidence/${p.id}/pdf-include`, { method: "PUT", body: { include: p.pdf_include == null ? false : p.pdf_include ? null : true } });
-      qc.invalidateQueries({ queryKey: ["project"] });
-      return api<Review>(`/ncs/${nc.id}/evidence-review`);
-    }, "PDF selection saved");
   const options =
     picker?.kind === "loc" ? [{ v: null, t: "Location not identified" }, ...locs.map((l) => ({ v: l.id, t: l.label }))]
     : picker?.kind === "item" ? [{ v: null, t: "Not a checklist photo" }, ...citems.map((i) => ({ v: i.id, t: `${ITEM_STAGE[i.stage]} · ${i.title}` }))]
@@ -119,35 +112,21 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
           <Btn title={r.unclassified ? `Classify ${r.unclassified} photo${r.unclassified === 1 ? "" : "s"}` : "Re-classify"} small variant="outline" icon="cpu" onPress={() => classify(!r.unclassified)} loading={busy} disabled={!r.photos?.length} style={{ flex: 1 }} testID={`classify-${nc.number}`} />
         </View>
       )}
-      {r.photos?.some((p) => p.classified) ? (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-          {r.photos.map((p, i) => (
-            <View key={p.id} style={s.photo} testID={`review-photo-${p.id}`}>
-              {byId[p.id] ? <Thumb f={byId[p.id]} size={88} /> : null}
-              <Text style={s.tag}>#{i + 1}{p.staff.length ? " · STAFF" : p.classified ? " · AI" : " · NOT TAGGED"}</Text>
-              <Pressable style={s.chip} onPress={() => setPicker({ photo: p, kind: "loc" })} disabled={busy || !p.classified} testID={`review-loc-${p.id}`}>
-                <Text style={s.tag} numberOfLines={1}>{p.location_label ?? (p.location_group ? "SAME AS OTHERS" : "LOCATION ?")} ▾</Text>
-              </Pressable>
-              <Pressable style={s.chip} onPress={() => setPicker({ photo: p, kind: "stage" })} disabled={busy || !p.classified} testID={`review-stage-${p.id}`}>
-                <Text style={s.tag}>{STAGE_TXT[p.stage ?? "uncertain"]} ▾</Text>
-              </Pressable>
-              {citems.length ? (
-                <Pressable style={[s.chip, p.checklist_item ? { borderColor: colors.brandPrimary } : null]} onPress={() => setPicker({ photo: p, kind: "item" })} disabled={busy} testID={`review-item-${p.id}`}>
-                  <Text style={s.tag} numberOfLines={1}>{citems.find((i) => i.id === p.checklist_item)?.title ?? "BEST FOR…"} ▾</Text>
-                </Pressable>
-              ) : null}
-              <Pressable style={[s.chip, p.pdf_include === false && { backgroundColor: colors.error }]} onPress={() => setPdf(p)} disabled={busy} testID={`review-pdf-${p.id}`}>
-                <Text style={[s.tag, p.pdf_include === false && { color: colors.onError }]}>{p.pdf_include === false ? "EXCLUDED" : p.pdf_include ? "ALWAYS IN PDF" : "PDF: AUTO"}</Text>
-              </Pressable>
-              {p.dup_of ? (
-                <Pressable style={[s.chip, { backgroundColor: colors.warning }]} onPress={() => correct(p, { not_duplicate: true })} disabled={busy} testID={`review-notdup-${p.id}`}>
-                  <Text style={[s.tag, { color: colors.onWarning }]}>DUP OF #{idx(p.dup_of)} · UNDO</Text>
-                </Pressable>
-              ) : null}
+      <Sheet visible={!!detailsFor && !picker} onClose={() => onDetailsClose?.()} title={`Photo #${detailsFor ? idx(detailsFor) : ""} details`} testID="photo-details">
+        {(() => {
+          const p = (r.photos ?? []).find((x) => x.id === detailsFor);
+          if (!p) return <Text style={s.small}>This photo has not been tagged yet. Use “Classify” below first.</Text>;
+          const open = (kind: "loc" | "stage" | "item") => { onDetailsClose?.(); setPicker({ photo: p, kind }); };
+          return (
+            <View style={{ gap: space.xs }}>
+              <Pressable style={s.opt} onPress={() => open("loc")} disabled={!p.classified} testID="details-loc"><Text style={s.optText}>Location: {p.location_label ?? "not identified"} ▾</Text></Pressable>
+              <Pressable style={s.opt} onPress={() => open("stage")} disabled={!p.classified} testID="details-stage"><Text style={s.optText}>Stage: {STAGE_TXT[p.stage ?? "uncertain"]} ▾</Text></Pressable>
+              {citems.length ? <Pressable style={s.opt} onPress={() => open("item")} testID="details-item"><Text style={s.optText}>Requirement: {citems.find((i) => i.id === p.checklist_item)?.title ?? "none"} ▾</Text></Pressable> : null}
+              {p.dup_of ? <Pressable style={s.opt} onPress={() => { onDetailsClose?.(); correct(p, { not_duplicate: true }); }} testID="details-notdup"><Text style={s.optText}>Marked duplicate of #{idx(p.dup_of)} — not a duplicate</Text></Pressable> : null}
             </View>
-          ))}
-        </ScrollView>
-      ) : null}
+          );
+        })()}
+      </Sheet>
       <Sheet visible={!!picker} onClose={() => setPicker(null)} title={picker?.kind === "loc" ? "Photo location" : picker?.kind === "item" ? "Best photo for checklist item" : "Remediation stage"} testID="review-picker">
         {options.map((o) => {
           const cur = picker && (picker.kind === "loc" ? picker.photo.location_id : picker.kind === "item" ? picker.photo.checklist_item ?? null : picker.photo.stage ?? "uncertain") === o.v;
@@ -161,7 +140,7 @@ export function EvidenceReview({ nc }: { nc: NCItem }) {
       <ChecklistPanel ncId={nc.id} number={nc.number} />
       <RecommendationsPanel ncId={nc.id} number={nc.number} photos={byId} />
       <ReferencesPanel ncId={nc.id} number={nc.number} />
-      <Text style={s.small}>Tap a location or stage to correct it. Corrections override the AI for future assessments and PDFs. Photos are never deleted.</Text>
+      <Text style={s.small}>Long-press a photo in the Evidence gallery to correct its location, stage or requirement. Corrections override the AI. Photos are never deleted.</Text>
     </View>
   );
 }

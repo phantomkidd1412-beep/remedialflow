@@ -171,10 +171,10 @@ def flags(item: dict, rec: dict, marked: bool, prof: Optional[dict]) -> List[str
     return out
 
 
-async def build(nc_id: str, force: bool = False, ai=None) -> dict:
+async def build(nc_id: str, force: bool = False, ai=None, allow_draft: bool = False) -> dict:
     nc = await db.ncs.find_one({"_id": oid(nc_id)})
     cl = nc.get("checklist") or {}
-    if cl.get("status") not in ("confirmed", "auto"):
+    if cl.get("status") not in ("confirmed", "auto") and not (allow_draft and cl.get("items")):
         raise HTTPException(400, "Confirm the evidence checklist first")
     photos = await _photos(nc_id)
     if not photos:

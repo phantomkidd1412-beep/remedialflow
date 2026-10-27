@@ -331,5 +331,20 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   RefreshControl onRefresh returns void; activity ListFooter undefined; batch ref typing; TabsShell imports expo-router/native-tabs.
 - Native builds must be regenerated for SDK 58 (existing iOS Build 104 is SDK 57).
 
+## Evidence selection redesign (preview) — Jun 2026
+- backend/selection.py: ncs.evidence_selection {ids (PDF order), ai_ids, seq, at, by}. ABSENT = legacy PDF; [] = no evidence photos.
+  PUT /api/ncs/{id}/evidence-selection {ids, seq} (full replace, stale seq ignored -> {stale:true}); POST .../evidence-selection/auto
+  {mode replace|add} (switch ON; ensure_checklist + cached recommend.build(allow_draft) -> marks like Accept; returns missing + review notes).
+  Deselecting an AI pick: clears checklist mark, rec -> rejected, rejected_items, learning_examples deselect_ai; staff adds -> select_staff.
+- server.pdf_photo_groups: explicit selection -> exactly those photos in order (stamped copies), headings by requirement/stage, consecutive grouping.
+  pack_fingerprint only extended for NCs with a selection. Installer payload drops evidence_selection.
+- Frontend: src/components/EvidenceGallery.tsx (Select Evidence / Auto Select, instant taps, 600ms debounced save, retry banner,
+  pending map across NC switches, react-native-sortables order strip, viewer swipes selected only). Old review photo strip with
+  dropdowns + STAGE/PDF chips removed; long-press photo -> details sheet in EvidenceReview. /evidence/{fid}/pdf-include kept.
+- Tests: tests/test_selection.py (4) + KB regression 27; testing agent iteration_39 (12 flows pass; stale-seq + layout fixed after).
+
+
 
   while the panel says "No suitable photo found".
+
+- 2026-06: Evidence selection retest (iterations 40-41): stale-save handling fixed (no resend of outdated lists, no false retry banner). Preview only; not deployed; native iOS unverified.

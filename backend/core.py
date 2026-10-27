@@ -140,6 +140,7 @@ class NC(BaseDocument):
     requires_stages: bool = False  # new NCs: pre/mid/final photos + a video are mandatory (historic NCs unaffected)
     scope: Optional[dict] = None  # location-aware scope (scope.py); absent unless the feature is enabled
     coverage: Optional[dict] = None  # Phase 3 evidence coverage (coverage.py); absent unless the feature is enabled
+    evidence_selection: Optional[dict] = None  # explicit ordered staff photo selection (selection.py); None = never selected
     reviewed_by: Optional[str] = None
     updated_at: str = Field(default_factory=now_iso)
 

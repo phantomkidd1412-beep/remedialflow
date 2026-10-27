@@ -31,6 +31,7 @@ from coverage import evaluate as coverage_evaluate, installer_request as coverag
 from checklist import gate_reasons as checklist_gate
 from documents import router as documents_router, refs_for_assessment as docs_refs, refs_text as docs_text, gate_reasons as docs_gate
 from recommend import router as recommend_router
+from selection import router as selection_router
 from photo_class import schedule as schedule_classification
 from report_import import hex_hash, close, find_duplicate, match_ncs, clean_project_report_photos, known_logos, learn_logos
 
@@ -786,6 +787,7 @@ async def project_detail(pid: str, u: User = Depends(current_user)):
             d.pop("scope", None)  # staff-only analysis
             d.pop("coverage", None)
             d.pop("checklist", None)
+            d.pop("evidence_selection", None)
         d.update(trustmark=trust, trustmark_hidden=hidden, photos=photos, videos=videos, video=videos[-1] if videos else None,
                  video_versions=len(videos), video_required=bool(n.requires_stages and p.require_video is not False),
                  draft_count=sum(1 for f in fs if f.status == "draft" and f.kind in ("photo", "video")))
@@ -1712,6 +1714,9 @@ async def pack_fingerprint(pid: str, p: dict) -> str:
         sc = await db.ncs.find({"project_id": pid}, {"scope.expected_count": 1, "scope.locations": 1, "checklist.items": 1}).sort("number", 1).to_list(500)
         raw += json.dumps([[str(f["_id"]), f.get("checklist_item"), {k: (f.get("classification") or {}).get(k) for k in ("location_id", "location_group", "stage", "dup_of", "component")}]
                            for f in tags] + [[n.get("scope"), n.get("checklist")] for n in sc], default=str)
+    sel = await db.ncs.find({"project_id": pid, "evidence_selection": {"$exists": True}}, {"evidence_selection.ids": 1}).sort("number", 1).to_list(500)
+    if sel:  # only NCs with an explicit selection change the fingerprint; untouched projects keep their pack version
+        raw += json.dumps([[str(n["_id"]), (n.get("evidence_selection") or {}).get("ids")] for n in sel])
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -1866,6 +1871,28 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
 
     async def load(fs):
         return await run_in_threadpool(readable, [b for f in fs for b in [await get(f, "stamped", "display", "original")] if b])
+    from selection import selected_photos
+    chosen_sel = selected_photos(n, files)
+    if chosen_sel is not None:  # explicit staff selection: exactly these photos, in the staff order ([] = none)
+        from smart_pdf import HEAD, _stage
+        items = {i["id"]: i for i in (n.get("checklist") or {}).get("items") or []}
+        arr = n.get("pdf_ai") or {}
+        legacy = {arr.get("pre"): "before", arr.get("mid"): "during", arr.get("final"): "after"}
+        out = []
+        for f in chosen_sel:
+            it = items.get(f.get("checklist_item") or "")
+            st = it["stage"] if it else _stage(f)
+            if st == "uncertain":
+                st = legacy.get(str(f["_id"]))
+            head = HEAD[st] if st else "REMEDIATION PHOTOGRAPHS"
+            img = await get(f, "stamped", "display", "original")  # stamped copy keeps the original timestamp
+            if not img:
+                continue
+            if out and out[-1][0] == head:
+                out[-1][1].append((img, it["title"] if it else ""))
+            else:
+                out.append((head, [(img, it["title"] if it else "")]))
+        return out
     picked = [f for f in photos if f.get("pdf_include") is True]
     pool = picked or photos
     if not pool:
@@ -2123,6 +2150,7 @@ from checklist import router as checklist_router  # noqa: E402
 app.include_router(checklist_router)
 app.include_router(documents_router)
 app.include_router(recommend_router)
+app.include_router(selection_router)
 from photo_class import router as photo_class_router  # noqa: E402
 app.include_router(photo_class_router)
 from privacy_page import router as privacy_router  # noqa: E402
