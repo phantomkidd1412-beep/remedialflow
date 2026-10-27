@@ -37,7 +37,8 @@ async def _learn(nc: dict, before: dict, after: List[str], photos: dict, u: User
     rows = []
     for fid in old - set(after):
         if fid in ai:
-            item = (photos.get(fid) or {}).get("checklist_item")
+            item = (photos.get(fid) or {}).get("checklist_item") or next(
+                (k for k, r in ((nc.get("photo_recs") or {}).get("items") or {}).items() if r.get("file_id") == fid), None)
             rows.append({"action": "deselect_ai", "rejected_file_id": fid, "file_id": None, "item_id": item})
     for fid in set(after) - old - ai:
         rows.append({"action": "select_staff", "file_id": fid, "item_id": (photos.get(fid) or {}).get("checklist_item")})
@@ -72,6 +73,9 @@ async def save_selection(nc_id: str, body: SelectionIn, u: User = Depends(staff)
     return sel
 
 
+AUTO_AI_LIMIT = 1  # agreed maximum AI calls per Auto Select press (checklist draft + photo recommendation)
+
+
 class AutoIn(BaseModel):
     mode: str = Field(default="replace", pattern="^(replace|add)$")
 
@@ -79,37 +83,44 @@ class AutoIn(BaseModel):
 @router.post("/ncs/{nc_id}/evidence-selection/auto")
 async def auto_select(nc_id: str, body: AutoIn, u: User = Depends(staff)):
     """One strong photo per checklist requirement from the (cached) recommendations; missing requirements are listed,
-    never filled with unsuitable photos. Never approves anything. Staff-marked requirements keep their staff photo."""
+    never filled with unsuitable photos. Picks stay "AI suggested" (pending) until staff accept them in the evidence review;
+    Auto Select never marks, accepts or approves anything. At most AUTO_AI_LIMIT AI calls per press (checklist draft + photo
+    recommendation counted together); if a checklist has to be drafted first, staff must confirm it before photos are picked."""
     import checklist
     import recommend
     from staff_review import _on
     nc = await _nc(nc_id, u)
     await _on()
-    cl = await checklist.ensure_checklist(nc_id)  # approved profile = no AI; otherwise one AI draft
+    safety = ["Safety-critical NC: staff must review the evidence"] if nc.get("safety_critical") else []
+    had = bool(nc.get("checklist"))
+    cl = await checklist.ensure_checklist(nc_id)  # existing / approved profile = no AI; otherwise ONE AI draft
+    ai_calls = 1 if not had and (not cl or cl.get("source") == "ai") else 0
     if not cl:
-        raise HTTPException(503, "Could not prepare an evidence checklist for this NC")
-    recs = await recommend.build(nc_id, allow_draft=True)
+        raise HTTPException(503, f"Could not prepare an evidence checklist for this NC ({ai_calls} AI call used)")
+    if cl.get("status") not in ("confirmed", "auto"):  # staff confirm the checklist before any photo recommendation
+        await audit("evidence.auto_select", u.id, f"nc:{nc_id}", {"mode": body.mode, "stopped": "checklist_unconfirmed", "ai_calls": ai_calls})
+        return {"selection": nc.get("evidence_selection"), "missing": [], "suggested": [], "checklist_status": cl.get("status"),
+                "needs_checklist_confirmation": True, "ai_calls": ai_calls, "ai_limit": AUTO_AI_LIMIT, "ai_used": ai_calls > 0, "review_notes": safety}
+    recs = await recommend.build(nc_id, ai_budget=AUTO_AI_LIMIT - ai_calls)
+    ai_calls += recs.get("ai_calls") or 0
     view = await recommend.view(nc_id)
     picks, missing = [], []
     for it in view["items"]:
         if it["file_id"]:
-            picks.append((it["item_id"], it["file_id"], it["source"]))
+            picks.append((it, it["file_id"], it["source"]))
         else:
             missing.append(it["title"])
-    for item_id, fid, src in picks:  # mark like an Accept so checklist coverage agrees with the selection
-        if src != "staff":
-            await recommend._mark(fid, item_id)
-            await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {f"photo_recs.items.{item_id}.state": "accepted"}})
     cur = nc.get("evidence_selection") or {}
     new = [fid for _, fid, _ in picks]
     ids = list(dict.fromkeys((cur.get("ids") or []) + new)) if body.mode == "add" else list(dict.fromkeys(new))
     ai = [fid for _, fid, src in picks if src in ("rule", "ai")]
     sel = {"ids": ids, "ai_ids": list(dict.fromkeys([i for i in cur.get("ai_ids") or [] if i in ids] + ai)), "seq": (cur.get("seq") or 0) + 1, "at": now_iso(), "by": u.id}
     await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {"evidence_selection": sel}})
-    await audit("evidence.auto_select", u.id, f"nc:{nc_id}", {"mode": body.mode, "count": len(ids), "missing": len(missing), "ai_used": recs.get("ai_used")})
-    flags = sorted({f for it in view["items"] for f in it["flags"] if "Measurement" in f})
-    return {"selection": sel, "missing": missing, "checklist_status": cl.get("status"), "ai_used": bool(recs.get("ai_used")),
-            "review_notes": (["Safety-critical NC: staff must review the evidence"] if nc.get("safety_critical") else []) + flags}
+    await audit("evidence.auto_select", u.id, f"nc:{nc_id}", {"mode": body.mode, "count": len(ids), "missing": len(missing), "ai_calls": ai_calls})
+    suggested = [it["title"] for it, _, src in picks if src in ("rule", "ai") and it["state"] == "pending"]
+    notes = sorted({f"{it['title']}: {f}" for it in view["items"] for f in it["flags"] if "Measurement" in f or "unsure" in f})
+    return {"selection": sel, "missing": missing, "suggested": suggested, "checklist_status": cl.get("status"), "needs_checklist_confirmation": False,
+            "ai_calls": ai_calls, "ai_limit": AUTO_AI_LIMIT, "ai_used": ai_calls > 0, "review_notes": safety + notes}
 
 
 def selected_photos(n: dict, photos: List[dict]) -> Optional[List[dict]]:

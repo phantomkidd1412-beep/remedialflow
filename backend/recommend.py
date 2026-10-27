@@ -171,10 +171,11 @@ def flags(item: dict, rec: dict, marked: bool, prof: Optional[dict]) -> List[str
     return out
 
 
-async def build(nc_id: str, force: bool = False, ai=None, allow_draft: bool = False) -> dict:
+async def build(nc_id: str, force: bool = False, ai=None, ai_budget: int = 1) -> dict:
+    """ai_budget = AI calls still allowed for this request (0 = rules/cache only). Fresh results carry ai_calls (attempts made)."""
     nc = await db.ncs.find_one({"_id": oid(nc_id)})
     cl = nc.get("checklist") or {}
-    if cl.get("status") not in ("confirmed", "auto") and not (allow_draft and cl.get("items")):
+    if cl.get("status") not in ("confirmed", "auto"):
         raise HTTPException(400, "Confirm the evidence checklist first")
     photos = await _photos(nc_id)
     if not photos:
@@ -183,7 +184,7 @@ async def build(nc_id: str, force: bool = False, ai=None, allow_draft: bool = Fa
     fp = _fp(cl, photos, prof)
     cur = nc.get("photo_recs")
     if cur and cur.get("fp") == fp and not force:
-        return cur  # cached: no AI call
+        return {**cur, "cached": True, "ai_calls": 0}  # cached: no AI call
     rejected = await _rejected(nc_id)
     marked = {f.get("checklist_item") for f in photos if f.get("checklist_item")}
     keep = {k: v for k, v in ((cur or {}).get("items") or {}).items() if v.get("state") in ("accepted", "replaced")}
@@ -200,10 +201,14 @@ async def build(nc_id: str, force: bool = False, ai=None, allow_draft: bool = Fa
         items[it["id"]] = {**r, "state": "pending"}
         if not r["file_id"]:
             todo.append(it)
-    ai_used = False
+    ai_used, ai_calls = False, 0
     if todo:
         pool = [f for f in photos if not f.get("checklist_item")][:MAX_PHOTOS]
-        if pool:
+        if pool and ai_budget < 1:  # limit reached: never silently make another AI call
+            for it in todo:
+                items[it["id"]]["reason"] = "AI limit reached; choose a photo manually"
+        elif pool:
+            ai_calls = 1
             docs = ""
             try:
                 import documents
@@ -221,7 +226,7 @@ async def build(nc_id: str, force: bool = False, ai=None, allow_draft: bool = Fa
     recs = {"at": now_iso(), "fp": fp, "ai_used": ai_used, "items": items,
             "profile": prof and {"id": str(prof["_id"]), "key": prof["key"], "version": prof["version"], "name": prof.get("name")}}
     await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {"photo_recs": recs}})
-    return recs
+    return {**recs, "ai_calls": ai_calls}
 
 
 async def view(nc_id: str) -> dict:

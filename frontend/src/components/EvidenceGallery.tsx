@@ -11,7 +11,7 @@ import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type Sel = { ids: string[]; ai_ids?: string[]; seq?: number } | null;
-type AutoRes = { selection: Sel; missing: string[]; review_notes: string[]; ai_used: boolean; checklist_status: string };
+type AutoRes = { selection: Sel; missing: string[]; suggested: string[]; review_notes: string[]; ai_calls: number; ai_limit: number; checklist_status: string; needs_checklist_confirmation: boolean };
 const pending: Record<string, string[]> = {}; // unsaved local selections survive switching NCs
 let seqCounter = Date.now();
 
@@ -30,6 +30,8 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
   const [ask, setAsk] = useState(false);
   const [auto, setAuto] = useState<AutoRes | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
+  const recsQ = useQuery({ queryKey: ["photo-recs", nc.id], queryFn: () => api<{ items: { title: string; state: string; source: string }[] }>(`/ncs/${nc.id}/recommendations`), enabled: !!auto, staleTime: 30000 });
+  const stillSuggested = (auto?.suggested ?? []).filter((t) => !recsQ.data || recsQ.data.items.some((i) => i.title === t && i.state === "pending" && i.source !== "staff"));
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<string[] | null>(ids);
   const rq = useQuery({ queryKey: ["evidence-review", nc.id], queryFn: () => api<{ enabled: boolean }>(`/ncs/${nc.id}/evidence-review`), staleTime: 30000 });
@@ -83,14 +85,16 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
     setAutoBusy(true);
     try {
       const r = await api<AutoRes>(`/ncs/${nc.id}/evidence-selection/auto`, { method: "POST", body: { mode: m } });
+      setAuto(r);
+      ["checklist", "photo-recs", "evidence-review"].forEach((k) => qc.invalidateQueries({ queryKey: [k, nc.id] }));
+      const calls = `AI calls: ${r.ai_calls} of ${r.ai_limit}`;
+      if (r.needs_checklist_confirmation) return toast(`Confirm the evidence checklist first, then press Auto Select again (${calls})`);
       latest.current = r.selection?.ids ?? [];
       serverSeq.current = Math.max(serverSeq.current, r.selection?.seq ?? 0);
       delete pending[nc.id];
       setIds(r.selection?.ids ?? []);
       cache(r.selection);
-      setAuto(r);
-      ["checklist", "photo-recs", "evidence-review"].forEach((k) => qc.invalidateQueries({ queryKey: [k, nc.id] }));
-      toast(`${r.selection?.ids.length ?? 0} photo(s) selected${r.ai_used ? " (1 AI call)" : ""}`);
+      toast(`${r.selection?.ids.length ?? 0} photo(s) selected · ${calls}`);
     } catch (e: any) {
       toast(e.message);
     } finally {
@@ -146,9 +150,11 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
           />
         </View>
       ) : null}
-      {auto && (auto.missing.length || auto.review_notes.length || auto.checklist_status === "draft") ? (
+      {auto ? (
         <View style={[s.note, { borderColor: colors.warning }]} testID={`auto-notes-${nc.number}`}>
-          {auto.checklist_status === "draft" ? <Text style={s.small}>Checklist is an AI draft — confirm it in the evidence review.</Text> : null}
+          <Text style={s.small} testID={`auto-ai-calls-${nc.number}`}>AI calls used: {auto.ai_calls} of {auto.ai_limit}</Text>
+          {auto.needs_checklist_confirmation ? <Text style={s.small}>Confirm the evidence checklist in the evidence review, then press Auto Select again. No photos were chosen yet.</Text> : null}
+          {stillSuggested.length ? <Text style={s.small} testID={`auto-suggested-${nc.number}`}>AI suggested (not yet accepted by staff): {stillSuggested.join(", ")}. Accept or replace each in the evidence review.</Text> : null}
           {auto.missing.map((m) => <Text key={m} style={s.small}>Missing evidence: {m}</Text>)}
           {auto.review_notes.map((m) => <Text key={m} style={s.small}>{m}</Text>)}
         </View>

@@ -125,6 +125,7 @@ def test_pdf_legacy_empty_and_exact_order(env):
 
 
 def test_auto_select_cached_no_ai_and_learning(env):
+    import recommend
     import selection
     db, u = env["db"], env["u"]["employee"]
     nid, f = env["nc"](["before", "after", "during"])
@@ -132,9 +133,13 @@ def test_auto_select_cached_no_ai_and_learning(env):
     r = run(selection.auto_select(nid, selection.AutoIn(mode="replace"), u))
     assert r["selection"]["ids"] == [f[0], f[1]] and r["missing"] == ["Tape showing 250mm"]
     assert env["calls"] == [["s-tape"]]  # rules settled the rest; one AI call only for the unsettled requirement
+    assert r["ai_calls"] == 1 and r["ai_limit"] == 1 and not r["needs_checklist_confirmation"]
     assert any("Safety-critical" in x for x in r["review_notes"]) and any("Measurement" in x for x in r["review_notes"])
     marks = {str(x["_id"]): x.get("checklist_item") for x in run(db.files.find({"nc_id": nid}).to_list(10))}
-    assert marks[f[0]] == "s-before" and marks[f[1]] == "s-after"
+    assert marks[f[0]] is None and marks[f[1]] is None  # Auto Select never marks: picks stay AI suggested
+    v = run(recommend.view(nid))
+    assert {i["item_id"]: i["state"] for i in v["items"]} == {"s-before": "pending", "s-tape": "pending", "s-after": "pending"}
+    assert sorted(r["suggested"]) == ["Gas tee before work", "Vent cover fitted"]
     assert run(db.ncs.find_one({"_id": ObjectId(nid)}))["status"] == "employee_review"  # never approves
     # staff reorder + swap: remove AI pick f[1], add f[2]
     run(selection.save_selection(nid, selection.SelectionIn(ids=[f[2], f[0]], seq=r["selection"]["seq"] + 1), u))
@@ -143,6 +148,56 @@ def test_auto_select_cached_no_ai_and_learning(env):
     assert run(db.files.find_one({"_id": ObjectId(f[1])})).get("checklist_item") is None  # deselected -> no longer evidence
     r2 = run(selection.auto_select(nid, selection.AutoIn(mode="add"), u))
     assert r2["selection"]["ids"] == [f[2], f[0]] and len(env["calls"]) == 1  # removed AI pick not re-added; cached, no new AI call
+    assert r2["ai_calls"] == 0
+
+
+def test_auto_pick_needs_staff_accept_and_keeps_warnings(env):
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "verification", "after"])
+    r = run(selection.auto_select(nid, selection.AutoIn(), u))
+    assert set(r["selection"]["ids"]) == set(f)
+    tape = next(i for i in run(recommend.view(nid))["items"] if i["item_id"] == "s-tape")
+    assert tape["state"] == "pending" and tape["source"] in ("rule", "ai") and any("Measurement" in x for x in tape["flags"])
+    assert any(x.startswith("Tape showing 250mm: Measurement") for x in r["review_notes"])
+    v = run(recommend.act(nid, "s-before", recommend.ActIn(action="accept"), u))  # only explicit staff confirmation accepts
+    st = {i["item_id"]: (i["state"], i["source"]) for i in v["items"]}
+    assert st["s-before"] == ("accepted", "staff") and st["s-tape"][0] == "pending" and st["s-after"][0] == "pending"
+    assert run(db.files.find_one({"_id": ObjectId(f[0])}))["checklist_item"] == "s-before"
+    assert run(db.ncs.find_one({"_id": ObjectId(nid)}))["status"] == "employee_review"
+
+
+def test_auto_select_draft_checklist_stops_for_confirmation(env):
+    import checklist
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "after"], checklist=False)
+    env["calls"].clear()
+    drafts = []
+
+    async def fake_draft(nc_, sc, guides, passages):
+        drafts.append(1)
+        return [{"title": "Gas tee before work", "stage": "before"}, {"title": "Tape showing clearance", "stage": "verification"}, {"title": "Vent cover fitted", "stage": "after"}]
+    orig, orig_m = checklist.ai_draft, checklist.match_profile
+    checklist.ai_draft = fake_draft
+
+    async def no_match(*a, **k):
+        return None
+    checklist.match_profile = no_match
+    try:
+        r = run(selection.auto_select(nid, selection.AutoIn(), u))
+    finally:
+        checklist.ai_draft, checklist.match_profile = orig, orig_m
+    assert r["needs_checklist_confirmation"] and r["ai_calls"] == 1 and r["ai_limit"] == 1
+    assert drafts == [1] and env["calls"] == []  # checklist drafted, no second (photo) AI call
+    assert run(db.ncs.find_one({"_id": ObjectId(nid)})).get("evidence_selection") is None  # nothing selected yet
+    # limit enforcement in the recommender itself: budget 0 never calls AI
+    run(db.ncs.update_one({"_id": ObjectId(nid)}, {"$set": {"checklist.status": "confirmed"}}))
+    recs = run(recommend.build(nid, ai_budget=0))
+    assert recs["ai_calls"] == 0 and env["calls"] == []
+    assert any(i["reason"] == "AI limit reached; choose a photo manually" for i in recs["items"].values())
 
 
 def test_auto_select_needs_switch(env):

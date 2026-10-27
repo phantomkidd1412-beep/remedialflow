@@ -348,3 +348,5 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
   while the panel says "No suitable photo found".
 
 - 2026-06: Evidence selection retest (iterations 40-41): stale-save handling fixed (no resend of outdated lists, no false retry banner). Preview only; not deployed; native iOS unverified.
+
+- 2026-06: Auto Select fixes: picks stay AI suggested (pending) until staff Accept; warnings kept; AI calls counted (checklist draft + photo recs) with limit 1; unconfirmed checklist stops Auto Select for staff confirmation. Preview only.
