@@ -39,6 +39,14 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
   const cache = (sel: Sel) =>
     qc.setQueryData<ProjectDetail>(["project", projectId], (old) => (old ? { ...old, ncs: old.ncs.map((n) => (n.id === nc.id ? { ...n, evidence_selection: sel } : n)) } : old));
   const serverSeq = useRef(nc.evidence_selection?.seq ?? 0);
+  useEffect(() => { // server-side changes (Reject/Replace in the evidence review) flow into the gallery when nothing is unsaved here
+    const sq = nc.evidence_selection?.seq ?? 0;
+    if (sq > serverSeq.current && !pending[nc.id]) {
+      serverSeq.current = sq;
+      latest.current = server;
+      setIds(server);
+    }
+  }, [nc.evidence_selection?.seq]); // eslint-disable-line react-hooks/exhaustive-deps
   const save = async (list: string[], retried = false): Promise<void> => {
     if (latest.current !== list) return; // superseded by a newer selection
     setState("saving");
@@ -55,6 +63,7 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
         delete pending[nc.id];
         setState("idle");
         cache(sel);
+        qc.invalidateQueries({ queryKey: ["photo-recs", nc.id] }); // a removed suggestion shows as removed in the evidence review
       }
     } catch {
       if (latest.current === list) setState("error"); // kept locally (pending) until a retry succeeds

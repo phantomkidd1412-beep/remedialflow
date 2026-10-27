@@ -209,3 +209,101 @@ def test_auto_select_needs_switch(env):
         run(selection.auto_select(nid, selection.AutoIn(), env["u"]["employee"]))
     assert e.value.status_code == 409
     run(db.settings.update_one({"_id": "global"}, {"$set": {"staff_review_enabled": True}}))
+
+
+def test_removed_ai_photo_never_returns_but_manual_reselect_works(env):
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "verification", "after"])
+    r = run(selection.auto_select(nid, selection.AutoIn(), u))
+    assert set(r["selection"]["ids"]) == set(f)
+    s = run(selection.save_selection(nid, selection.SelectionIn(ids=[f[0], f[2]], seq=r["selection"]["seq"] + 1), u))  # staff remove AI pick f[1]
+    assert s["removed"] == [f[1]]
+    # checklist change (new version) rebuilds the cache: the removed photo must not come back
+    run(db.ncs.update_one({"_id": ObjectId(nid)}, {"$inc": {"checklist.v": 1}}))
+    for mode in ("add", "replace"):
+        r = run(selection.auto_select(nid, selection.AutoIn(mode=mode), u))
+        assert f[1] not in r["selection"]["ids"]
+    tape = next(i for i in run(recommend.view(nid))["items"] if i["item_id"] == "s-tape")
+    assert tape["file_id"] != f[1]
+    s = run(selection.save_selection(nid, selection.SelectionIn(ids=[f[0], f[1], f[2]], seq=r["selection"]["seq"] + 1), u))  # manual reselect
+    assert s["ids"] == [f[0], f[1], f[2]] and f[1] not in s["removed"]
+
+
+def test_reject_and_replace_sync_selection_and_pdf(env):
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "verification", "after", "during"])
+    r = run(selection.auto_select(nid, selection.AutoIn(), u))
+    run(selection.save_selection(nid, selection.SelectionIn(ids=[f[2], f[1], f[0]], seq=r["selection"]["seq"] + 1), u))  # drag order
+    # Replace the "after" suggestion (f[2], position 1) with f[3]: replacement takes its place, never "accepted"
+    v = run(recommend.act(nid, "s-after", recommend.ActIn(action="replace", file_id=f[3]), u))
+    sel = run(db.ncs.find_one({"_id": ObjectId(nid)}))["evidence_selection"]
+    assert sel["ids"] == [f[3], f[1], f[0]] and f[2] in sel["removed"]
+    after = next(i for i in v["items"] if i["item_id"] == "s-after")
+    assert after["state"] == "replaced" and after["state"] != "accepted" and any("confirm" in x for x in after["flags"])
+    # Reject the measurement suggestion f[1]: leaves the PDF selection at once
+    run(recommend.act(nid, "s-tape", recommend.ActIn(action="reject"), u))
+    sel = run(db.ncs.find_one({"_id": ObjectId(nid)}))["evidence_selection"]
+    assert sel["ids"] == [f[3], f[0]] and f[1] in sel["removed"]
+    shown = [b for _, slots in groups(db, nid) for b, _ in slots]
+    assert shown == [BLOB[f"qa-sel:{f[3]}"], BLOB[f"qa-sel:{f[0]}"]]  # final saved selection and order; rejected photos absent
+    r = run(selection.auto_select(nid, selection.AutoIn(mode="add"), u))
+    assert f[1] not in r["selection"]["ids"] and f[2] not in r["selection"]["ids"]
+    # staff confirm the replacement -> accepted (only by explicit confirmation)
+    v = run(recommend.act(nid, "s-after", recommend.ActIn(action="accept"), u))
+    after = next(i for i in v["items"] if i["item_id"] == "s-after")
+    assert after["state"] == "accepted" and after["reason"] == "Replacement confirmed by staff"
+
+
+def test_legacy_pdf_excludes_rejected_photo(env):
+    import recommend
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "after"])
+    run(db.files.update_many({"nc_id": nid}, {"$set": {"pdf_include": True}}))
+    run(db.files.update_one({"_id": ObjectId(f[1])}, {"$set": {"pdf_include": None}}))
+    run(recommend.build(nid))
+    run(recommend.act(nid, "s-after", recommend.ActIn(action="reject"), u))
+    assert run(db.ncs.find_one({"_id": ObjectId(nid)})).get("evidence_selection") is None  # legacy NC: no selection created
+    shown = [b for _, slots in groups(db, nid) for b in (slots if isinstance(slots[0], bytes) else [x for x, _ in slots])]
+    assert BLOB[f"qa-sel:{f[1]}"] not in shown
+
+
+def test_hand_ticked_suggestion_removed_is_remembered(env):
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "verification", "after"])
+    run(recommend.build(nid))  # suggestions exist, nothing selected yet
+    run(selection.save_selection(nid, selection.SelectionIn(ids=[f[0], f[2]], seq=1), u))  # staff tick suggestions by hand
+    s = run(selection.save_selection(nid, selection.SelectionIn(ids=[f[0]], seq=2), u))  # then untick f[2]
+    assert s["removed"] == [f[2]]
+    acts = [e["action"] for e in run(db.learning_examples.find({"nc_id": nid, "rejected_file_id": f[2]}).to_list(5))]
+    assert acts == ["deselect_ai"]
+    r = run(selection.auto_select(nid, selection.AutoIn(mode="add"), u))
+    assert f[2] not in r["selection"]["ids"] and "Vent cover fitted" in r["missing"]
+    # replace with the same position semantics: same photo kept in place
+    run(selection.save_selection(nid, selection.SelectionIn(ids=[f[1], f[0]], seq=r["selection"]["seq"] + 1), u))
+    run(recommend.act(nid, "s-before", recommend.ActIn(action="replace", file_id=f[0]), u))
+    assert run(db.ncs.find_one({"_id": ObjectId(nid)}))["evidence_selection"]["ids"] == [f[1], f[0]]
+
+
+def test_photo_shared_by_two_requirements_is_not_dropped(env):
+    import recommend
+    import selection
+    db, u = env["db"], env["u"]["employee"]
+    nid, f = env["nc"](["before", "verification", "after"])
+    r = run(selection.auto_select(nid, selection.AutoIn(), u))  # f[2] = pending suggestion for s-after
+    run(recommend.act(nid, "s-before", recommend.ActIn(action="replace", file_id=f[2]), u))  # staff use f[2] for s-before
+    after = next(i for i in run(recommend.view(nid))["items"] if i["item_id"] == "s-after")
+    assert after["file_id"] is None  # the other pending suggestion of that photo is cleared
+    sel = run(db.ncs.find_one({"_id": ObjectId(nid)}))["evidence_selection"]
+    assert f[2] in sel["ids"] and f[2] not in sel["removed"]
+    # rejecting a suggestion whose photo is still staff evidence elsewhere keeps it selected
+    run(db.ncs.update_one({"_id": ObjectId(nid)}, {"$set": {"photo_recs.items.s-tape.file_id": f[2], "photo_recs.items.s-tape.state": "pending", "photo_recs.items.s-tape.source": "ai"}}))
+    run(recommend.act(nid, "s-tape", recommend.ActIn(action="reject"), u))
+    sel = run(db.ncs.find_one({"_id": ObjectId(nid)}))["evidence_selection"]
+    assert f[2] in sel["ids"] and f[2] not in sel["removed"]
+    assert run(db.files.find_one({"_id": ObjectId(f[2])}))["checklist_item"] == "s-before"

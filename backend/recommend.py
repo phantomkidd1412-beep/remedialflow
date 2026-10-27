@@ -60,9 +60,12 @@ def _fp(cl: dict, photos: List[dict], prof: Optional[dict]) -> str:
 
 async def _rejected(nc_id: str) -> dict:
     out = {}
-    async for e in db.learning_examples.find({"nc_id": nc_id, "action": {"$in": ["reject_rec", "replace_rec"]}}):
-        if e.get("rejected_file_id"):
+    async for e in db.learning_examples.find({"nc_id": nc_id, "action": {"$in": ["reject_rec", "replace_rec", "deselect_ai", "deselect_staff"]}}):
+        if e.get("rejected_file_id") and e.get("item_id"):
             out.setdefault(e["item_id"], set()).add(e["rejected_file_id"])
+    async for f in db.files.find({"nc_id": nc_id, "rejected_items.0": {"$exists": True}}, {"rejected_items": 1}):
+        for it in f["rejected_items"]:  # survives checklist rebuilds and cache refreshes
+            out.setdefault(it, set()).add(str(f["_id"]))
     return out
 
 
@@ -158,9 +161,11 @@ async def _examples(prof: Optional[dict], items: List[dict]) -> List[tuple]:
 def flags(item: dict, rec: dict, marked: bool, prof: Optional[dict]) -> List[str]:
     """Reasons this requirement still needs staff attention (shown in the panel; recommendations never approve anything)."""
     out = []
-    if marked:
+    if marked and rec.get("state") != "replaced":
         return out
-    if not rec.get("file_id"):
+    if marked:  # staff replacement not yet confirmed: keep the review warnings
+        out.append("Replacement chosen by staff; confirm it")
+    elif not rec.get("file_id"):
         out.append("No suitable photo found")
     elif rec.get("uncertain"):
         out.append("AI is unsure this photo shows the requirement")
@@ -246,7 +251,8 @@ async def view(nc_id: str) -> dict:
         if it["id"] in staff_m:  # staff marking always wins over any recommendation
             st = r.get("state") if r.get("state") in ("accepted", "replaced") else "accepted"
             r.update(file_id=staff_m[it["id"]], source="staff", state=st, uncertain=False,
-                     reason="Chosen by staff" if st == "replaced" else "Accepted by staff" if r.get("state") == "accepted" and r.get("source") in ("rule", "ai") else "Marked by staff")
+                     reason="Chosen by staff — awaiting confirmation" if st == "replaced" else "Replacement confirmed by staff" if r.get("confirmed")
+                     else "Accepted by staff" if r.get("state") == "accepted" and r.get("source") in ("rule", "ai") else "Marked by staff")
         out.append({"item_id": it["id"], "title": it["title"], "stage": it["stage"], "measurement": it.get("measurement") or "",
                     **{k: r.get(k) for k in ("file_id", "source", "reason", "uncertain", "state")},
                     "flags": flags(it, r, it["id"] in staff_m, prof)})
@@ -292,6 +298,31 @@ async def _mark(fid: str, item_id: Optional[str]):
     await db.files.update_one({"_id": oid(fid)}, {"$set": {"checklist_item": item_id}})
 
 
+async def _sync_selection(nc: dict, action: str, old: Optional[str], new: Optional[str], u: User):
+    """Reject/Replace keep the explicit PDF selection in step: the rejected/replaced photo leaves the selection (and is never
+    auto-reselected); a replacement takes the original's place in the order. No explicit selection = legacy, left untouched."""
+    sel = nc.get("evidence_selection")
+    if action == "accept" or not isinstance(sel, dict) or "ids" not in sel:
+        return
+    ids = list(sel["ids"])
+    out = old if old and old != new else None
+    if out:  # still evidence/suggestion for another requirement: keep it selected
+        fresh = await db.ncs.find_one({"_id": nc["_id"]}, {"photo_recs.items": 1})
+        f = await db.files.find_one({"_id": oid(out)}, {"checklist_item": 1})
+        if (f or {}).get("checklist_item") or any(r.get("file_id") == out for r in ((fresh.get("photo_recs") or {}).get("items") or {}).values()):
+            out = None
+    if action == "replace" and new:
+        if out and out in ids:  # replacement takes the original's position
+            ids = [new if x == out else x for x in ids if x != new]
+        elif new not in ids:  # original kept (used elsewhere) or not selected: replacement follows it / goes last
+            ids = ids[:ids.index(old) + 1] + [new] + ids[ids.index(old) + 1:] if old in ids else ids + [new]
+    ids = [x for x in ids if x != out]
+    removed = [x for x in dict.fromkeys((sel.get("removed") or []) + ([out] if out else [])) if x not in ids]
+    await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {"evidence_selection": {
+        "ids": ids, "ai_ids": [x for x in sel.get("ai_ids") or [] if x in ids and x != new], "removed": removed,
+        "seq": (sel.get("seq") or 0) + 1, "at": now_iso(), "by": u.id}}})
+
+
 @router.put("/ncs/{nc_id}/recommendations/{item_id}")
 async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
     """Accept = store a normal staff marking. Reject = never suggest this photo again for this requirement. Replace = staff choose
@@ -313,6 +344,8 @@ async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
           "rec_source": rec.get("source"), "by": u.id, "at": now_iso()}
     if body.action == "accept":
         await _mark(suggested, item_id)
+        if rec.get("state") == "replaced":  # staff confirm their own replacement
+            rec["confirmed"] = True
         rec.update(state="accepted")
         ex.update(action="accept_rec", file_id=suggested)
     elif body.action == "reject":
@@ -326,6 +359,10 @@ async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
             ex["rejected_file_id"] = suggested
         rec.update(state="replaced", file_id=body.file_id, source="staff", reason="Chosen by staff", uncertain=False)
         ex.update(action="replace_rec", file_id=body.file_id)
+        for k, r in (recs.get("items") or {}).items():  # one photo per requirement: drop other pending suggestions of this photo
+            if k != item_id and r.get("file_id") == body.file_id and r.get("state") == "pending":
+                await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {f"photo_recs.items.{k}.file_id": None, f"photo_recs.items.{k}.source": "none",
+                                                                      f"photo_recs.items.{k}.reason": "Photo chosen by staff for another requirement"}})
     await db.learning_examples.insert_one(ex)
     if body.action == "reject":  # keep the requirement unfulfilled until staff explicitly choose a photo
         await db.ncs.update_one({"_id": nc["_id"]}, {"$addToSet": {"checklist.held": item_id}})
@@ -336,6 +373,7 @@ async def act(nc_id: str, item_id: str, body: ActIn, u: User = Depends(staff)):
     if ex.get("file_id"):
         await db.files.update_one({"_id": oid(ex["file_id"])}, {"$pull": {"rejected_items": item_id}})
     await db.ncs.update_one({"_id": nc["_id"]}, {"$set": {f"photo_recs.items.{item_id}": rec}})
+    await _sync_selection(nc, body.action, suggested, body.file_id, u)
     await audit(f"nc.recommendation_{body.action}", u.id, f"nc:{nc_id}", {"item_id": item_id, "file_id": ex.get("file_id"), "rejected": ex.get("rejected_file_id")})
     return await view(nc_id)
 

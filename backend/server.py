@@ -1717,6 +1717,9 @@ async def pack_fingerprint(pid: str, p: dict) -> str:
     sel = await db.ncs.find({"project_id": pid, "evidence_selection": {"$exists": True}}, {"evidence_selection.ids": 1}).sort("number", 1).to_list(500)
     if sel:  # only NCs with an explicit selection change the fingerprint; untouched projects keep their pack version
         raw += json.dumps([[str(n["_id"]), (n.get("evidence_selection") or {}).get("ids")] for n in sel])
+    rej = await db.files.find({"project_id": pid, "rejected_items.0": {"$exists": True}}, {"rejected_items": 1, "checklist_item": 1}).sort("_id", 1).to_list(20000)
+    if rej:  # staff rejections change the PDF; projects without any keep their pack version
+        raw += json.dumps([[str(f["_id"]), f["rejected_items"], f.get("checklist_item")] for f in rej])
     return hashlib.sha256(raw.encode()).hexdigest()[:20]
 
 
@@ -1893,6 +1896,8 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
             else:
                 out.append((head, [(img, it["title"] if it else "")]))
         return out
+    # photos staff rejected as evidence (and not used for another requirement / forced in) stay out of new PDFs
+    photos = [f for f in photos if not f.get("rejected_items") or f.get("checklist_item") or f.get("pdf_include") is True]
     picked = [f for f in photos if f.get("pdf_include") is True]
     pool = picked or photos
     if not pool:

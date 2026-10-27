@@ -30,6 +30,7 @@ export function RecommendationsPanel({ ncId, number, photos }: { ncId: string; n
     try {
       const res = await api<any>(path, { method: body.method ?? "POST", body: body.data });
       if (res?.items) qc.setQueryData(key, res);
+      if (body.method === "PUT") qc.invalidateQueries({ queryKey: ["project"] }); // Reject/Replace update the PDF selection
       qc.invalidateQueries({ queryKey: ["checklist", ncId] });
       qc.invalidateQueries({ queryKey: ["evidence-review", ncId] });
       toast(ok);
@@ -67,7 +68,7 @@ export function RecommendationsPanel({ ncId, number, photos }: { ncId: string; n
             </View>
             {it.flags.map((x, i) => <Text key={i} style={[s.flag, { color: colors.onWarning, backgroundColor: colors.warning }]} testID={`rec-flag-${it.item_id}-${i}`}>{x}</Text>)}
             <View style={s.row}>
-              {pending ? <Btn title="Accept" small onPress={() => act(it, "accept")} loading={busy === `accept-${it.item_id}`} style={s.flex} testID={`rec-accept-${it.item_id}`} /> : null}
+              {pending || it.state === "replaced" ? <Btn title={pending ? "Accept" : "Confirm"} small onPress={() => act(it, "accept")} loading={busy === `accept-${it.item_id}`} style={s.flex} testID={`rec-accept-${it.item_id}`} /> : null}
               <Btn title={it.file_id ? "Replace" : "Choose photo"} small variant="outline" onPress={() => setReplacing(it)} style={s.flex} testID={`rec-replace-${it.item_id}`} />
               {pending ? <Btn title="Reject" small variant="outline" onPress={() => act(it, "reject")} loading={busy === `reject-${it.item_id}`} style={s.flex} testID={`rec-reject-${it.item_id}`} /> : null}
             </View>
