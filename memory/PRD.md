@@ -362,3 +362,5 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - 2026-06: Unique partial index (nc_id, client_id) + DuplicateKeyError handling so simultaneous retries never duplicate evidence.
 
 - 2026-06: Gallery shows multi-upload batches in picked order (client_id up-<batch>-<index>), placeholders in picked slots and removed as soon as the real photo exists (no double display). Dropbox QA inventory (read-only): test_reports/dropbox_test_files_classified.json — 310 positively identified, 348 uncertain; nothing deleted.
+
+- 2026-06: Startup creates uniq_nc_client_id only after a read-only duplicate check (skips + warns if conflicts). New admin read-only GET /api/admin/diagnostics/upload-dedupe (index present/unique, duplicate groups + examples). Preview: index present, 0 duplicate groups.

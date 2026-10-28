@@ -2107,16 +2107,47 @@ async def seed():
         await bg()
 
 
+async def _dupe_upload_groups(limit: int = 10) -> list:
+    """READ-ONLY: evidence records sharing the same (nc_id, client_id) device upload key."""
+    return await db.files.aggregate([
+        {"$match": {"client_id": {"$type": "string"}}},
+        {"$group": {"_id": {"nc_id": "$nc_id", "client_id": "$client_id"}, "count": {"$sum": 1}, "ids": {"$push": {"$toString": "$_id"}}}},
+        {"$match": {"count": {"$gt": 1}}}, {"$limit": limit}]).to_list(limit)
+
+
+async def ensure_upload_dedupe_index():
+    """One record per device upload key. Never created blindly: if existing records already share a key, nothing is
+    created or changed (the lookup-based check stays in force) and the conflicts are reported via the admin diagnostics."""
+    if "uniq_nc_client_id" in await db.files.index_information():
+        return
+    dups = await _dupe_upload_groups(1)
+    if dups:
+        log.warning("uniq_nc_client_id NOT created: existing duplicate upload keys found; see GET /api/admin/diagnostics/upload-dedupe")
+        return
+    try:
+        await db.files.create_index([("nc_id", 1), ("client_id", 1)], unique=True, name="uniq_nc_client_id",
+                                    partialFilterExpression={"client_id": {"$type": "string"}})
+        log.info("uniq_nc_client_id created")
+    except Exception as e:
+        log.warning("uniq_nc_client_id not created: %s", type(e).__name__)
+
+
+@api.get("/admin/diagnostics/upload-dedupe")
+async def upload_dedupe_status(u: User = Depends(admin)):
+    """READ-ONLY production check: is the duplicate-upload protection index present, and are there conflicting records?"""
+    ix = (await db.files.index_information()).get("uniq_nc_client_id")
+    groups = await _dupe_upload_groups(10)
+    return {"collection": "files", "database": db.name, "index_present": bool(ix), "unique": bool(ix and ix.get("unique")),
+            "partial_filter": ix.get("partialFilterExpression") if ix else None,
+            "duplicate_groups_found": len(groups), "examples": [{**g["_id"], "count": g["count"], "file_ids": g["ids"]} for g in groups]}
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)
     await db.sessions.create_index("refresh_hash")
     await db.files.create_index([("nc_id", 1), ("client_id", 1)])
-    try:  # one record per device upload key, even when retries arrive at the same moment
-        await db.files.create_index([("nc_id", 1), ("client_id", 1)], unique=True, name="uniq_nc_client_id",
-                                    partialFilterExpression={"client_id": {"$type": "string"}})
-    except Exception as e:  # e.g. historical duplicates: keep the app running, fall back to the lookup-based check
-        log.warning("unique client_id index not created: %s", type(e).__name__)
+    await ensure_upload_dedupe_index()
     await db.files.create_index([("project_id", 1), ("status", 1)])
     await db.files.create_index("submission_id")
     await db.ncs.create_index("project_id")
