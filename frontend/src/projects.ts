@@ -46,7 +46,7 @@ export type RateRow = { installer_id: string; name: string; pay_type: string; ra
 export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; require_video?: boolean; rate_rows?: RateRow[]; schedule_rows?: { installer_id: string; name: string; date: string | null }[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 
 export type EvidenceFile = {
-  id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number;
+  id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number; client_id?: string | null;
   captured_at?: string | null; server_received_at: string; tz?: string | null; lat?: number | null; lng?: number | null;
   accuracy_m?: number | null; location_verified: boolean; duration_s?: number | null; processing: string;
   exclude_reason?: string | null; playback?: string | null; stage?: "pre" | "mid" | "final" | null; stage_source?: string | null; pdf_include?: boolean | null;

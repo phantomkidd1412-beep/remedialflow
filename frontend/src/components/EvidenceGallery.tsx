@@ -22,6 +22,45 @@ let seqCounter = Date.now();
  *  drag-to-reorder of the selected photos (= PDF order). null selection = never selected (legacy PDF behaviour). */
 export type PendingUpload = { key: string; uri: string; pct: number; status: "queued" | "uploading" | "done" | "failed"; error?: string; shown?: boolean };
 
+/** Photos from one multi-photo upload (client_id "up-<batch>-<index>") are shown in the order they were picked, not the
+ *  order the uploads happened to finish. They keep the slots the batch occupies; everything else keeps its server order. */
+const BATCH = /^up-(\d+)-(\d+)$/;
+export function pickedOrder(list: EvidenceFile[]): EvidenceFile[] {
+  const idx = (f: EvidenceFile) => BATCH.exec(f.client_id ?? "");
+  const groups: Record<string, EvidenceFile[]> = {};
+  list.forEach((f) => { const m = idx(f); if (m) (groups[m[1]] ??= []).push(f); });
+  Object.values(groups).forEach((g) => g.sort((a, b) => Number(idx(a)![2]) - Number(idx(b)![2])));
+  const used: Record<string, number> = {};
+  return list.map((f) => { const m = idx(f); if (!m) return f; const i = used[m[1]] ?? 0; used[m[1]] = i + 1; return groups[m[1]][i]; });
+}
+
+type Tile = { real: EvidenceFile } | { up: PendingUpload };
+/** Upload placeholders sit in their picked position among the batch's finished photos; a placeholder is dropped as soon as
+ *  a photo with its client_id exists, so a photo is never shown twice (retries reuse the same key). */
+export function withPlaceholders(photos: EvidenceFile[], uploads: PendingUpload[]): Tile[] {
+  const tiles: Tile[] = photos.map((f) => ({ real: f }));
+  const have = new Set(photos.map((p) => p.client_id).filter(Boolean));
+  const keyOf = (t: Tile) => ("real" in t ? t.real.client_id ?? "" : t.up.key);
+  for (const u of uploads) {
+    if (u.shown || have.has(u.key)) continue;
+    const m = BATCH.exec(u.key);
+    let at = tiles.length;
+    if (m) {
+      let after = -1;
+      let before = -1;
+      tiles.forEach((t, i) => {
+        const mm = BATCH.exec(keyOf(t));
+        if (!mm || mm[1] !== m[1]) return;
+        if (Number(mm[2]) < Number(m[2])) after = i;
+        else if (before < 0) before = i;
+      });
+      at = after >= 0 ? after + 1 : before >= 0 ? before : tiles.length;
+    }
+    tiles.splice(at, 0, { up: u });
+  }
+  return tiles;
+}
+
 export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = [], onRetry }: { nc: NCItem; projectId: string; onUpload: () => void; onDetails?: (id: string) => void; uploads?: PendingUpload[]; onRetry?: (key: string) => void }) {
   const s = useStyles();
   const { colors } = useTheme();
@@ -89,7 +128,8 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = 
     if (timer.current) { clearTimeout(timer.current); if (latest.current && pending[nc.id]) save(latest.current); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const photos = nc.photos;
+  const photos = pickedOrder(nc.photos);
+  const tiles = withPlaceholders(photos, uploads);
   const byId: Record<string, EvidenceFile> = Object.fromEntries(photos.map((f) => [f.id, f]));
   const selected = (ids ?? []).filter((i) => byId[i]);
   const has = ids !== null;
@@ -173,7 +213,22 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = 
         </Pressable>
       ) : null}
       <View style={s.grid}>
-        {photos.map((f) => {
+        {tiles.map((t) => {
+          if ("up" in t) {
+            const u = t.up;
+            return (
+              <Pressable key={u.key} onPress={u.status === "failed" ? () => onRetry?.(u.key) : undefined} disabled={u.status !== "failed"}
+                style={[s.cell, { borderColor: u.status === "failed" ? colors.error : colors.border }]} testID={`upload-tile-${u.key}`}
+                accessibilityLabel={u.status === "failed" ? "Upload failed, tap to retry" : "Uploading photograph"}>
+                <Image source={{ uri: u.uri }} style={{ width: size, height: size, borderRadius: radius.md, opacity: 0.45 }} contentFit="cover" />
+                <View style={[s.upOverlay, { width: size, height: size }]} pointerEvents="none">
+                  {u.status === "failed" ? <Feather name="rotate-cw" size={20} color={colors.onSurface} /> : null}
+                  <Text style={s.upText}>{u.status === "failed" ? "Retry" : u.status === "queued" ? "Waiting" : u.status === "done" ? "✓" : `${Math.round(u.pct * 100)}%`}</Text>
+                </View>
+              </Pressable>
+            );
+          }
+          const f = t.real;
           const on = selected.includes(f.id);
           return (
             <View key={f.id} style={[s.cell, on && { borderColor: colors.brandPrimary }, has && !on && { opacity: 0.4 }]} testID={`gallery-cell-${f.id}`}>
@@ -183,17 +238,6 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = 
             </View>
           );
         })}
-        {uploads.filter((u) => !u.shown).map((u) => (
-          <Pressable key={u.key} onPress={u.status === "failed" ? () => onRetry?.(u.key) : undefined} disabled={u.status !== "failed"}
-            style={[s.cell, { borderColor: u.status === "failed" ? colors.error : colors.border }]} testID={`upload-tile-${u.key}`}
-            accessibilityLabel={u.status === "failed" ? "Upload failed, tap to retry" : "Uploading photograph"}>
-            <Image source={{ uri: u.uri }} style={{ width: size, height: size, borderRadius: radius.md, opacity: 0.45 }} contentFit="cover" />
-            <View style={[s.upOverlay, { width: size, height: size }]} pointerEvents="none">
-              {u.status === "failed" ? <Feather name="rotate-cw" size={20} color={colors.onSurface} /> : null}
-              <Text style={s.upText}>{u.status === "failed" ? "Retry" : u.status === "queued" ? "Waiting" : u.status === "done" ? "✓" : `${Math.round(u.pct * 100)}%`}</Text>
-            </View>
-          </Pressable>
-        ))}
         <Pressable style={[s.add, { width: size + 8, height: size + 8, borderColor: colors.border }]} onPress={onUpload} testID={`add-evidence-${nc.number}`}>
           <Feather name="upload" size={20} color={colors.onSurface} />
         </Pressable>
