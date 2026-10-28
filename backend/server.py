@@ -1029,7 +1029,13 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
                      lat=lat, lng=lng, accuracy_m=acc, location_verified=loc_ok, duration_s=meta.get("duration_s"),
                      uploaded_by=u.id, client_id=meta.get("client_id"), playback="pending" if kind == "video" else None,
                      status="submitted" if kind == "trustmark" else "draft")
-    await db.files.insert_one(f.to_mongo())
+    try:
+        await db.files.insert_one(f.to_mongo())
+    except DuplicateKeyError:  # the same upload (client_id) was stored by a simultaneous retry: return that record
+        dup = await db.files.find_one({"client_id": f.client_id, "nc_id": nc.id})
+        if dup:
+            return EvidenceFile.from_mongo(dup)
+        raise
     stamp_meta = None
     if kind == "photo":
         stamp_meta = {**meta, "location_verified": loc_ok, "project_ref": p.ref, "postcode": p.postcode,
@@ -1060,10 +1066,15 @@ async def upload_evidence(nc_id: str, bg: BackgroundTasks, file: UploadFile = Fi
     if source == "in_app_camera" and kind == "photo" and not has_loc and s.location_policy == "reject":
         raise HTTPException(422, "Location is required by your company's evidence policy. Enable GPS and retake.")
     sub_id = nc.draft_submission_id
-    if not sub_id:
-        r = await db.submissions.insert_one(Submission(project_id=p.id, nc_id=nc.id, installer_id=u.id).to_mongo())
-        sub_id = str(r.inserted_id)
-        await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"draft_submission_id": sub_id}})
+    if not sub_id:  # concurrent first uploads: exactly one draft submission per NC (atomic claim, no split batches)
+        new_id = ObjectId()
+        claimed = await db.ncs.find_one_and_update({"_id": oid(nc_id), "$or": [{"draft_submission_id": None}, {"draft_submission_id": {"$exists": False}}]},
+                                                   {"$set": {"draft_submission_id": str(new_id)}})
+        if claimed:
+            await db.submissions.insert_one({**Submission(project_id=p.id, nc_id=nc.id, installer_id=u.id).to_mongo(), "_id": new_id})
+            sub_id = str(new_id)
+        else:
+            sub_id = (await db.ncs.find_one({"_id": oid(nc_id)}, {"draft_submission_id": 1}))["draft_submission_id"]
     f = await store_upload(nc, p, u, file, m, kind, source, sub_id, bg)
     if kind == "video":  # multiple videos per NC: a new video never replaces or hides an earlier one
         await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"active_video_id": f.id}})
@@ -2101,6 +2112,11 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.sessions.create_index("refresh_hash")
     await db.files.create_index([("nc_id", 1), ("client_id", 1)])
+    try:  # one record per device upload key, even when retries arrive at the same moment
+        await db.files.create_index([("nc_id", 1), ("client_id", 1)], unique=True, name="uniq_nc_client_id",
+                                    partialFilterExpression={"client_id": {"$type": "string"}})
+    except Exception as e:  # e.g. historical duplicates: keep the app running, fall back to the lookup-based check
+        log.warning("unique client_id index not created: %s", type(e).__name__)
     await db.files.create_index([("project_id", 1), ("status", 1)])
     await db.files.create_index("submission_id")
     await db.ncs.create_index("project_id")

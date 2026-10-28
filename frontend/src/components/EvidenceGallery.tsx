@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import Feather from "@react-native-vector-icons/feather";
+import { Image } from "expo-image";
 import Sortable from "react-native-sortables";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/src/api";
@@ -19,7 +20,9 @@ let seqCounter = Date.now();
 
 /** Single evidence gallery: Select Evidence (instant local taps, debounced background save), Auto Select (switch ON),
  *  drag-to-reorder of the selected photos (= PDF order). null selection = never selected (legacy PDF behaviour). */
-export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NCItem; projectId: string; onUpload: () => void; onDetails?: (id: string) => void }) {
+export type PendingUpload = { key: string; uri: string; pct: number; status: "queued" | "uploading" | "done" | "failed"; error?: string; shown?: boolean };
+
+export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = [], onRetry }: { nc: NCItem; projectId: string; onUpload: () => void; onDetails?: (id: string) => void; uploads?: PendingUpload[]; onRetry?: (key: string) => void }) {
   const s = useStyles();
   const { colors } = useTheme();
   const qc = useQueryClient();
@@ -153,6 +156,12 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
   return (
     <View style={s.gap}>
       <Label>Evidence ({photos.length} photo{photos.length === 1 ? "" : "s"}{has ? ` · ${selected.length} selected` : ""})</Label>
+      {uploads.length ? (
+        <Text style={s.noteText} testID={`upload-progress-${nc.number}`}>
+          {uploads.filter((u) => u.status === "done").length} of {uploads.length} photographs uploaded
+          {uploads.some((u) => u.status === "failed") ? ` · ${uploads.filter((u) => u.status === "failed").length} failed, tap to retry` : ""}
+        </Text>
+      ) : null}
       <View style={s.head}>
         <Btn title={mode ? "Done" : "Select Evidence"} small variant={mode ? "primary" : "outline"} onPress={() => setMode(!mode)} disabled={!photos.length} style={s.flex} testID={`select-evidence-${nc.number}`} />
         {rq.data?.enabled ? <Btn title="Auto Select" small variant="outline" icon="star" onPress={() => (selected.length ? setAsk(true) : runAuto("replace"))} loading={autoBusy} disabled={!photos.length} style={s.flex} testID={`auto-select-${nc.number}`} /> : null}
@@ -174,6 +183,17 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
             </View>
           );
         })}
+        {uploads.filter((u) => !u.shown).map((u) => (
+          <Pressable key={u.key} onPress={u.status === "failed" ? () => onRetry?.(u.key) : undefined} disabled={u.status !== "failed"}
+            style={[s.cell, { borderColor: u.status === "failed" ? colors.error : colors.border }]} testID={`upload-tile-${u.key}`}
+            accessibilityLabel={u.status === "failed" ? "Upload failed, tap to retry" : "Uploading photograph"}>
+            <Image source={{ uri: u.uri }} style={{ width: size, height: size, borderRadius: radius.md, opacity: 0.45 }} contentFit="cover" />
+            <View style={[s.upOverlay, { width: size, height: size }]} pointerEvents="none">
+              {u.status === "failed" ? <Feather name="rotate-cw" size={20} color={colors.onSurface} /> : null}
+              <Text style={s.upText}>{u.status === "failed" ? "Retry" : u.status === "queued" ? "Waiting" : u.status === "done" ? "✓" : `${Math.round(u.pct * 100)}%`}</Text>
+            </View>
+          </Pressable>
+        ))}
         <Pressable style={[s.add, { width: size + 8, height: size + 8, borderColor: colors.border }]} onPress={onUpload} testID={`add-evidence-${nc.number}`}>
           <Feather name="upload" size={20} color={colors.onSurface} />
         </Pressable>
@@ -262,6 +282,8 @@ const useStyles = makeStyles((c) => ({
   warn: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", padding: space.sm, borderRadius: radius.md, overflow: "hidden" },
   rev: { flexDirection: "row", gap: space.sm, borderWidth: BORDER, borderColor: c.border, borderRadius: radius.md, padding: space.sm, marginBottom: space.xs },
   noteText: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", color: c.onSurface },
+  upOverlay: { position: "absolute", top: 1, left: 1, alignItems: "center", justifyContent: "center", gap: 2 },
+  upText: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700", color: c.onSurface },
   err: { padding: space.sm, borderRadius: radius.md, minHeight: 44, justifyContent: "center" },
   note: { borderWidth: BORDER, borderRadius: radius.md, padding: space.sm, minHeight: 44, justifyContent: "center" },
 }));

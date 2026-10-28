@@ -356,3 +356,7 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - 2026-06: Fixed shared-photo edge case: Reject/Replace keep a photo selected if it is still evidence/suggestion for another requirement; Replace clears other pending suggestions of the chosen photo. Preview only.
 
 - 2026-06: Simplified staff NC UI: Checklist & Recommendations panels hidden (backend unchanged); compact Review dialog for AI suggestions/checklist confirmation/safety; wrap grid gallery; Select inside full-screen viewer (+ show all/selected), preloading, arrow keys; parallel evidence uploads (3) with progress/retry; doc upload button always responds with validation/progress; PDF omits empty REMEDIAL WORKS section.
+
+- 2026-06: iOS simplification: Location evidence review panel + Technical references + long-press hint hidden (backend unchanged; long-press details sheet kept, with "Tag photos now" for untagged). Internal reason field hidden (not sent). Concurrent evidence uploads (UPLOAD_CONCURRENCY=4) with per-photo tiles in gallery, overall "X of N photographs uploaded", tap failed tile to retry (client_id idempotent), throttled refresh. Backend: atomic draft-submission claim for concurrent first uploads.
+
+- 2026-06: Unique partial index (nc_id, client_id) + DuplicateKeyError handling so simultaneous retries never duplicate evidence.

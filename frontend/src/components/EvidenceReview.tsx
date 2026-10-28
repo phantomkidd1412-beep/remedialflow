@@ -3,10 +3,9 @@ import { Pressable, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/src/api";
 import { NCItem } from "@/src/projects";
-import { Btn, Field, Label, Sheet, useToast } from "@/src/ui";
+import { Sheet, useToast } from "@/src/ui";
 import { ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
-import { ReferencesPanel } from "@/src/components/ReferencesPanel";
-import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { fonts, makeStyles, BORDER, radius, space, useTheme } from "@/src/theme";
 
 type RPhoto = { id: string; classified: boolean; pdf_include: boolean | null; checklist_item?: string | null; staff: string[]; location_id: string | null; location_label: string | null; location_group: string | null; stage: string | null; component: string | null; dup_of: string | null; relevant: boolean | null };
 type Review = {
@@ -26,10 +25,6 @@ export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: 
   const key = ["evidence-review", nc.id];
   const q = useQuery({ queryKey: key, queryFn: () => api<Review>(`/ncs/${nc.id}/evidence-review`), staleTime: 30000 });
   const [busy, setBusy] = useState(false);
-  const [edit, setEdit] = useState(false);
-  const [count, setCount] = useState("");
-  const [labels, setLabels] = useState("");
-  const [basis, setBasis] = useState("");
   const [picker, setPicker] = useState<{ photo: RPhoto; kind: "loc" | "stage" | "item" } | null>(null);
   const r = q.data;
   const cq = useChecklist(nc.id, !!r?.enabled);
@@ -70,50 +65,21 @@ export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: 
     : picker?.kind === "item" ? [{ v: null, t: "Not a checklist photo" }, ...citems.map((i) => ({ v: i.id, t: `${ITEM_STAGE[i.stage]} · ${i.title}` }))]
     : STAGES.map((v) => ({ v, t: STAGE_TXT[v] }));
   const classify = (force = false) => run(() => api(`/ncs/${nc.id}/evidence-review/classify`, { method: "POST", body: { force } }), "Photos classified");
-  const saveScope = () =>
-    run(async () => {
-      const res = await api(`/ncs/${nc.id}/scope`, { method: "PUT", body: { expected_count: Number(count), labels: labels.split(",").map((x) => x.trim()).filter(Boolean), basis } });
-      setEdit(false);
-      return res;
-    }, "Expected locations saved");
 
-  const cov = r.coverage;
-  const covColor = cov?.status === "complete" ? colors.success : cov?.status === "incomplete" ? colors.error : colors.warning;
-  const covText = cov?.status === "complete" ? colors.onSuccess : cov?.status === "incomplete" ? colors.onError : colors.onWarning;
+  // The location/coverage panel and technical references are no longer shown; classification, coverage and retrieval keep
+  // running in the backend. Only the long-press photo details (staff corrections) remain visible.
   return (
-    <View style={s.box} testID={`evidence-review-${nc.number}`}>
-      <Label>Location evidence review (staff only)</Label>
-      {cov ? (
-        <View style={[s.cov, { backgroundColor: covColor }]} testID={`coverage-${nc.number}`}>
-          <Text style={[s.covHead, { color: covText }]}>Coverage: {cov.status.toUpperCase()}{cov.expected ? ` · ${cov.covered ?? "?"} of ${cov.expected}` : ""}</Text>
-          {cov.reason ? <Text style={[s.small, { color: covText }]}>{cov.reason}</Text> : null}
-          {cov.missing?.length ? <Text style={[s.small, { color: covText }]} testID={`coverage-missing-${nc.number}`}>Missing: {cov.missing.join(", ")}</Text> : null}
-          {cov.not_completed?.length ? <Text style={[s.small, { color: covText }]}>Shown but not completed: {cov.not_completed.join(", ")}</Text> : null}
-        </View>
-      ) : null}
-      <Text style={s.small} testID={`review-scope-${nc.number}`}>
-        Expected: {r.scope?.expected_count ?? "not confirmed"}{locs.length ? ` · ${locs.map((l) => l.label).join(", ")}` : ""}{r.scope?.method === "staff" ? " · confirmed by staff" : r.scope?.method === "rules_preview" ? " · from NC wording" : ""}
-      </Text>
-      {edit ? (
-        <View style={{ gap: space.xs }}>
-          <Field placeholder="Expected number of locations" value={count} onChangeText={setCount} keyboardType="number-pad" testID={`scope-count-${nc.number}`} />
-          <Field placeholder="Location names, comma separated (optional)" value={labels} onChangeText={setLabels} testID={`scope-labels-${nc.number}`} />
-          <Field placeholder="Where this comes from (e.g. NC wording, TrustMark report p.4)" value={basis} onChangeText={setBasis} maxLength={300} testID={`scope-basis-${nc.number}`} />
-          <View style={s.actions}>
-            <Btn title="Save" small onPress={saveScope} loading={busy} disabled={!Number(count) || basis.trim().length < 5} style={{ flex: 1 }} testID={`scope-save-${nc.number}`} />
-            <Btn title="Cancel" small variant="outline" onPress={() => setEdit(false)} style={{ flex: 1 }} />
-          </View>
-        </View>
-      ) : (
-        <View style={s.actions}>
-          <Btn title="Edit expected locations" small variant="outline" onPress={() => { setCount(String(r.scope?.expected_count ?? "")); setLabels(locs.map((l) => l.label).join(", ")); setEdit(true); }} style={{ flex: 1 }} testID={`scope-edit-${nc.number}`} />
-          <Btn title={r.unclassified ? `Classify ${r.unclassified} photo${r.unclassified === 1 ? "" : "s"}` : "Re-classify"} small variant="outline" icon="cpu" onPress={() => classify(!r.unclassified)} loading={busy} disabled={!r.photos?.length} style={{ flex: 1 }} testID={`classify-${nc.number}`} />
-        </View>
-      )}
+    <View testID={`evidence-review-${nc.number}`}>
       <Sheet visible={!!detailsFor && !picker} onClose={() => onDetailsClose?.()} title={`Photo #${detailsFor ? idx(detailsFor) : ""} details`} testID="photo-details">
         {(() => {
           const p = (r.photos ?? []).find((x) => x.id === detailsFor);
-          if (!p) return <Text style={s.small}>This photo has not been tagged yet. Use “Classify” below first.</Text>;
+          if (!p || !p.classified)
+            return (
+              <View style={{ gap: space.xs }}>
+                <Text style={s.small}>This photo has not been tagged yet.</Text>
+                <Pressable style={s.opt} onPress={() => { onDetailsClose?.(); classify(false); }} disabled={busy} testID="details-classify"><Text style={s.optText}>Tag photos now</Text></Pressable>
+              </View>
+            );
           const open = (kind: "loc" | "stage" | "item") => { onDetailsClose?.(); setPicker({ photo: p, kind }); };
           return (
             <View style={{ gap: space.xs }}>
@@ -135,8 +101,6 @@ export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: 
           );
         })}
       </Sheet>
-      <ReferencesPanel ncId={nc.id} number={nc.number} />
-      <Text style={s.small}>Long-press a photo in the Evidence gallery to correct its location, stage or requirement. Corrections override the AI. Photos are never deleted.</Text>
     </View>
   );
 }

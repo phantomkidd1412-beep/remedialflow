@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +15,9 @@ import { EvidenceGallery } from "@/src/components/EvidenceGallery";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 /** "Remedial works carried out" text on the NC PDF: AI drafts it from recorded information; staff edit before export. */
+/** Simultaneous evidence uploads (3–5 recommended); the rest are queued until a slot frees up. */
+export const UPLOAD_CONCURRENCY = 4;
+
 function ExportNote({ nc, projectId }: { nc: NCItem; projectId: string }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -54,7 +57,6 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   const qc = useQueryClient();
   const toast = useToast();
   const [note, setNote] = useState("");
-  const [reason, setReason] = useState("");
   const [suggest, setSuggest] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [view, setView] = useState<EvidenceFile | null>(null);
@@ -84,9 +86,8 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     if (busy) return; // no duplicate submissions while a decision is in flight
     setBusy(action);
     try {
-      const r = await api<{ guidance_draft_id?: string | null }>(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note, reason: reason.trim(), suggest_guidance: suggest } });
+      const r = await api<{ guidance_draft_id?: string | null }>(`/ncs/${nc.id}/review`, { method: "POST", body: { action, note, suggest_guidance: suggest } }); // internal reason field hidden: not sent, earlier reasons untouched
       setNote("");
-      setReason("");
       setSuggest(false);
       if (r?.guidance_draft_id) toast("Draft AI guidance created for Admin review");
       // reflect the confirmed backend state immediately, then refetch the truth
@@ -117,15 +118,30 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   };
   const lockedForEmployee = nc.status === "admin_review" && user?.role !== "admin";
 
-  type Up = { key: string; name: string; pct: number; status: "queued" | "uploading" | "done" | "failed"; error?: string; asset: ImagePicker.ImagePickerAsset; kind: "trustmark" | "evidence" };
+  type Up = { key: string; name: string; pct: number; status: "queued" | "uploading" | "done" | "failed"; error?: string; shown?: boolean; asset: ImagePicker.ImagePickerAsset; kind: "trustmark" | "evidence" };
   const [ups, setUps] = useState<Up[]>([]);
   const patch = (key: string, p: Partial<Up>) => setUps((l) => l.map((u) => (u.key === key ? { ...u, ...p } : u)));
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showUploaded = () => { // finished photos appear without waiting for the batch; at most one project refetch per ~0.8s
+    if (refreshTimer.current) return;
+    refreshTimer.current = setTimeout(async () => {
+      refreshTimer.current = null;
+      await qc.invalidateQueries({ queryKey: ["project", projectId] });
+      setUps((l) => l.map((u) => (u.status === "done" ? { ...u, shown: true } : u))); // the real photo has replaced its placeholder
+    }, 800);
+  };
+  useEffect(() => { // hide the progress line a few seconds after the whole batch is in the gallery
+    if (!ups.length || ups.some((u) => !u.shown)) return;
+    const t = setTimeout(() => setUps((l) => (l.every((u) => u.shown) ? [] : l)), 4000);
+    return () => clearTimeout(t);
+  }, [ups]);
   const sendOne = async (u: Up) => {
     patch(u.key, { status: "uploading", pct: 0, error: undefined });
     try {
       const res = await authed((t) =>
         uploadForm(`${BASE}/api/ncs/${nc.id}/${u.kind}`, {
           headers: t ? { Authorization: `Bearer ${t}` } : {},
+          // client_id is stable across retries: the server returns the existing record instead of creating a duplicate
           fields: u.kind === "evidence" ? { meta: JSON.stringify({ kind: "photo", source: "employee_upload", client_id: u.key }) } : {},
           files: { file: { uri: u.asset.uri, name: u.asset.fileName ?? "photo.jpg", mimeType: u.asset.mimeType ?? "image/jpeg" } }, // original file, unmodified
           onProgress: (x) => patch(u.key, { pct: x }),
@@ -133,20 +149,21 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
       );
       if (!res.ok) throw new Error(await readError(res));
       patch(u.key, { status: "done", pct: 1 });
+      showUploaded();
       return true;
     } catch (e: any) {
       patch(u.key, { status: "failed", error: e.message });
       return false;
     }
   };
-  const runQueue = async (list: Up[]) => { // 3 at a time; one refresh when the batch finishes
+  const runQueue = async (list: Up[]) => { // UPLOAD_CONCURRENCY at a time; the rest wait for a free slot, in selection order
     let next = 0;
     let ok = 0;
     const worker = async () => { while (next < list.length) { const u = list[next++]; if (await sendOne(u)) ok++; } };
-    await Promise.all([worker(), worker(), worker()]);
+    await Promise.all(Array.from({ length: Math.min(UPLOAD_CONCURRENCY, list.length) }, worker));
     if (ok) refresh();
     const failed = list.length - ok;
-    toast(failed ? `${ok} uploaded · ${failed} failed — tap Retry` : `${ok} file(s) uploaded`);
+    toast(failed ? `${ok} uploaded · ${failed} failed — tap the photo to retry` : `${ok} photograph${ok === 1 ? "" : "s"} uploaded`);
   };
   const upload = async (kind: "trustmark" | "evidence") => {
     const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, exif: true, allowsMultipleSelection: true, selectionLimit: 20 });
@@ -158,15 +175,9 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
     try { await runQueue(list); } finally { setBusy(null); }
   };
   const retry = async (u: Up) => {
-    if (!(await sendOne(u))) return;
-    refresh();
+    if (!(await sendOne(u))) return toast(u.name + ": upload failed again");
     toast("Uploaded");
   };
-  useEffect(() => { // clear the panel shortly after every row is done, whatever order uploads/retries finished in
-    if (!ups.length || ups.some((x) => x.status !== "done")) return;
-    const t = setTimeout(() => setUps((l) => (l.every((x) => x.status === "done") ? [] : l)), 1500);
-    return () => clearTimeout(t);
-  }, [ups]);
 
   return (
     <View style={s.card} testID={`staff-nc-${nc.number}`}>
@@ -249,18 +260,15 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
               ))}
             </ScrollView>
           ) : null}
-          <EvidenceGallery nc={nc} projectId={projectId} onUpload={() => upload("evidence")} onDetails={setDetails} />
-          {ups.length ? (
-            <View style={s.ups} testID={`uploads-${nc.number}`}>
-              <Text style={s.mono}>Uploads: {ups.filter((u) => u.status === "done").length} of {ups.length} done</Text>
-              {ups.filter((u) => u.status !== "done").map((u) => (
-                <View key={u.key} style={s.upRow} testID={`upload-row-${u.key}`}>
-                  <Text style={[s.muted, { flex: 1 }]} numberOfLines={1}>{u.name} · {u.status === "failed" ? `failed: ${u.error}` : u.status === "queued" ? "waiting" : `${Math.round(u.pct * 100)}%`}</Text>
-                  {u.status === "failed" ? <Btn title="Retry" small variant="outline" onPress={() => retry(u)} testID={`upload-retry-${u.key}`} /> : null}
-                </View>
-              ))}
+          <EvidenceGallery nc={nc} projectId={projectId} onUpload={() => upload("evidence")} onDetails={setDetails}
+            uploads={ups.filter((u) => u.kind === "evidence").map((u) => ({ key: u.key, uri: u.asset.uri, pct: u.pct, status: u.status, error: u.error, shown: u.shown }))}
+            onRetry={(k) => { const u = ups.find((x) => x.key === k); if (u) retry(u); }} />
+          {ups.filter((u) => u.kind === "trustmark" && u.status === "failed").map((u) => (
+            <View key={u.key} style={s.actions} testID={`upload-row-${u.key}`}>
+              <Text style={[s.muted, { flex: 1 }]} numberOfLines={1}>TrustMark image failed: {u.error}</Text>
+              <Btn title="Retry" small variant="outline" onPress={() => retry(u)} testID={`upload-retry-${u.key}`} />
             </View>
-          ) : null}
+          ))}
 
           <ExportNote nc={nc} projectId={projectId} />
           <EvidenceReview nc={nc} detailsFor={details} onDetailsClose={() => setDetails(null)} />
@@ -279,7 +287,6 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
           ) : (
             <>
               <Field placeholder="Note to installer (optional)" value={note} onChangeText={setNote} testID={`review-note-${nc.number}`} />
-              <Field placeholder="Why? Internal reason for this decision (optional)" value={reason} onChangeText={setReason} multiline maxLength={1000} testID={`review-reason-${nc.number}`} />
               <Pressable onPress={() => setSuggest((v) => !v)} style={s.check} accessibilityRole="checkbox" accessibilityState={{ checked: suggest }} testID={`suggest-guidance-${nc.number}`}>
                 <Feather name={suggest ? "check-square" : "square"} size={18} color={colors.onSurface} />
                 <Text style={s.mono}>Suggest as AI guidance (Admin approves before AI uses it)</Text>
@@ -339,8 +346,6 @@ const useStyles = makeStyles((c) => ({
   hiddenToggle: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: 44 },
   restore: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center", minHeight: 32 },
   actions: { flexDirection: "row", gap: space.sm },
-  ups: { gap: 4, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.sm },
-  upRow: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 32 },
   chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
 }));
