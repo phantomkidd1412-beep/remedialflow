@@ -354,3 +354,5 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - 2026-06: Removed/rejected AI photos remembered (evidence_selection.removed + files.rejected_items), never auto-reselected, manual reselect allowed; Reject/Replace sync the explicit PDF selection (replacement takes original position, state replaced until staff Confirm); legacy PDFs exclude rejected photos. Preview only.
 
 - 2026-06: Fixed shared-photo edge case: Reject/Replace keep a photo selected if it is still evidence/suggestion for another requirement; Replace clears other pending suggestions of the chosen photo. Preview only.
+
+- 2026-06: Simplified staff NC UI: Checklist & Recommendations panels hidden (backend unchanged); compact Review dialog for AI suggestions/checklist confirmation/safety; wrap grid gallery; Select inside full-screen viewer (+ show all/selected), preloading, arrow keys; parallel evidence uploads (3) with progress/retry; doc upload button always responds with validation/progress; PDF omits empty REMEDIAL WORKS section.

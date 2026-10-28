@@ -2,11 +2,10 @@ import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/src/api";
-import { EvidenceFile, NCItem } from "@/src/projects";
+import { NCItem } from "@/src/projects";
 import { Btn, Field, Label, Sheet, useToast } from "@/src/ui";
-import { ChecklistPanel, ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
+import { ITEM_STAGE, useChecklist } from "@/src/components/ChecklistPanel";
 import { ReferencesPanel } from "@/src/components/ReferencesPanel";
-import { RecommendationsPanel } from "@/src/components/RecommendationsPanel";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
 type RPhoto = { id: string; classified: boolean; pdf_include: boolean | null; checklist_item?: string | null; staff: string[]; location_id: string | null; location_label: string | null; location_group: string | null; stage: string | null; component: string | null; dup_of: string | null; relevant: boolean | null };
@@ -37,7 +36,6 @@ export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: 
   if (!r?.enabled) return null;
   const citems = cq.data?.checklist?.items ?? [];
   const locs = r.scope?.locations ?? [];
-  const byId: Record<string, EvidenceFile> = Object.fromEntries(nc.photos.map((f) => [f.id, f]));
   const idx = (id: string) => (r.photos ?? []).findIndex((p) => p.id === id) + 1;
 
   const run = async (fn: () => Promise<any>, ok: string) => {
@@ -137,8 +135,6 @@ export function EvidenceReview({ nc, detailsFor = null, onDetailsClose }: { nc: 
           );
         })}
       </Sheet>
-      <ChecklistPanel ncId={nc.id} number={nc.number} />
-      <RecommendationsPanel ncId={nc.id} number={nc.number} photos={byId} />
       <ReferencesPanel ncId={nc.id} number={nc.number} />
       <Text style={s.small}>Long-press a photo in the Evidence gallery to correct its location, stage or requirement. Corrections override the AI. Photos are never deleted.</Text>
     </View>

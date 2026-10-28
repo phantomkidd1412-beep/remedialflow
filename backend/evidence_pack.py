@@ -190,8 +190,11 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
     text(nc.get("original_text") or nc.get("description", ""), 10)
     photos("ORIGINAL TRUSTMARK DEFECT PHOTOGRAPHS", originals)
     # Short description of the works (AI-drafted from recorded information, staff-editable), before the photographs.
-    heading("REMEDIAL WORKS CARRIED OUT")
-    text((nc.get("export_note") or "").strip() or "No details recorded.", 10)
+    # Empty description: the section is omitted entirely (no placeholder text in client reports).
+    note = (nc.get("export_note") or "").strip()
+    if note:
+        heading("REMEDIAL WORKS CARRIED OUT")
+        text(note, 10)
     groups = [(t, imgs) for t, imgs in remediation if imgs]
     i = 0
     while i < len(groups):  # one-photo steps sit two per row (a lone last one keeps half width - no oversized images)

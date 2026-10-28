@@ -19,13 +19,14 @@ export const EMPTY_META: DocMeta = { title: "", publisher: "", version: "", pub_
 export const openDoc = (url: string | null, page?: number) => { if (url) WebBrowser.openBrowserAsync(absUrl(url) + (page ? `#page=${page}` : "")); };
 
 /** Pick a PDF and send it with its details (admin only). Text is extracted on the server; no AI runs on upload. */
-export async function pickAndUpload(path: string, meta: Partial<DocMeta>): Promise<TechDoc | null> {
+export async function pickAndUpload(path: string, meta: Partial<DocMeta>, onProgress?: (fraction: number) => void): Promise<TechDoc | null> {
   const r = await DocumentPicker.getDocumentAsync({ type: "application/pdf", copyToCacheDirectory: true });
   if (r.canceled) return null;
   const a = r.assets[0];
+  if (a.mimeType && a.mimeType !== "application/pdf" && !/\.pdf$/i.test(a.name || "")) throw new Error("Please choose a PDF file.");
   const fields = Object.fromEntries(Object.entries(meta).filter(([, v]) => v !== undefined && v !== "")) as Record<string, string>;
   const res = await authed((t) => uploadForm(`${BASE}/api${path}`, {
-    headers: t ? { Authorization: `Bearer ${t}` } : {}, fields,
+    headers: t ? { Authorization: `Bearer ${t}` } : {}, fields, onProgress: onProgress ?? (() => {}),
     files: { file: { uri: a.uri, name: a.name || "document.pdf", mimeType: "application/pdf" } },
   }));
   if (!res.ok) throw new Error(await readError(res));
@@ -63,15 +64,20 @@ export function UploadBox({ onDone }: { onDone: (d: TechDoc) => void }) {
   const [meta, setMeta] = useState<DocMeta>(EMPTY_META);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
   const ok = meta.title.trim() && meta.version.trim() && /^(|\d{4}(-\d{2}(-\d{2})?)?)$/.test(meta.pub_date);
   const go = async () => {
-    setBusy(true);
     setErr("");
+    setMsg("");
+    if (!ok) return setErr(!meta.title.trim() || !meta.version.trim() ? "Enter a title and version first, then choose the PDF." : "Publication date must be YYYY, YYYY-MM or YYYY-MM-DD.");
+    setBusy(true);
     try {
-      const d = await pickAndUpload("/admin/documents", meta);
-      if (d) { setMeta(EMPTY_META); onDone(d); }
+      const d = await pickAndUpload("/admin/documents", meta, (x) => setMsg(x < 1 ? `Uploading… ${Math.round(x * 100)}%` : "Uploaded · reading pages…"));
+      if (d) { setMeta(EMPTY_META); setMsg(`Uploaded “${d.title}” · ${d.pages} page${d.pages === 1 ? "" : "s"} · saved as Draft`); onDone(d); }
+      else setMsg("");
     } catch (e: any) {
-      setErr(e.message);
+      setMsg("");
+      setErr(e.message || "Upload failed. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -79,9 +85,10 @@ export function UploadBox({ onDone }: { onDone: (d: TechDoc) => void }) {
   return (
     <View style={s.box} testID="doc-upload-box">
       <Label>Add a technical document</Label>
-      <MetaFields value={meta} onChange={setMeta} prefix="doc-new" />
+      <MetaFields value={meta} onChange={(m) => { setMeta(m); setErr(""); }} prefix="doc-new" />
       {err ? <Text style={[s.err, { backgroundColor: colors.error, color: colors.onError }]} testID="doc-upload-error">{err}</Text> : null}
-      <Btn title="Choose PDF and upload" icon="upload" onPress={go} loading={busy} disabled={!ok} testID="doc-upload-button" />
+      {msg ? <Text style={s.msg} testID="doc-upload-status">{msg}</Text> : null}
+      <Btn title="Choose PDF and upload" icon="upload" onPress={go} loading={busy} testID="doc-upload-button" />
       <Text style={s.small}>Text is read page by page on upload (no AI). New documents start as Draft and are not used until you approve them.</Text>
     </View>
   );
@@ -96,5 +103,6 @@ const useStyles = makeStyles((c) => ({
   chip: { minHeight: 44, borderWidth: BORDER, borderColor: c.border, borderRadius: radius.md, paddingHorizontal: space.sm, justifyContent: "center" },
   chipText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   small: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  msg: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700", color: c.onSurface },
   err: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", padding: space.sm, borderRadius: radius.md, overflow: "hidden" },
 }));

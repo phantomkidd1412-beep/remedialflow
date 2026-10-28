@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, Text, useWindowDimensions, View } from "react-native";
 import Feather from "@react-native-vector-icons/feather";
 import Sortable from "react-native-sortables";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 
 type Sel = { ids: string[]; ai_ids?: string[]; seq?: number } | null;
 type AutoRes = { selection: Sel; missing: string[]; suggested: string[]; review_notes: string[]; ai_calls: number; ai_limit: number; checklist_status: string; needs_checklist_confirmation: boolean };
+type Rec = { item_id: string; title: string; file_id: string | null; state: string; source: string; flags: string[] };
+type CL = { checklist: { status: string; items: { id: string; title: string }[] } | null };
 const pending: Record<string, string[]> = {}; // unsaved local selections survive switching NCs
 let seqCounter = Date.now();
 
@@ -22,16 +24,20 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
   const { colors } = useTheme();
   const qc = useQueryClient();
   const toast = useToast();
+  const { width } = useWindowDimensions();
   const server = nc.evidence_selection?.ids ?? null;
   const [ids, setIds] = useState<string[] | null>(pending[nc.id] ?? server);
   const [mode, setMode] = useState(false);
   const [state, setState] = useState<"idle" | "saving" | "error">(pending[nc.id] ? "error" : "idle");
-  const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
+  const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number; all: boolean } | null>(null);
   const [ask, setAsk] = useState(false);
   const [auto, setAuto] = useState<AutoRes | null>(null);
   const [autoBusy, setAutoBusy] = useState(false);
-  const recsQ = useQuery({ queryKey: ["photo-recs", nc.id], queryFn: () => api<{ items: { title: string; state: string; source: string }[] }>(`/ncs/${nc.id}/recommendations`), enabled: !!auto, staleTime: 30000 });
-  const stillSuggested = (auto?.suggested ?? []).filter((t) => !recsQ.data || recsQ.data.items.some((i) => i.title === t && i.state === "pending" && i.source !== "staff"));
+  const [review, setReview] = useState(false);
+  const [busyItem, setBusyItem] = useState<string | null>(null);
+  const recsQ = useQuery({ queryKey: ["photo-recs", nc.id], queryFn: () => api<{ items: Rec[] }>(`/ncs/${nc.id}/recommendations`), enabled: !!auto, staleTime: 30000 });
+  const toReview = (recsQ.data?.items ?? []).filter((i) => i.file_id && (i.state === "replaced" || (i.state === "pending" && i.source !== "staff")));
+  const clQ = useQuery({ queryKey: ["checklist", nc.id], queryFn: () => api<CL>(`/ncs/${nc.id}/checklist`), enabled: !!auto?.needs_checklist_confirmation, staleTime: 30000 });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<string[] | null>(ids);
   const rq = useQuery({ queryKey: ["evidence-review", nc.id], queryFn: () => api<{ enabled: boolean }>(`/ncs/${nc.id}/evidence-review`), staleTime: 30000 });
@@ -84,11 +90,16 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
   const byId: Record<string, EvidenceFile> = Object.fromEntries(photos.map((f) => [f.id, f]));
   const selected = (ids ?? []).filter((i) => byId[i]);
   const has = ids !== null;
-  const tap = (f: EvidenceFile, i: number) => {
-    if (mode) return schedule(selected.includes(f.id) ? selected.filter((x) => x !== f.id) : [...selected, f.id]);
-    if (has && selected.includes(f.id)) return setPv({ files: selected.map((x) => byId[x]), i: selected.indexOf(f.id) });
-    setPv({ files: photos, i });
+  const toggle = (id: string) => schedule(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  const open = (id: string, all: boolean) => {
+    const files = all ? photos : selected.map((x) => byId[x]);
+    setPv({ files, i: Math.max(0, files.findIndex((x) => x.id === id)), all });
   };
+  const tap = (f: EvidenceFile) => {
+    if (mode) return toggle(f.id);
+    open(f.id, !(has && selected.includes(f.id)));
+  };
+  const size = Math.max(84, Math.min(140, Math.floor((Math.min(width, 1100) - 96) / 6)));
   const runAuto = async (m: "replace" | "add") => {
     setAsk(false);
     setAutoBusy(true);
@@ -97,19 +108,47 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
       setAuto(r);
       ["checklist", "photo-recs", "evidence-review"].forEach((k) => qc.invalidateQueries({ queryKey: [k, nc.id] }));
       const calls = `AI calls: ${r.ai_calls} of ${r.ai_limit}`;
-      if (r.needs_checklist_confirmation) return toast(`Confirm the evidence checklist first, then press Auto Select again (${calls})`);
+      if (r.needs_checklist_confirmation) { setReview(true); return toast(`Please confirm the evidence checklist (${calls})`); }
       latest.current = r.selection?.ids ?? [];
       serverSeq.current = Math.max(serverSeq.current, r.selection?.seq ?? 0);
       delete pending[nc.id];
       setIds(r.selection?.ids ?? []);
       cache(r.selection);
       toast(`${r.selection?.ids.length ?? 0} photo(s) selected · ${calls}`);
+      if (r.suggested.length || r.review_notes.length || r.missing.length) setReview(true);
     } catch (e: any) {
       toast(e.message);
     } finally {
       setAutoBusy(false);
     }
   };
+  const decide = async (it: Rec, action: "accept" | "reject") => {
+    setBusyItem(it.item_id);
+    try {
+      const res = await api<{ items: Rec[] }>(`/ncs/${nc.id}/recommendations/${it.item_id}`, { method: "PUT", body: { action } });
+      qc.setQueryData(["photo-recs", nc.id], res);
+      qc.invalidateQueries({ queryKey: ["project", projectId] }); // Reject removes the photo from the PDF selection
+      qc.invalidateQueries({ queryKey: ["checklist", nc.id] });
+      toast(action === "accept" ? "Accepted by staff" : "Rejected · removed from the PDF selection");
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setBusyItem(null);
+    }
+  };
+  const confirmChecklist = async () => {
+    setAutoBusy(true);
+    try {
+      await api(`/ncs/${nc.id}/checklist`, { method: "PUT", body: { items: clQ.data?.checklist?.items ?? [] } });
+      setReview(false);
+      setAutoBusy(false);
+      await runAuto(selected.length ? "add" : "replace");
+    } catch (e: any) {
+      toast(e.message);
+      setAutoBusy(false);
+    }
+  };
+  const pendingCount = auto?.needs_checklist_confirmation ? 1 : toReview.length;
 
   return (
     <View style={s.gap}>
@@ -124,21 +163,21 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
           <Text style={[s.errText, { color: colors.onError }]}>Selection not saved — tap to retry</Text>
         </Pressable>
       ) : null}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-        {photos.map((f, i) => {
+      <View style={s.grid}>
+        {photos.map((f) => {
           const on = selected.includes(f.id);
           return (
             <View key={f.id} style={[s.cell, on && { borderColor: colors.brandPrimary }, has && !on && { opacity: 0.4 }]} testID={`gallery-cell-${f.id}`}>
-              <Thumb f={f} size={84} onPress={() => tap(f, i)} onLongPress={onDetails ? () => onDetails(f.id) : undefined} testID={`staff-photo-${f.id}`} />
+              <Thumb f={f} size={size} onPress={() => tap(f)} onLongPress={onDetails ? () => onDetails(f.id) : undefined} testID={`staff-photo-${f.id}`} />
               {on ? <View style={[s.tick, { backgroundColor: colors.brandPrimary }]} pointerEvents="none"><Feather name="check" size={12} color={colors.onBrandPrimary} /></View> : null}
               {f.status === "draft" ? <Text style={s.tag}>DRAFT</Text> : null}
             </View>
           );
         })}
-        <Pressable style={[s.add, { borderColor: colors.border }]} onPress={onUpload} testID={`add-evidence-${nc.number}`}>
+        <Pressable style={[s.add, { width: size + 8, height: size + 8, borderColor: colors.border }]} onPress={onUpload} testID={`add-evidence-${nc.number}`}>
           <Feather name="upload" size={20} color={colors.onSurface} />
         </Pressable>
-      </ScrollView>
+      </View>
       {mode ? <Text style={s.small}>Tap photos to select or deselect. Changes save automatically.</Text> : null}
       {selected.length > 1 ? (
         <View style={s.gap} testID={`selection-order-${nc.number}`}>
@@ -159,21 +198,49 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails }: { nc: NC
           />
         </View>
       ) : null}
-      {auto ? (
-        <View style={[s.note, { borderColor: colors.warning }]} testID={`auto-notes-${nc.number}`}>
-          <Text style={s.small} testID={`auto-ai-calls-${nc.number}`}>AI calls used: {auto.ai_calls} of {auto.ai_limit}</Text>
-          {auto.needs_checklist_confirmation ? <Text style={s.small}>Confirm the evidence checklist in the evidence review, then press Auto Select again. No photos were chosen yet.</Text> : null}
-          {stillSuggested.length ? <Text style={s.small} testID={`auto-suggested-${nc.number}`}>AI suggested (not yet accepted by staff): {stillSuggested.join(", ")}. Accept or replace each in the evidence review.</Text> : null}
-          {auto.missing.map((m) => <Text key={m} style={s.small}>Missing evidence: {m}</Text>)}
-          {auto.review_notes.map((m) => <Text key={m} style={s.small}>{m}</Text>)}
-        </View>
+      {auto && pendingCount ? (
+        <Pressable onPress={() => setReview(true)} style={[s.note, { borderColor: colors.warning }]} testID={`auto-review-open-${nc.number}`}>
+          <Text style={s.noteText}>{auto.needs_checklist_confirmation ? "Confirm the evidence checklist" : `${pendingCount} AI suggestion${pendingCount === 1 ? "" : "s"} to review`} · AI calls {auto.ai_calls} of {auto.ai_limit}</Text>
+        </Pressable>
       ) : null}
+      <Sheet visible={review} onClose={() => setReview(false)} title={auto?.needs_checklist_confirmation ? "Confirm evidence checklist" : "Review AI suggestions"} testID="auto-review">
+        <Text style={s.small} testID={`auto-ai-calls-${nc.number}`}>AI calls used: {auto?.ai_calls ?? 0} of {auto?.ai_limit ?? 1}. Nothing is approved until staff confirm.</Text>
+        {(auto?.review_notes ?? []).filter((m) => m.startsWith("Safety")).map((m) => <Text key={m} style={[s.warn, { backgroundColor: colors.warning, color: colors.onWarning }]}>{m}</Text>)}
+        {auto?.needs_checklist_confirmation ? (
+          <>
+            {(clQ.data?.checklist?.items ?? []).map((i) => <Text key={i.id} style={s.item}>• {i.title}</Text>)}
+            <Btn title="Confirm checklist & select photos" onPress={confirmChecklist} loading={autoBusy} disabled={!clQ.data?.checklist?.items?.length} testID="auto-confirm-checklist" />
+          </>
+        ) : (
+          <>
+            {toReview.map((it) => (
+              <View key={it.item_id} style={s.rev} testID={`auto-rev-${it.item_id}`}>
+                {it.file_id && byId[it.file_id] ? <Thumb f={byId[it.file_id]} size={56} onPress={() => open(it.file_id!, true)} /> : null}
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={s.item}>{it.title} · {it.state === "replaced" ? "Chosen by staff" : "AI suggested"}</Text>
+                  {it.flags.map((x) => <Text key={x} style={s.small}>⚑ {x}</Text>)}
+                  <View style={s.head}>
+                    <Btn title={it.state === "replaced" ? "Confirm" : "Accept"} small onPress={() => decide(it, "accept")} loading={busyItem === it.item_id} style={s.flex} testID={`auto-accept-${it.item_id}`} />
+                    {it.state === "pending" ? <Btn title="Reject" small variant="outline" onPress={() => decide(it, "reject")} disabled={busyItem === it.item_id} style={s.flex} testID={`auto-reject-${it.item_id}`} /> : null}
+                  </View>
+                </View>
+              </View>
+            ))}
+            {(auto?.missing ?? []).map((m) => <Text key={m} style={s.small}>Missing evidence: {m}</Text>)}
+            {!toReview.length ? <Text style={s.small}>All suggestions reviewed.</Text> : null}
+          </>
+        )}
+      </Sheet>
       <Sheet visible={ask} onClose={() => setAsk(false)} title="You already selected photos" testID="auto-select-confirm">
         <Btn title="Replace my selection" onPress={() => runAuto("replace")} testID="auto-replace" />
         <Btn title="Add to my selection" variant="outline" onPress={() => runAuto("add")} testID="auto-add" />
         <Btn title="Cancel" variant="outline" onPress={() => setAsk(false)} testID="auto-cancel" />
       </Sheet>
-      {pv ? <PhotoViewer files={pv.files} index={pv.i} onClose={() => setPv(null)} showInfo /> : null}
+      {pv ? (
+        <PhotoViewer key={pv.all ? "all" : "sel"} files={pv.files} index={pv.i} onClose={() => setPv(null)} showInfo
+          select={{ ids: selected, toggle }}
+          scope={has && selected.length && selected.length !== photos.length ? { label: pv.all ? "Show selected only" : "Show all photos", onPress: (id) => open(pv.all && !selected.includes(id) ? selected[0] : id, !pv.all) } : undefined} />
+      ) : null}
     </View>
   );
 }
@@ -183,14 +250,18 @@ const useStyles = makeStyles((c) => ({
   head: { flexDirection: "row", alignItems: "center", gap: space.sm },
   flex: { flex: 1 },
   errText: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700" },
-  row: { gap: space.sm, paddingVertical: 2 },
+  grid: { flexDirection: "row", flexWrap: "wrap", gap: space.sm, paddingVertical: 2 },
   cell: { borderWidth: 3, borderColor: "transparent", borderRadius: radius.md, padding: 1 },
   tick: { position: "absolute", top: 4, right: 4, width: 20, height: 20, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   num: { position: "absolute", top: 2, left: 2, minWidth: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", paddingHorizontal: 3 },
   numText: { fontFamily: fonts.text, fontSize: 10, fontWeight: "700" },
-  add: { width: 90, height: 90, borderWidth: BORDER, borderStyle: "dashed", borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
+  add: { borderWidth: BORDER, borderStyle: "dashed", borderRadius: radius.md, alignItems: "center", justifyContent: "center" },
   tag: { fontFamily: fonts.text, fontSize: 9, color: c.muted, textAlign: "center" },
   small: { fontFamily: fonts.text, fontSize: 11, color: c.muted },
+  item: { fontFamily: fonts.text, fontSize: 13, color: c.onSurface },
+  warn: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", padding: space.sm, borderRadius: radius.md, overflow: "hidden" },
+  rev: { flexDirection: "row", gap: space.sm, borderWidth: BORDER, borderColor: c.border, borderRadius: radius.md, padding: space.sm, marginBottom: space.xs },
+  noteText: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700", color: c.onSurface },
   err: { padding: space.sm, borderRadius: radius.md, minHeight: 44, justifyContent: "center" },
-  note: { borderWidth: BORDER, borderRadius: radius.md, padding: space.sm, gap: 2 },
+  note: { borderWidth: BORDER, borderRadius: radius.md, padding: space.sm, minHeight: 44, justifyContent: "center" },
 }));

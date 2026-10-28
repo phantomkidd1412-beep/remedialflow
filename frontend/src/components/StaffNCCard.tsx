@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import * as ImagePicker from "expo-image-picker";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -117,29 +117,56 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
   };
   const lockedForEmployee = nc.status === "admin_review" && user?.role !== "admin";
 
-  const upload = async (kind: "trustmark" | "evidence") => {
-    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, allowsMultipleSelection: true, selectionLimit: 6 });
-    if (r.canceled) return;
-    setBusy(kind);
+  type Up = { key: string; name: string; pct: number; status: "queued" | "uploading" | "done" | "failed"; error?: string; asset: ImagePicker.ImagePickerAsset; kind: "trustmark" | "evidence" };
+  const [ups, setUps] = useState<Up[]>([]);
+  const patch = (key: string, p: Partial<Up>) => setUps((l) => l.map((u) => (u.key === key ? { ...u, ...p } : u)));
+  const sendOne = async (u: Up) => {
+    patch(u.key, { status: "uploading", pct: 0, error: undefined });
     try {
-      for (const a of r.assets) {
-        const res = await authed((t) =>
-          uploadForm(`${BASE}/api/ncs/${nc.id}/${kind}`, {
-            headers: t ? { Authorization: `Bearer ${t}` } : {},
-            fields: kind === "evidence" ? { meta: JSON.stringify({ kind: "photo", source: "employee_upload" }) } : {},
-            files: { file: { uri: a.uri, name: a.fileName ?? "photo.jpg", mimeType: a.mimeType ?? "image/jpeg" } },
-          }),
-        );
-        if (!res.ok) throw new Error(await readError(res));
-      }
-      toast(`${r.assets.length} file(s) uploaded`);
-      refresh();
+      const res = await authed((t) =>
+        uploadForm(`${BASE}/api/ncs/${nc.id}/${u.kind}`, {
+          headers: t ? { Authorization: `Bearer ${t}` } : {},
+          fields: u.kind === "evidence" ? { meta: JSON.stringify({ kind: "photo", source: "employee_upload", client_id: u.key }) } : {},
+          files: { file: { uri: u.asset.uri, name: u.asset.fileName ?? "photo.jpg", mimeType: u.asset.mimeType ?? "image/jpeg" } }, // original file, unmodified
+          onProgress: (x) => patch(u.key, { pct: x }),
+        }),
+      );
+      if (!res.ok) throw new Error(await readError(res));
+      patch(u.key, { status: "done", pct: 1 });
+      return true;
     } catch (e: any) {
-      toast(e.message);
-    } finally {
-      setBusy(null);
+      patch(u.key, { status: "failed", error: e.message });
+      return false;
     }
   };
+  const runQueue = async (list: Up[]) => { // 3 at a time; one refresh when the batch finishes
+    let next = 0;
+    let ok = 0;
+    const worker = async () => { while (next < list.length) { const u = list[next++]; if (await sendOne(u)) ok++; } };
+    await Promise.all([worker(), worker(), worker()]);
+    if (ok) refresh();
+    const failed = list.length - ok;
+    toast(failed ? `${ok} uploaded · ${failed} failed — tap Retry` : `${ok} file(s) uploaded`);
+  };
+  const upload = async (kind: "trustmark" | "evidence") => {
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ["images"], quality: 1, exif: true, allowsMultipleSelection: true, selectionLimit: 20 });
+    if (r.canceled) return;
+    const stamp = Date.now();
+    const list: Up[] = r.assets.map((a, i) => ({ key: `up-${stamp}-${i}`, name: a.fileName ?? `photo ${i + 1}`, pct: 0, status: "queued", asset: a, kind }));
+    setUps((l) => [...l.filter((u) => u.status !== "done"), ...list]);
+    setBusy(kind);
+    try { await runQueue(list); } finally { setBusy(null); }
+  };
+  const retry = async (u: Up) => {
+    if (!(await sendOne(u))) return;
+    refresh();
+    toast("Uploaded");
+  };
+  useEffect(() => { // clear the panel shortly after every row is done, whatever order uploads/retries finished in
+    if (!ups.length || ups.some((x) => x.status !== "done")) return;
+    const t = setTimeout(() => setUps((l) => (l.every((x) => x.status === "done") ? [] : l)), 1500);
+    return () => clearTimeout(t);
+  }, [ups]);
 
   return (
     <View style={s.card} testID={`staff-nc-${nc.number}`}>
@@ -223,6 +250,17 @@ export const StaffNCCard = memo(function StaffNCCard({ nc, projectId, expanded, 
             </ScrollView>
           ) : null}
           <EvidenceGallery nc={nc} projectId={projectId} onUpload={() => upload("evidence")} onDetails={setDetails} />
+          {ups.length ? (
+            <View style={s.ups} testID={`uploads-${nc.number}`}>
+              <Text style={s.mono}>Uploads: {ups.filter((u) => u.status === "done").length} of {ups.length} done</Text>
+              {ups.filter((u) => u.status !== "done").map((u) => (
+                <View key={u.key} style={s.upRow} testID={`upload-row-${u.key}`}>
+                  <Text style={[s.muted, { flex: 1 }]} numberOfLines={1}>{u.name} · {u.status === "failed" ? `failed: ${u.error}` : u.status === "queued" ? "waiting" : `${Math.round(u.pct * 100)}%`}</Text>
+                  {u.status === "failed" ? <Btn title="Retry" small variant="outline" onPress={() => retry(u)} testID={`upload-retry-${u.key}`} /> : null}
+                </View>
+              ))}
+            </View>
+          ) : null}
 
           <ExportNote nc={nc} projectId={projectId} />
           <EvidenceReview nc={nc} detailsFor={details} onDetailsClose={() => setDetails(null)} />
@@ -301,6 +339,8 @@ const useStyles = makeStyles((c) => ({
   hiddenToggle: { flexDirection: "row", alignItems: "center", gap: space.xs, minHeight: 44 },
   restore: { borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center", minHeight: 32 },
   actions: { flexDirection: "row", gap: space.sm },
+  ups: { gap: 4, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.sm },
+  upRow: { flexDirection: "row", alignItems: "center", gap: space.sm, minHeight: 32 },
   chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontSize: 13, fontWeight: "600", color: c.onSurface },
 }));

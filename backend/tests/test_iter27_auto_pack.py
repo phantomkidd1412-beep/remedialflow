@@ -246,10 +246,10 @@ class TestB_PDFRemediationHeading:
                 f"heading order wrong in {name}: details@{idx_details}, photos@{idx_photos}"
             if "Replaced cable with 2.5mm T&E" in text:
                 found_with_note = True
-            if "No details recorded." in text:
+            if "No details recorded." not in text:  # empty description: section omitted, never a placeholder
                 found_without_note = True
         assert found_with_note, "NC1 export_note text not rendered in any PDF"
-        assert found_without_note, "'No details recorded.' not present for empty-note NC"
+        assert found_without_note, "placeholder text present in PDF"
 
 
 class TestC_ConcurrencyOneRecordPerCycle:
