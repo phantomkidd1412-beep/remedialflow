@@ -3,10 +3,10 @@ import { Image } from "expo-image";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { NCItem, ProjectRow, DONE, EvidenceFile, useMediaConfig } from "@/src/projects";
+import { NCItem, ProjectRow, DONE, EvidenceFile, installerState, useMediaConfig } from "@/src/projects";
 import { SafetyToggle } from "@/src/components/SafetyToggle";
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
-import { Badge, Btn, Feather, Field, Label, Sheet, useToast } from "@/src/ui";
+import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
 import { MediaViewer, Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
@@ -44,16 +44,16 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const submittedVideos = (nc.videos ?? []).filter((v) => v.status !== "draft");
   const { maxVideoMb } = useMediaConfig();
   const canSubmit = !done && nc.status !== "assessing" && !submitQueued && (nc.draft_count > 0 || uploads.length > 0);
+  const ist = installerState(nc);
   const badge = ev
     ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", compressing: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
-    : { status: nc.status, label: nc.status === "assessing" ? "Awaiting Review" : undefined };
+    : { status: ist.badge, label: ist.label };
   // Mandatory evidence for new NCs: pre, mid and final photos plus a video for this NC (queued items count too)
   const allPhotos = [...nc.photos.filter((p) => p.status !== "superseded"), ...uploads.filter((q) => q.meta?.kind === "photo").map((q) => ({ stage: q.meta?.stage }))];
   const has = {
     pre: allPhotos.some((p) => p.stage === "pre"), mid: allPhotos.some((p) => p.stage === "mid"), final: allPhotos.some((p) => p.stage === "final"),
     video: (nc.videos ?? []).some((v) => v.status !== "superseded") || uploads.some((q) => q.meta?.kind === "video"),
   };
-  const [note, setNote] = useState(nc.installer_note ?? "");
   const missing = nc.requires_stages ? [...(allPhotos.length ? [] : ["a photo"]), ...(has.video || !nc.video_required ? [] : ["a remediation video"])] : [];
   const [orig, setOrig] = useState(false);
   const params = { projectId: project.id, ncId: nc.id, ref: project.ref, postcode: project.postcode, nc: nc.number, orig: orig ? "1" : "0" };
@@ -94,7 +94,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
 
   const submit = async () => {
     if (missing.length) return toast(`Before submitting, add: ${missing.join(", ")}`);
-    await enqueueSubmit(project.id, nc.id, note.trim() || undefined);
+    await enqueueSubmit(project.id, nc.id, undefined); // work comment box removed: never send a value, stored comments untouched
     toast(uploads.some((q) => q.status !== "uploaded") ? "Submit queued · sends after uploads finish" : "Submitting…");
   };
 
@@ -103,6 +103,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
       <Pressable onPress={() => onToggle(nc.id)} style={s.head} testID={`nc-toggle-${nc.number}`}>
         <View style={{ flex: 1, gap: 4 }}>
           <View style={s.headRow}>
+            <Feather name={ist.icon as any} size={20} color={ist.key === "approved" ? colors.success : ist.key === "more_evidence" ? colors.error : ist.key === "not_started" ? colors.muted : colors.brandPrimary} testID={`nc-state-icon-${nc.number}-${ist.key}`} />
             <Text style={s.num}>{nc.number}</Text>
             <Badge status={badge.status} label={badge.label} testID={`nc-status-${nc.number}`} />
           </View>
@@ -219,9 +220,6 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             </>
           ) : null}
 
-          {!done && nc.status !== "assessing" ? (
-            <Field label="What work did you do? (short, optional)" placeholder="e.g. Fitted insulation behind the bracket, then re-rendered" value={note} onChangeText={setNote} multiline maxLength={500} testID={`installer-note-${nc.number}`} />
-          ) : null}
           {!done ? (
             <View style={s.actions}>
               <Btn title="Gallery" icon="image" variant="outline" small onPress={pickGallery} testID={`gallery-upload-${nc.number}`} disabled={nc.status === "assessing"} />

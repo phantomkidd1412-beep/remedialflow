@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { FlatList, RefreshControl, Text, View } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { useProject, DONE } from "@/src/projects";
+import { useProject, DONE, installerState } from "@/src/projects";
 import { useQueue } from "@/src/queue";
 import { ErrorBlock, Loading, Progress, Badge } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
@@ -27,13 +27,16 @@ export default function JobDetail() {
     );
   const { project: p, ncs } = q.data;
   const firstOpen = open === undefined ? ncs.find((n) => !DONE.includes(n.status))?.id ?? null : open;
+  const states = ncs.map((n) => installerState(n).key);
+  const attempted = states.filter((k) => k !== "not_started").length;
+  const action = states.filter((k) => k === "not_started" || k === "more_evidence").length;
 
   return (
     <View style={s.root}>
       <ScreenHeader title={p.address} sub={`${p.ref} · ${p.postcode}`} back>
         <View style={s.prog}>
-          <View style={{ flex: 1 }}><Progress value={p.nc_total ? p.nc_done / p.nc_total : 0} testID="job-detail-progress" /></View>
-          <Text style={s.progText} testID="job-detail-progress-text">{p.nc_done}/{p.nc_total} NCs</Text>
+          <View style={{ flex: 1 }}><Progress value={ncs.length ? attempted / ncs.length : 0} testID="job-detail-progress" /></View>
+          <Text style={s.progText} testID="job-detail-progress-text">{attempted} of {ncs.length} NCs attempted{action ? ` · ${action} need action` : ""}</Text>
           <Badge status={p.status} />
         </View>
       </ScreenHeader>

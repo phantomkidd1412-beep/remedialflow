@@ -83,7 +83,12 @@ class RedactSecrets(logging.Filter):
             return True
         clean = _BEARER_RX.sub(r"\1[redacted]", _SECRET_RX.sub(r"\1[redacted]", msg))
         if clean != msg:
-            record.msg, record.args = clean, ()
+            # redact inside the arguments so formatters that unpack them (uvicorn access log: 5 values) keep working;
+            # setting args=() made every redacted access line raise a "Logging error" traceback.
+            if isinstance(record.args, tuple) and record.args:
+                record.args = tuple(_BEARER_RX.sub(r"\1[redacted]", _SECRET_RX.sub(r"\1[redacted]", a)) if isinstance(a, str) else a for a in record.args)
+            else:
+                record.msg, record.args = clean, ()
         return True
 
 

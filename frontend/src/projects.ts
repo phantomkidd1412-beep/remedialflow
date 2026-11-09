@@ -45,6 +45,17 @@ export async function openTrackerExport(fmt: "csv" | "xlsx", params: Record<stri
 export type RateRow = { installer_id: string; name: string; pay_type: string; rate: number | null; earning: { status: string; amount: number } | null };
 export type ProjectRow = { id: string; ref: string; address: string; postcode: string; status: string; nc_total: number; nc_done: number; nc_review: number; installer_id?: string | null; installer_name?: string | null; rate: number; require_video?: boolean; rate_rows?: RateRow[]; schedule_rows?: { installer_id: string; name: string; date: string | null }[]; source_report?: { filename?: string } | null; needs_review?: boolean; installer_names?: string[]; completed_at?: string | null; resolved?: { at: string; by_name: string } | null; resolution_history?: { at: string; by_name: string }[] };
 
+/** Installer-facing NC state from the recorded backend status/submissions only (opening an NC or picking a photo never
+ *  counts). Attempted is never treated as Approved. */
+export type InstallerState = { key: "not_started" | "attempted" | "more_evidence" | "in_review" | "approved"; label: string; badge: string; icon: string };
+const REVIEW = ["assessing", "employee_review", "admin_review", "potential_noncompliance", "ai_approved", "ai_verified_signoff"];
+export function installerState(nc: { status: string; photos?: { status: string }[]; videos?: { status: string }[] }): InstallerState {
+  if (DONE.includes(nc.status)) return { key: "approved", label: "Approved", badge: "approved", icon: "check-circle" };
+  if (nc.status === "more_evidence" || nc.status === "rejected") return { key: "more_evidence", label: "More evidence required", badge: "rejected", icon: "alert-triangle" };
+  if (REVIEW.includes(nc.status)) return { key: "in_review", label: "In review", badge: "employee_review", icon: "clock" };
+  const sent = [...(nc.photos ?? []), ...(nc.videos ?? [])].some((f) => f.status === "submitted" || f.status === "superseded");
+  return sent ? { key: "attempted", label: "Attempted", badge: "in_progress", icon: "check" } : { key: "not_started", label: "Not started", badge: "pending", icon: "circle" };
+}
 export type EvidenceFile = {
   id: string; kind: string; source: string; status: string; urls: Record<string, string>; sha256: string; size: number; client_id?: string | null;
   captured_at?: string | null; server_received_at: string; tz?: string | null; lat?: number | null; lng?: number | null;

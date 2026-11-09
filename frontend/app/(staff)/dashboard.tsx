@@ -104,7 +104,7 @@ export default function Dashboard() {
       >
         <View style={s.search}>
           <Feather name="search" size={18} color={colors.muted} />
-          <TextInput value={text} onChangeText={setText} placeholder="Search address or reference" placeholderTextColor={colors.muted} style={s.searchInput} testID="project-search-input" autoCapitalize="none" />
+          <TextInput value={text} onChangeText={setText} placeholder="Search address, reference or installer" placeholderTextColor={colors.muted} style={s.searchInput} testID="project-search-input" autoCapitalize="none" />
         </View>
       </ScreenHeader>
       <View style={s.chipRow}>

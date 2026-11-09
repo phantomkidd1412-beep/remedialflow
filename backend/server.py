@@ -8,6 +8,7 @@ import asyncio
 import logging
 import secrets
 import tempfile
+import collections
 from pathlib import Path
 from typing import Optional, List
 
@@ -439,8 +440,13 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
     elif status:
         q["status"] = status
     if search:
-        rx = {"$regex": re.escape(search), "$options": "i"}
+        rx = {"$regex": re.escape(search.strip()), "$options": "i"}
         q["$or"] = [{"ref": rx}, {"address": rx}, {"postcode": rx}]
+        if u.role != "installer":  # staff: also by installer name (first, last, full or partial), project- or NC-level
+            iids = [str(d["_id"]) for d in await db.users.find({"role": "installer", "name": rx}, {"_id": 1}).limit(50).to_list(50)]
+            if iids:
+                q["$or"] += [{"installer_id": {"$in": iids}},
+                             {"_id": {"$in": [ObjectId(x) for x in await db.ncs.distinct("project_id", {"assigned_installer_id": {"$in": iids}})]}}]
     total = await db.projects.count_documents(q)
     docs = await db.projects.find(q).sort("updated_at", -1).skip((page - 1) * limit).limit(limit).to_list(limit)
     items = [Project.from_mongo(d).model_dump() for d in docs]
@@ -1037,7 +1043,9 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
             return EvidenceFile.from_mongo(dup)
         raise
     stamp_meta = None
-    if kind == "photo":
+    # Only photos taken with the in-app camera get the visible stamp; gallery/library uploads keep their pixels as-is
+    # (no overlay, nothing fabricated). Historical files are untouched.
+    if kind == "photo" and source == "in_app_camera":
         stamp_meta = {**meta, "location_verified": loc_ok, "project_ref": p.ref, "postcode": p.postcode,
                       "nc_number": nc.number, "source": source}
     bg.add_task(_process_file, str(fid), data, stamp_meta)
@@ -1641,6 +1649,27 @@ def _range_response(path: Path, ct: str, range_header: Optional[str]):
     return StreamingResponse(body(), status_code=status, media_type=ct, headers=headers)
 
 
+_IMG_CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
+_IMG_CACHE_MAX = 96 * 1024 * 1024  # bounded memory for small derived images (thumb/display never change once written)
+_img_cache_bytes = 0
+
+
+async def _cached_get(path: str):
+    """Thumbnails/display copies are fetched from Dropbox once per server process instead of on every gallery view."""
+    global _img_cache_bytes
+    hit = _IMG_CACHE.get(path)
+    if hit:
+        _IMG_CACHE.move_to_end(path)
+        return hit
+    data, ct = await storage.aget(path)
+    _IMG_CACHE[path] = (data, ct)
+    _img_cache_bytes += len(data)
+    while _img_cache_bytes > _IMG_CACHE_MAX and _IMG_CACHE:
+        _, (d, _c) = _IMG_CACHE.popitem(last=False)
+        _img_cache_bytes -= len(d)
+    return data, ct
+
+
 @api.get("/files/{fid}/{variant}")
 async def serve_file(fid: str, variant: str, exp: int, sig: str, request: Request):
     if not verify_signed(f"{fid}:{variant}", exp, sig):
@@ -1654,7 +1683,12 @@ async def serve_file(fid: str, variant: str, exp: int, sig: str, request: Reques
         ct = "video/mp4" if variant == "playback" else f["mime"]
         path = await _local_copy(fid, variant, f["paths"][variant])
         return _range_response(path, ct, request.headers.get("range"))
-    data, ct = await storage.aget(f["paths"][variant])
+    try:
+        data, ct = await _cached_get(f["paths"][variant]) if variant in ("thumb", "display") else await storage.aget(f["paths"][variant])
+    except Exception as e:  # stored copy missing in Dropbox: a clean 404 instead of a 500 + traceback per view
+        if "not_found" in repr(e):
+            raise HTTPException(404, "File not available")
+        raise
     if variant == "original":
         ct = f.get("mime") or ct
     return Response(data, media_type=ct, headers={"Cache-Control": "private, max-age=3600"})
