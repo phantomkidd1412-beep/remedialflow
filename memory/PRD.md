@@ -378,3 +378,8 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Duplicates skipped and shown with the matching project: same PDF (sha256), same reference, same postcode + similar address with the same house number, same reference twice in one upload.
 - Projects/NCs are created Unassigned; no alerts sent. Tests: `backend/tests/test_bulk_import.py` (2 passed).
 - Pending: UI click-through needs an admin test account from the owner.
+
+## June 2026 follow-up (preview only, agent-tested with mocks)
+- Bulk import duplicates: same PDF or same project reference -> auto-skipped; same postcode + house number with a different reference -> "Needs review" (Admin picks Create anyway / Skip via `PUT /api/admin/bulk-imports/{bid}/items/{iid}/decision`). Existing projects/NCs never changed; imports stay Unassigned.
+- Installer Jobs: "By town" (default) groups projects by town/city parsed from the address, with totals (Projects, Pending, Attempted, In review, Revisit) and per-project NC chips; "By schedule" keeps the previous view and filters.
+- Reminders (09:00 + 17:00 installers, 09:00 employees, Europe/London, idempotent): locked off until Admin marks "iPhone alert verified" (`PUT /api/admin/reminders {push_verified}`); clearing verification turns them off.

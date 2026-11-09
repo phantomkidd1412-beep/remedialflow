@@ -13,7 +13,7 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 type Dup = { reason: string; project_id?: string; ref?: string; address?: string };
 type Item = {
   id: string; filename: string; status: "processing" | "ready" | "failed" | "skipped" | "creating" | "created"; method?: "rules" | "ai" | null;
-  ref?: string | null; address?: string | null; postcode?: string | null; nc_count: number; duplicate?: Dup | null; error?: string | null; project_id?: string | null;
+  ref?: string | null; address?: string | null; postcode?: string | null; nc_count: number; duplicate?: Dup | null; error?: string | null; project_id?: string | null; review?: boolean; decision?: "create" | "skip" | null;
 };
 type Row = Item | { id: string; filename: string; status: "uploading" | "upload_failed"; error?: string };
 
@@ -81,14 +81,22 @@ export default function BulkImport() {
     }
   };
 
-  const toCreate = items.filter((i) => i.status === "ready" && !i.duplicate);
+  const toCreate = items.filter((i) => i.status === "ready" && (!i.duplicate || (i.review && i.decision === "create")));
+  const toReview = items.filter((i) => i.review && !i.decision);
+  const decide = async (i: Item, decision: "create" | "skip") => {
+    if (!bid) return;
+    try {
+      await api(`/admin/bulk-imports/${bid}/items/${i.id}/decision`, { method: "PUT", body: { decision } });
+      await refresh(bid);
+    } catch (e: any) { toast(e.message); }
+  };
   const confirm = async () => {
     if (!bid) return;
     setBusy(true);
     try {
-      const r = await api<{ created: unknown[]; skipped: unknown[] }>(`/admin/bulk-imports/${bid}/confirm`, { method: "POST" });
+      const r = await api<{ created: unknown[]; skipped: unknown[]; waiting_review: unknown[] }>(`/admin/bulk-imports/${bid}/confirm`, { method: "POST" });
       ["projects", "dashboard", "tracker"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-      toast(`${r.created.length} project${r.created.length === 1 ? "" : "s"} created${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}`);
+      toast(`${r.created.length} project${r.created.length === 1 ? "" : "s"} created${r.skipped.length ? `, ${r.skipped.length} skipped` : ""}${r.waiting_review.length ? `, ${r.waiting_review.length} waiting for your review` : ""}`);
       await refresh(bid);
     } catch (e: any) {
       toast(e.message);
@@ -107,18 +115,18 @@ export default function BulkImport() {
         contentContainerStyle={[s.list, { paddingBottom: insets.bottom + 140 }]}
         ListHeaderComponent={
           <View style={s.intro}>
-            <Text style={s.introText}>Choose up to 50 PDFs. Each report is read and shown here first. Nothing is created until you confirm. Reports matching an existing project are skipped.</Text>
+            <Text style={s.introText}>Choose up to 50 PDFs. Each report is read and shown here first. Nothing is created until you confirm. Exact duplicates (same PDF or same reference) are skipped. Reports at an address that already exists with a different reference are held for your review.</Text>
             <Btn title={rows.length ? "Add more PDFs" : "Choose PDFs"} icon="upload" variant="dark" onPress={pick} disabled={busy} testID="bulk-pick" />
           </View>
         }
         ListEmptyComponent={<Empty icon="file-text" text="No PDFs chosen yet" />}
-        renderItem={({ item }) => <RowCard row={item} onOpen={(pid) => router.push(`/project/${pid}`)} colors={colors} />}
+        renderItem={({ item }) => <RowCard row={item} onOpen={(pid) => router.push(`/project/${pid}`)} onDecide={decide} colors={colors} />}
       />
       {items.length ? (
         <View style={[s.footer, { paddingBottom: insets.bottom + space.md }]}>
           <Text style={s.summary} testID="bulk-summary">
             {processing || pending.some((p) => p.status === "uploading") ? "Reading reports…  " : ""}
-            {toCreate.length} ready · {items.filter((i) => i.status === "skipped" || (i.status === "ready" && i.duplicate)).length} skipped · {items.filter((i) => i.status === "created").length} created
+            {toCreate.length} ready · {toReview.length} to review · {items.filter((i) => i.status === "skipped" || (i.status === "ready" && i.duplicate && (!i.review || i.decision === "skip"))).length} skipped · {items.filter((i) => i.status === "created").length} created
           </Text>
           <Btn title={`Create ${toCreate.length} project${toCreate.length === 1 ? "" : "s"}`} icon="check" variant="dark" onPress={confirm}
             loading={busy && !pending.length} disabled={busy || processing || !toCreate.length} testID="bulk-confirm" />
@@ -128,13 +136,14 @@ export default function BulkImport() {
   );
 }
 
-function RowCard({ row, onOpen, colors }: { row: Row; onOpen: (pid: string) => void; colors: ReturnType<typeof useTheme>["colors"] }) {
+function RowCard({ row, onOpen, onDecide, colors }: { row: Row; onOpen: (pid: string) => void; onDecide: (i: Item, d: "create" | "skip") => void; colors: ReturnType<typeof useTheme>["colors"] }) {
   const s = useStyles();
   const it = row as Item;
   const dup = it.duplicate;
   const tone =
     row.status === "created" ? { label: "Created", icon: "check-circle" as const, color: colors.onSuccess }
     : row.status === "failed" || row.status === "upload_failed" ? { label: "Could not read", icon: "alert-circle" as const, color: colors.onError }
+    : it.review && it.decision !== "skip" ? { label: it.decision === "create" ? "Will create" : "Needs review", icon: "alert-triangle" as const, color: colors.onWarning }
     : row.status === "skipped" || (row.status === "ready" && dup) ? { label: "Skipped", icon: "skip-forward" as const, color: colors.onWarning }
     : row.status === "ready" ? { label: "Ready", icon: "file-text" as const, color: colors.onBrandSecondary }
     : { label: row.status === "uploading" ? "Uploading" : "Reading", icon: "loader" as const, color: colors.muted };
@@ -153,6 +162,12 @@ function RowCard({ row, onOpen, colors }: { row: Row; onOpen: (pid: string) => v
       ) : null}
       {dup ? <Text style={s.meta}>{dup.reason}{dup.ref ? `: ${dup.ref}${dup.address ? `, ${dup.address}` : ""}` : ""}{dup.project_id ? " · tap to open" : ""}</Text> : null}
       {row.error ? <Text style={s.err}>{row.error}</Text> : null}
+      {it.review ? (
+        <View style={s.decide}>
+          <Btn title="Create anyway" small variant={it.decision === "create" ? "dark" : "outline"} onPress={() => onDecide(it, "create")} style={{ flex: 1 }} testID={`bulk-create-${row.filename}`} />
+          <Btn title="Skip" small variant={it.decision === "skip" ? "dark" : "outline"} onPress={() => onDecide(it, "skip")} style={{ flex: 1 }} testID={`bulk-skip-${row.filename}`} />
+        </View>
+      ) : null}
     </Pressable>
   );
 }
@@ -170,6 +185,7 @@ const useStyles = makeStyles((c) => ({
   addr: { fontSize: 14, color: c.onSurface },
   meta: { fontSize: 13, color: c.muted },
   err: { fontSize: 13, color: c.onError },
+  decide: { flexDirection: "row", gap: space.sm, marginTop: space.xs },
   footer: { position: "absolute", left: 0, right: 0, bottom: 0, padding: space.md, gap: space.sm, backgroundColor: c.surface, borderTopWidth: BORDER, borderColor: c.border },
   summary: { fontSize: 13, color: c.muted, textAlign: "center" },
 }));

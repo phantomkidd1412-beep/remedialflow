@@ -1968,20 +1968,34 @@ async def reminder_loop():
 
 @api.get("/admin/reminders")
 async def reminders_status(u: User = Depends(admin)):
-    s = await db.settings.find_one({"_id": "global"}, {"reminders_enabled": 1}) or {}
+    s = await db.settings.find_one({"_id": "global"}, {"reminders_enabled": 1, "push_verified_at": 1}) or {}
     runs = clean(await db.reminder_runs.find({}).sort("started_at", -1).to_list(10))
-    return {"enabled": bool(s.get("reminders_enabled")), "schedule": "Installers 09:00 and 17:00, employees 09:00 (Europe/London)", "recent_runs": runs}
+    return {"enabled": bool(s.get("reminders_enabled")), "push_verified_at": s.get("push_verified_at"),
+            "schedule": "Installers 09:00 and 17:00, employees 09:00 (Europe/London)", "recent_runs": runs}
 
 
 class RemindersIn(BaseModel):
-    enabled: bool
+    enabled: Optional[bool] = None
+    push_verified: Optional[bool] = None  # admin confirms an instant alert arrived on a real iPhone
 
 
 @api.put("/admin/reminders")
 async def set_reminders(body: RemindersIn, u: User = Depends(admin)):
-    await db.settings.update_one({"_id": "global"}, {"$set": {"reminders_enabled": body.enabled}}, upsert=True)
-    await audit("settings.reminders", u.id, "settings", {"enabled": body.enabled})
-    return {"enabled": body.enabled}
+    """Reminders stay off until an admin confirms instant push alerts work on a real iPhone."""
+    s = await db.settings.find_one({"_id": "global"}, {"push_verified_at": 1}) or {}
+    upd: dict = {}
+    if body.push_verified is not None:
+        upd["push_verified_at"] = now_iso() if body.push_verified else None
+        if not body.push_verified:
+            upd["reminders_enabled"] = False
+    if body.enabled is not None:
+        if body.enabled and not (upd.get("push_verified_at") or (s.get("push_verified_at") and "push_verified_at" not in upd)):
+            raise HTTPException(409, "Confirm that an instant alert arrived on a real iPhone before turning reminders on")
+        upd["reminders_enabled"] = body.enabled
+    if upd:
+        await db.settings.update_one({"_id": "global"}, {"$set": upd}, upsert=True)
+        await audit("settings.reminders", u.id, "settings", upd)
+    return await reminders_status(u)
 
 
 async def retry_pending_packs():

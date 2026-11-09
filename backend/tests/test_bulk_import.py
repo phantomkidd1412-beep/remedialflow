@@ -12,6 +12,7 @@ from fastapi import BackgroundTasks, UploadFile  # noqa: E402
 from core import User, db  # noqa: E402
 
 HERE = os.path.dirname(__file__)
+REFS = ["P419977", "QA-BULK-AI-1", "QA-BULK-AI-2"]
 import uuid  # noqa: E402
 TM = open(os.path.join(HERE, "..", "..", "tests", "p419977.pdf"), "rb").read() + f"\n%qa-{uuid.uuid4()}\n".encode()  # unique hash vs preview data
 OTHER = open(os.path.join(HERE, "..", "..", "tests", "sample_inspection_report.pdf"), "rb").read()
@@ -42,7 +43,7 @@ def env(monkeypatch):
     class FakeExtractor:
         async def extract(self, path, text):
             ai_calls.append(path)
-            return {"ref": "QA-BULK-AI-1", "address": "5 Oak Avenue, St Albans", "postcode": "AL3 5PQ", "nc_count_stated": 1,
+            return {"ref": f"QA-BULK-AI-{len(ai_calls)}", "address": "5 Oak Avenue, St Albans", "postcode": "AL3 5PQ", "nc_count_stated": 1,
                     "ncs": [{"description": "Loft insulation compressed", "original_text": "Loft insulation compressed", "required_work": "",
                              "safety_critical": False, "pages": [1]}], "confidence": 0.8, "notes": ""}
 
@@ -57,17 +58,17 @@ def env(monkeypatch):
 
     async def only_test_projects(draft):  # ignore older preview projects at the same address
         hit = await real_find(draft)
-        return hit if hit and hit["ref"] in ("P419977", "QA-BULK-AI-1") else None
+        return hit if hit and hit["ref"] in REFS else None
 
     monkeypatch.setattr(server, "find_duplicate", only_test_projects)
     monkeypatch.setattr(bulk_import, "find_duplicate", only_test_projects)
-    assert not go(db.projects.find_one({"ref": {"$in": ["P419977", "QA-BULK-AI-1"]}})), "preview already has these refs"
+    assert not go(db.projects.find_one({"ref": {"$in": REFS}})), "preview already has these refs"
     admin = User(id="qa-bulk-admin", email="qa-bulk@example.com", name="QA Bulk", role="admin")
     yield server, bulk_import, admin, ai_calls, pushes
-    pids = [str(p["_id"]) for p in go(db.projects.find({"ref": {"$in": ["P419977", "QA-BULK-AI-1"]}}, {"_id": 1}).to_list(10))]
+    pids = [str(p["_id"]) for p in go(db.projects.find({"ref": {"$in": REFS}}, {"_id": 1}).to_list(10))]
     go(db.ncs.delete_many({"project_id": {"$in": pids}}))
     go(db.files.delete_many({"project_id": {"$in": pids}}))
-    go(db.projects.delete_many({"ref": {"$in": ["P419977", "QA-BULK-AI-1"]}}))
+    go(db.projects.delete_many({"ref": {"$in": REFS}}))
     go(db.imports.delete_many({"uploaded_by": admin.id}))
     go(db.bulk_imports.delete_many({"created_by": admin.id}))
 
@@ -117,3 +118,15 @@ def test_bulk_flow(env):
     go(upload(bi, bid2, TM, "again.pdf", admin))
     it = go(bi.get_batch(bid2, admin))["items"][0]
     assert it["status"] == "skipped" and it["duplicate"]["ref"] == "P419977"
+
+    # same address, different reference -> flagged for Admin review, never auto-skipped or auto-created
+    go(upload(bi, bid2, OTHER + b"\n%qa-2\n", "same-address.pdf", admin))
+    it = [i for i in go(bi.get_batch(bid2, admin))["items"] if i["filename"] == "same-address.pdf"][0]
+    assert it["status"] == "ready" and it["review"] and it["ref"] == "QA-BULK-AI-2"
+    r = go(bi.confirm_batch(bid2, BackgroundTasks(), admin))
+    assert r["created"] == [] and len(r["waiting_review"]) == 1
+    go(bi.set_decision(bid2, it["id"], bi.DecisionIn(decision="create"), admin))
+    r = go(bi.confirm_batch(bid2, BackgroundTasks(), admin))
+    assert [c["ref"] for c in r["created"]] == ["QA-BULK-AI-2"]
+    assert go(db.projects.find_one({"ref": "QA-BULK-AI-2"}))["installer_id"] is None
+    assert go(db.projects.count_documents({"ref": "QA-BULK-AI-1"})) == 1  # existing project untouched

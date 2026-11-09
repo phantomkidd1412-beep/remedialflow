@@ -16,6 +16,29 @@ const TITLES: Record<Key, string> = { action: "Revisit required", this_week: "Th
 const ORDER: Key[] = ["action", "this_week", "next_week", "upcoming", "unscheduled", "completed"];
 const CARDS: Key[] = ["action", "this_week", "next_week", "unscheduled", "completed"];
 
+type ViewMode = "town" | "schedule";
+const PENDING = new Set(["open", "pending", "in_progress", "unassigned"]);
+const REVIEW = new Set(["assessing", "ai_verified", "manual_review", "employee_review", "admin_review"]);
+const REVISIT = new Set(["rejected", "more_evidence"]);
+const COUNTIES = /^(bedfordshire|berkshire|buckinghamshire|cambridgeshire|cheshire|cornwall|cumbria|derbyshire|devon|dorset|durham|essex|gloucestershire|hampshire|herefordshire|hertfordshire|kent|lancashire|leicestershire|lincolnshire|norfolk|northamptonshire|northumberland|nottinghamshire|oxfordshire|rutland|shropshire|somerset|staffordshire|suffolk|surrey|sussex|east sussex|west sussex|warwickshire|wiltshire|worcestershire|yorkshire|north yorkshire|south yorkshire|west yorkshire|east riding of yorkshire|greater london|greater manchester|merseyside|tyne and wear|west midlands|uk|united kingdom|england|wales|scotland)$/i;
+
+/** Town/city from a UK address: the last comma part after the street that is not a county or postcode. */
+function townOf(address: string): string {
+  const parts = address.split(",").map((x) => x.trim()).filter(Boolean).slice(1)
+    .filter((x) => !COUNTIES.test(x) && !/^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(x));
+  const t = parts[parts.length - 1];
+  return t ? t.replace(/\b\w/g, (c) => c.toUpperCase()) : "Other";
+}
+
+/** Installer's own NC counts. Attempted = evidence submitted at least once. */
+function ncCounts(st: string[]) {
+  const pending = st.filter((x) => PENDING.has(x)).length;
+  return {
+    total: st.length, pending, attempted: st.length - pending,
+    review: st.filter((x) => REVIEW.has(x)).length, revisit: st.filter((x) => REVISIT.has(x)).length, done: st.filter((x) => x === "approved").length,
+  };
+}
+
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function weekBounds() {
   const now = new Date();
@@ -54,6 +77,7 @@ const JobCard = memo(function JobCard({ p, queued, onOpen, section }: { p: Row; 
         {p.my_schedule ? `Scheduled ${p.my_schedule.split("-").reverse().join("/")}${overdue ? " · overdue" : ""}` : "Not yet scheduled"}
       </Text>
       <Progress value={(p.my_statuses ?? []).length ? (p.my_statuses ?? []).filter((x) => x === "approved").length / (p.my_statuses ?? []).length : 0} testID={`job-progress-${p.ref}`} />
+      <NcBreakdown st={p.my_statuses ?? []} testID={`job-breakdown-${p.ref}`} />
       <View style={s.cardBottom}>
         {queued > 0 ? <Badge status="pending" label={`${queued} unsynced`} /> : <View />}
         <Btn title="Open job" small icon="arrow-right" variant="dark" onPress={() => onOpen(p.id)} testID={`open-job-${p.ref}`} />
@@ -61,6 +85,30 @@ const JobCard = memo(function JobCard({ p, queued, onOpen, section }: { p: Row; 
     </Pressable>
   );
 });
+
+function NcBreakdown({ st, testID }: { st: string[]; testID?: string }) {
+  const s = useStyles();
+  const { colors: c } = useTheme();
+  const n = ncCounts(st);
+  const chips: [string, number, string, string][] = [
+    ["Pending", n.pending, c.info, c.onInfo],
+    ["In review", n.review, c.brandTertiary, c.onBrandTertiary],
+    ["Revisit", n.revisit, c.error, c.onError],
+    ["Done", n.done, c.success, c.onSuccess],
+  ];
+  return (
+    <View style={{ gap: 4 }} testID={testID}>
+      <View style={s.chips}>
+        {chips.map(([label, v, bg, fg]) => (
+          <View key={label} style={[s.chip, { backgroundColor: v ? bg : c.surfaceSecondary }]}>
+            <Text style={[s.chipText, { color: v ? fg : c.muted }]}>{v} {label}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={s.meta}>Attempted {n.attempted} of {n.total}</Text>
+    </View>
+  );
+}
 
 export default function Jobs() {
   const s = useStyles();
@@ -70,18 +118,54 @@ export default function Jobs() {
   const { items } = useQueue();
   const open = useCallback((id: string) => router.push(`/job/${id}`), [router]);
   const [filter, setFilter] = useState<Filter>("all");
-  const { by, sections } = useMemo(() => {
+  const [view, setView] = useState<ViewMode>("town");
+  const { by, sections, totals, keyOf } = useMemo(() => {
     const rows = (q.data?.pages.flatMap((p) => p.items) ?? []) as Row[];
     const w = weekBounds();
     const by = Object.fromEntries(ORDER.map((k) => [k, [] as Row[]])) as Record<Key, Row[]>;
-    rows.forEach((r) => by[sectionOf(r, w)].push(r)); // one project = one card, in exactly one group
+    const keyOf: Record<string, Key> = {};
+    rows.forEach((r) => { const k = sectionOf(r, w); keyOf[r.id] = k; by[k].push(r); }); // one project = one card, in exactly one group
     (["this_week", "next_week", "upcoming"] as Key[]).forEach((k) => by[k].sort((a, b) => (a.my_schedule ?? "").localeCompare(b.my_schedule ?? "")));
+    const totals = { ...ncCounts(rows.flatMap((r) => r.my_statuses ?? [])), projects: rows.length };
+    if (view === "town") {
+      const towns: Record<string, Row[]> = {};
+      rows.forEach((r) => (towns[townOf(r.address)] ??= []).push(r));
+      const rank = (r: Row) => ORDER.indexOf(keyOf[r.id]); // revisit first, completed last
+      const sections = Object.keys(towns).sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b))).map((t) => {
+        const data = towns[t].sort((a, b) => rank(a) - rank(b));
+        const n = ncCounts(data.flatMap((r) => r.my_statuses ?? []));
+        return { key: `town:${t}`, title: `${t} · ${data.length} project${data.length === 1 ? "" : "s"} · ${n.done}/${n.total} NCs done`, data };
+      });
+      return { by, sections, totals, keyOf };
+    }
     const keys = filter === "all" ? ORDER : [filter as Key];
-    return { by, sections: keys.filter((k) => by[k].length).map((k) => ({ key: k, title: TITLES[k], data: by[k] })) };
-  }, [q.data, filter]);
+    return { by, sections: keys.filter((k) => by[k].length).map((k) => ({ key: k, title: TITLES[k], data: by[k] })), totals, keyOf };
+  }, [q.data, filter, view]);
+
+  const townSummary = (
+    <View style={s.cards} testID="jobs-town-summary">
+      {([["Projects", totals.projects], ["Pending NCs", totals.pending], ["Attempted", totals.attempted], ["In review", totals.review], ["Revisit", totals.revisit]] as [string, number][]).map(([l, v]) => {
+        const alert = l === "Revisit" && v > 0;
+        return (
+          <View key={l} style={[s.sCard, alert && { backgroundColor: colors.error }]} testID={`jobs-total-${l.toLowerCase().replace(/ /g, "-")}`}>
+            <Text style={[s.sVal, alert && { color: colors.onError }]}>{v}</Text>
+            <Text style={[s.sLabel, alert && { color: colors.onError }]} numberOfLines={2}>{l}</Text>
+          </View>
+        );
+      })}
+    </View>
+  );
 
   const summary = (
     <View style={{ gap: space.sm, marginBottom: space.sm }}>
+      <View style={s.toggle} testID="jobs-view-toggle">
+        {([["town", "By town"], ["schedule", "By schedule"]] as [ViewMode, string][]).map(([v, l]) => (
+          <Pressable key={v} onPress={() => setView(v)} style={[s.tBtn, view === v && { backgroundColor: colors.brandSecondary, borderColor: colors.brandPrimary }]} testID={`jobs-view-${v}`} accessibilityState={{ selected: view === v }}>
+            <Text style={[s.tText, view === v && { color: colors.onBrandSecondary }]}>{l}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {view === "town" ? townSummary : <>
       <View style={s.cards} testID="jobs-summary">
         {CARDS.map((k) => {
           const on = filter === k;
@@ -99,6 +183,7 @@ export default function Jobs() {
           <Text style={s.clearText}>Showing {TITLES[filter as Key].toLowerCase()} · show all</Text>
         </Pressable>
       ) : null}
+      </>}
     </View>
   );
 
@@ -121,11 +206,11 @@ export default function Jobs() {
               <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title} · {section.data.length}</Text>
             </View>
           )}
-          renderItem={({ item, section }) => <JobCard p={item} section={section.key as Key} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}
+          renderItem={({ item }) => <JobCard p={item} section={keyOf[item.id]} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}
           contentContainerStyle={s.list}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
           onEndReached={() => q.hasNextPage && q.fetchNextPage()}
-          ListEmptyComponent={<Empty icon="clipboard" text={filter === "all" ? "No jobs assigned" : `No ${TITLES[filter as Key].toLowerCase()} jobs`} />}
+          ListEmptyComponent={<Empty icon="clipboard" text={filter === "all" || view === "town" ? "No jobs assigned" : `No ${TITLES[filter as Key].toLowerCase()} jobs`} />}
           initialNumToRender={8}
           windowSize={7}
         />
@@ -150,6 +235,12 @@ const useStyles = makeStyles((c) => ({
   sCard: { flex: 1, borderWidth: BORDER, borderRadius: radius.lg, borderColor: c.border, backgroundColor: c.surfaceSecondary, paddingVertical: space.sm, paddingHorizontal: 4, minHeight: 64, alignItems: "center", justifyContent: "center", gap: 2 },
   sVal: { fontFamily: fonts.display, fontWeight: "800", fontSize: 20, color: c.onSurface },
   sLabel: { fontFamily: fonts.text, fontSize: 11, fontWeight: "600", color: c.onSurfaceSecondary, textAlign: "center" },
+  toggle: { flexDirection: "row", gap: 6 },
+  tBtn: { flex: 1, minHeight: 44, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, alignItems: "center", justifyContent: "center" },
+  tText: { fontFamily: fonts.text, fontSize: 13, fontWeight: "700", color: c.onSurfaceSecondary },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  chip: { borderRadius: radius.sm, paddingHorizontal: 8, paddingVertical: 3 },
+  chipText: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700" },
   clear: { minHeight: 36, justifyContent: "center" },
   clearText: { fontFamily: fonts.text, fontSize: 13, color: c.onBrandSecondary, fontWeight: "600" },
 }));

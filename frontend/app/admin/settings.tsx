@@ -16,20 +16,27 @@ type S = { auto_approve_low_risk: boolean; auto_approve_risks: string[]; human_s
 function RemindersSwitch() {
   const qc = useQueryClient();
   const toast = useToast();
-  const q = useQuery({ queryKey: ["reminders"], queryFn: () => api<{ enabled: boolean; schedule: string }>("/admin/reminders") });
+  const q = useQuery({ queryKey: ["reminders"], queryFn: () => api<{ enabled: boolean; schedule: string; push_verified_at?: string | null }>("/admin/reminders") });
   const on = !!q.data?.enabled;
-  const flip = async () => {
+  const verified = !!q.data?.push_verified_at;
+  const save = async (body: { enabled?: boolean; push_verified?: boolean }, msg: string) => {
     try {
-      await api("/admin/reminders", { method: "PUT", body: { enabled: !on } });
+      await api("/admin/reminders", { method: "PUT", body });
       qc.invalidateQueries({ queryKey: ["reminders"] });
-      toast(!on ? "Daily reminders turned on" : "Daily reminders turned off");
+      toast(msg);
     } catch (e: any) { toast(e.message); }
   };
   return (
     <View style={{ gap: space.xs }}>
       <Label>Daily reminder notifications</Label>
       <Text style={{ fontFamily: fonts.text, fontSize: 12 }}>{q.data?.schedule ?? "Installers 09:00 and 17:00, employees 09:00 (UK time)"}</Text>
-      <Choice value={on ? "on" : "off"} options={[["off", "Off"], ["on", "On"]]} onChange={(v) => { if ((v === "on") !== on) void flip(); }} testID="setting-reminders" />
+      <Choice value={verified ? "yes" : "no"} options={[["no", "iPhone alert not yet verified"], ["yes", "iPhone alert verified"]]}
+        onChange={(v) => { if ((v === "yes") !== verified) void save({ push_verified: v === "yes" }, v === "yes" ? "Marked as verified on iPhone" : "Verification cleared, reminders off"); }} testID="setting-push-verified" />
+      {verified ? (
+        <Choice value={on ? "on" : "off"} options={[["off", "Off"], ["on", "On"]]} onChange={(v) => { if ((v === "on") !== on) void save({ enabled: v === "on" }, v === "on" ? "Daily reminders turned on" : "Daily reminders turned off"); }} testID="setting-reminders" />
+      ) : (
+        <Text style={{ fontFamily: fonts.text, fontSize: 12 }} testID="reminders-locked">Reminders stay off until an instant alert has arrived on a real iPhone.</Text>
+      )}
     </View>
   );
 }
