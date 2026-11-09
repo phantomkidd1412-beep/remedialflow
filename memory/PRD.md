@@ -368,3 +368,13 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - 2026-06 quick wins: fixed log-redaction filter (args=() broke uvicorn access formatter -> traceback per signed-URL/photo request); gallery/library uploads no longer stamped (only in_app_camera); staff project search matches installer names (project + NC level); installer NC states (Not started/Attempted/More evidence required/In review/Approved) + "X of Y NCs attempted"; installer work comment field hidden (never sent).
 
 - 2026-06: thumb/display bounded in-memory cache (96MB LRU) in serve_file; missing Dropbox copy -> 404 instead of 500+traceback. Dashboard search placeholder mentions installer.
+
+- 2026-06: Push: specific texts with address (New Project Assigned / Project Awaiting Review), assignments+reassignments always push (deduped by body hash), every attempt logged in db.push_log (mocked|accepted|failed|skipped; accepted != delivered), mocked when EMERGENT_PUSH_KEY placeholder or PUSH_MOCK=true; provider pause now logged as failed. Reminders: reminder_loop (Europe/London, installers 09/17, employees 09, first 30 min window), run claimed in db.reminder_runs (idempotent), admin GET/PUT /api/admin/reminders (default OFF) + Settings switch. Tests: tests/test_notifications.py (5). Bulk PDF import NOT started: existing TrustMark extractor is AI-only (1 Gemini call per PDF) -> needs user approval.
+
+## Bulk TrustMark PDF import (June 2026, preview only, agent-tested with mocks)
+- Admin → Account → "Bulk import TrustMark PDFs" (`app/admin/bulk-import.tsx`), up to 50 PDFs, 2 uploads at a time, preview before confirm.
+- Backend `backend/bulk_import.py`: `POST /api/admin/bulk-imports`, `POST /{bid}/files`, `GET /{bid}`, `POST /{bid}/confirm` (admin only, idempotent).
+- Reading: rule parser `report_import.parse_trustmark` (standard TrustMark layout, no AI); AI used only for non-standard PDFs (user choice).
+- Duplicates skipped and shown with the matching project: same PDF (sha256), same reference, same postcode + similar address with the same house number, same reference twice in one upload.
+- Projects/NCs are created Unassigned; no alerts sent. Tests: `backend/tests/test_bulk_import.py` (2 passed).
+- Pending: UI click-through needs an admin test account from the owner.

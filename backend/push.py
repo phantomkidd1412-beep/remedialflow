@@ -69,23 +69,39 @@ async def send_push(recipients: list, data: dict, idempotency_key: Optional[str]
         return await send_push(recipients, data, idempotency_key, _attempt + 1)
     if code in ("insufficient_credits", "integration_disabled", "daily_limit_reached"):
         log.warning("Push paused: %s (%s)", code, resp.status_code)
-        return
+        raise RuntimeError(f"provider paused: {code}")
     resp.raise_for_status()
 
 
-async def push_for(user_id: str, kind: str, key: str):
-    """Fire-and-forget; only active users who are signed in on a device; never blocks the caller."""
+def _mocked() -> bool:
+    """Preview/test: no real provider key (or PUSH_MOCK=true) -> pushes are only recorded in db.push_log, never sent."""
+    return os.environ.get("PUSH_MOCK") == "true" or os.environ.get("EMERGENT_PUSH_KEY", "placeholder") in ("", "placeholder")
+
+
+async def _log(user_id: str, kind: str, key: str, status: str, **extra):
+    """status: mocked | accepted (provider accepted; device delivery is not confirmed by the provider) | paused | failed | skipped"""
+    from core import now_iso
+    await db.push_log.insert_one({"user_id": user_id, "kind": kind, "key": key, "status": status, "at": now_iso(), **extra})
+
+
+async def push_for(user_id: str, kind: str, key: str, title: Optional[str] = None, message: Optional[str] = None, url: Optional[str] = None):
+    """Fire-and-forget; only active users who are signed in on a device; never blocks the caller. Every attempt is logged."""
     text = PUSH_TEXT.get(kind)
-    if not text:
+    if not text and not title:
         return
     try:
-        u = await db.users.find_one({"_id": oid(user_id), "active": True, "push_active": True}, {"role": 1})
-        if not u:
-            return
-        # deep link: key is "{category}:{project_id}:{ts}" -> open that project (installer: job view)
-        parts = key.split(":")
-        pid = parts[1] if len(parts) > 2 and len(parts[1]) == 24 else None
-        url = (f"/job/{pid}" if u.get("role") == "installer" else f"/project/{pid}") if pid else "/notifications"
-        await send_push([user_id], {"title": text[0], "message": text[1], "action_url": url}, idempotency_key=key)
+        u = await db.users.find_one({"_id": oid(user_id), "active": True}, {"role": 1, "push_active": 1})
+        if not u or not u.get("push_active"):
+            return await _log(user_id, kind, key, "skipped", reason="no registered device")
+        if not url:  # deep link: key is "{category}:{project_id}:..." -> open that project (installer: job view)
+            parts = key.split(":")
+            pid = parts[1] if len(parts) > 2 and len(parts[1]) == 24 else None
+            url = (f"/job/{pid}" if u.get("role") == "installer" else f"/project/{pid}") if pid else "/notifications"
+        data = {"title": title or text[0], "message": message or text[1], "action_url": url}
+        if _mocked():
+            return await _log(user_id, kind, key, "mocked", data=data)
+        await send_push([user_id], data, idempotency_key=key)
+        await _log(user_id, kind, key, "accepted", data=data)
     except Exception as e:
         log.warning("Push failed (non-blocking): %s", type(e).__name__)
+        await _log(user_id, kind, key, "failed", error=f"{type(e).__name__}: {str(e)[:200]}")

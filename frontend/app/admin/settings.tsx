@@ -13,6 +13,27 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
 type S = { auto_approve_low_risk: boolean; auto_approve_risks: string[]; human_signoff_required: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
+function RemindersSwitch() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["reminders"], queryFn: () => api<{ enabled: boolean; schedule: string }>("/admin/reminders") });
+  const on = !!q.data?.enabled;
+  const flip = async () => {
+    try {
+      await api("/admin/reminders", { method: "PUT", body: { enabled: !on } });
+      qc.invalidateQueries({ queryKey: ["reminders"] });
+      toast(!on ? "Daily reminders turned on" : "Daily reminders turned off");
+    } catch (e: any) { toast(e.message); }
+  };
+  return (
+    <View style={{ gap: space.xs }}>
+      <Label>Daily reminder notifications</Label>
+      <Text style={{ fontFamily: fonts.text, fontSize: 12 }}>{q.data?.schedule ?? "Installers 09:00 and 17:00, employees 09:00 (UK time)"}</Text>
+      <Choice value={on ? "on" : "off"} options={[["off", "Off"], ["on", "On"]]} onChange={(v) => { if ((v === "on") !== on) void flip(); }} testID="setting-reminders" />
+    </View>
+  );
+}
+
 function Choice({ value, options, onChange, testID }: { value: string; options: [string, string][]; onChange: (v: string) => void; testID: string }) {
   const s = useStyles();
   const { colors } = useTheme();
@@ -196,6 +217,7 @@ export default function SettingsScreen() {
 
         <Text style={s.section}>EVIDENCE ACCEPTANCE</Text>
         <LocationEvidenceSwitch />
+        <RemindersSwitch />
         <Label>Photos with Location Not Verified</Label>
         <Choice value={f.location_policy} options={[["accept_flag", "Accept + flag"], ["reject", "Reject"], ["accept", "Accept"]]} onChange={(v) => set({ location_policy: v })} testID="setting-location-policy" />
         <Label>Gallery uploads</Label>

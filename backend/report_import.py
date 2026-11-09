@@ -205,3 +205,61 @@ def match_ncs(draft_ncs: List[dict], existing: List[dict]) -> List[dict]:
                     "nc": {"id": str(e["_id"]), "number": e["number"], "original_text": e.get("original_text") or e.get("description"),
                            "required_work": e.get("required_work", ""), "status": e["status"]} if e else None})
     return out
+
+
+# ---------------- rule-based TrustMark QA non-compliance report parser (no AI) ----------------
+NC_HEADER = "Notification of quality assurance non-compliance"
+_PC = re.compile(r"\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b", re.I)
+_SAFETY = re.compile(r"\b(gas|electric\w*|fire|structural|combustion|carbon monoxide|flue|cat\s*1)\b", re.I)
+_STOP = ("What to do next:", NC_HEADER)
+_CAPTIONS = {"context view", "close up", "close-up", "close up view", "detail view", "overview", "wide view"}
+
+
+def parse_trustmark(text: str) -> Optional[dict]:
+    """Parses the standard TrustMark 'Notification of quality assurance non-compliance' layout.
+    Returns a draft shaped like the AI extractor's output, or None when the layout is not recognised."""
+    pages = [(int(m.group(1)), m.group(2)) for m in re.finditer(r"--- page (\d+) ---\n(.*?)(?=\n--- page \d+ ---\n|\Z)", text, re.S)]
+    if not pages or NC_HEADER not in text:
+        return None
+    lines: List[Tuple[int, str]] = [(p, ln.strip()) for p, body in pages for ln in body.splitlines() if ln.strip()]
+    all_text = "\n".join(ln for _, ln in lines)
+    m = re.search(r"Project Number\n(\S+)", all_text) or re.search(r"\b(P\d{5,})\b", all_text)
+    ref = m.group(1) if m else None
+    address = postcode = None
+    for i, (_, ln) in enumerate(lines):
+        if ln == "Property Address" and i + 1 < len(lines) and "," in lines[i + 1][1]:
+            full = lines[i + 1][1]
+            pm = _PC.search(full)
+            postcode = pm.group(1).upper() if pm else None
+            address = (full[:pm.start()] if pm else full).strip().rstrip(",").strip()
+            break
+    ncs = []
+    i = 0
+    while i < len(lines):
+        if lines[i][1] == "Non-Compliance" and i + 2 < len(lines) and lines[i + 1][1] == "Reason":
+            start_page = lines[i][0]
+            j = i + 2
+            block: List[Tuple[int, str]] = []
+            while j < len(lines) and lines[j][1] not in _STOP:
+                block.append(lines[j])
+                j += 1
+            end_page = lines[j][0] if j < len(lines) and lines[j][1] == "What to do next:" else (block[-1][0] if block else start_page)
+            titles = [ln for _, ln in block[:2]]
+            body: List[str] = []
+            for _, ln in block[2:]:
+                caption = ln.lower().rstrip(".") in _CAPTIONS or (len(ln.split()) <= 3 and not ln.endswith(".") and (not body or body[-1].endswith(".")))
+                if ln not in titles and not caption:  # photo captions repeat the title or are short labels ("Context view")
+                    body.append(ln)
+            original = " ".join(body).strip()
+            title = titles[-1] if titles else ""
+            if title or original:
+                ncs.append({"description": (title or original)[:500], "original_text": original or title, "required_work": "",
+                            "safety_critical": bool(_SAFETY.search(f"{title} {original}")),
+                            "pages": list(range(start_page, end_page + 1))[:6]})
+            i = j
+        else:
+            i += 1
+    if not ref or not address or not ncs:
+        return None
+    return {"ref": ref, "address": address, "postcode": postcode, "nc_count_stated": len(ncs), "ncs": ncs,
+            "confidence": 0.9, "notes": "Read from the standard TrustMark layout"}

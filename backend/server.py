@@ -214,9 +214,14 @@ async def notify(user_id: Optional[str], cat: str, project_id: str, extra: str =
         {"$set": {"kind": cat, "title": CAT_TITLE.get(cat, cat), "address": addr, "ref": p["ref"], "summary": summary, "body": body,
                   "project_id": project_id, "nc_id": None, "read": False, "hidden": False, "created_at": now_iso()},
          "$setOnInsert": {"user_id": user_id, "key": key}}, upsert=True)
-    if not prev or prev.get("read"):  # push only when it newly becomes unread (updates of an unread one stay silent)
+    if not prev or prev.get("read") or cat == "assigned":
+        # push when it newly becomes unread; assignments/reassignments always push (body changed = a new assignment);
+        # the key includes the body so the same event re-sent never pushes twice
         from push import push_for
-        asyncio.create_task(push_for(user_id, cat, f"{key}:{now_iso()}"))
+        title = {"assigned": "New Project Assigned", "review": "Project Awaiting Review"}.get(cat)
+        msg = {"assigned": f"You have been assigned {'a project' if 'NC' not in extra else 'work'} at {p['address']}.",
+               "review": f"{p['address']} is ready for review."}.get(cat)
+        asyncio.create_task(push_for(user_id, cat, f"{key}:{hashlib.sha1(body.encode()).hexdigest()[:12]}:{now_iso()[:16]}", title, msg))
 
 
 async def refresh_notifications(pid: str):
@@ -500,8 +505,10 @@ class ProjectIn(BaseModel):
 
 
 # ---------------- PDF import (async) ----------------
-async def _parse_pdf(import_id: str, data: bytes):
+async def _parse_pdf(import_id: str, data: bytes, rules_first: bool = False):
+    """rules_first (bulk import): read the standard TrustMark layout without AI; AI only when it isn't recognised."""
     import tempfile
+    from report_import import parse_trustmark
     try:
         text, images, photo_stats = await run_in_threadpool(pdf_text_and_images, data, 60, await known_logos())
         await learn_logos(photo_stats.pop("learned", []))
@@ -511,14 +518,17 @@ async def _parse_pdf(import_id: str, data: bytes):
             for k, b in enumerate(imgs):
                 paths.append(await storage.aput(f"{SYSTEM}/imports/{import_id}/page{page}-{k}.jpg", b, "image/jpeg"))
             page_images[str(page)] = paths
-        with tempfile.NamedTemporaryFile(suffix=".pdf") as tf:
-            tf.write(data)
-            tf.flush()
-            draft = await get_pdf_extractor().extract(tf.name, text)
+        draft, method = (parse_trustmark(text) if rules_first else None), "rules"
+        if not draft:
+            method = "ai"
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as tf:
+                tf.write(data)
+                tf.flush()
+                draft = await get_pdf_extractor().extract(tf.name, text)
         for n in draft["ncs"]:
             n["photo_count"] = sum(len(page_images.get(str(p), [])) for p in n["pages"])
         await db.imports.update_one({"_id": ObjectId(import_id)}, {"$set": {
-            "status": "ready", "draft": draft, "page_images": page_images, "page_count": text.count("--- page "),
+            "status": "ready", "draft": draft, "method": method, "page_images": page_images, "page_count": text.count("--- page "),
             "photo_stats": photo_stats, "duplicate": await find_duplicate(draft), "finished_at": now_iso()}})
     except Exception as e:
         log.exception("pdf import failed")
@@ -1903,6 +1913,77 @@ async def deadline_reminders():
         await asyncio.sleep(3600)
 
 
+INSTALLER_ACTION = ("open", "pending", "in_progress", "more_evidence", "rejected")  # installer must still act
+REMINDER_SLOTS = {"installer": (9, 17), "employee": (9,)}  # Europe/London (GMT/BST handled by zoneinfo)
+
+
+async def run_reminders(role: str, slot: str) -> dict:
+    """One grouped reminder per user for this slot (e.g. '2026-06-01T09'). The run is claimed atomically in
+    db.reminder_runs (_id unique), so restarts or several server processes can never send the same reminder twice."""
+    from push import push_for
+    try:
+        await db.reminder_runs.insert_one({"_id": f"{role}:{slot}", "started_at": now_iso(), "status": "running"})
+    except DuplicateKeyError:
+        return {"skipped": "already ran"}
+    live = {str(p["_id"]) for p in await db.projects.find({"deleted": {"$ne": True}, "status": {"$nin": ["completed", "trustmark_resolved", "cancelled"]}}, {"_id": 1}).to_list(100000)}
+    sent = 0
+    if role == "installer":
+        per: dict = {}
+        async for n in db.ncs.find({"assigned_installer_id": {"$ne": None}, "status": {"$in": list(INSTALLER_ACTION)}}, {"assigned_installer_id": 1, "project_id": 1}):
+            if n["project_id"] in live:
+                per.setdefault(n["assigned_installer_id"], []).append(n["project_id"])
+        for uid, pids in per.items():
+            k, np = len(pids), len(set(pids))
+            await push_for(uid, "reminder", f"reminder:installer:{slot}:{uid}", "Pending Remedial Work",
+                           f"You have {_n(k)} outstanding across {_n(np, 'project')}.", "/jobs")
+            sent += 1
+    else:
+        pids = {n["project_id"] for n in await db.ncs.find({"status": "employee_review"}, {"project_id": 1}).to_list(100000)} & live
+        if pids:
+            async for e in db.users.find({"role": "employee", "active": True}, {"_id": 1}):
+                await push_for(str(e["_id"]), "reminder", f"reminder:employee:{slot}:{e['_id']}", "Projects Awaiting Review",
+                               f"You have {_n(len(pids), 'project')} waiting for review.", "/review")
+                sent += 1
+    await db.reminder_runs.update_one({"_id": f"{role}:{slot}"}, {"$set": {"status": "done", "sent": sent, "finished_at": now_iso()}})
+    return {"sent": sent}
+
+
+async def reminder_loop():
+    """Server-side scheduler (no app needs to be open). Checks every minute; a slot fires during its first 30 minutes
+    (covers a restart at the scheduled time). Off unless an admin enables it (settings.reminders_enabled)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    while True:
+        try:
+            s = await db.settings.find_one({"_id": "global"}, {"reminders_enabled": 1}) or {}
+            if s.get("reminders_enabled"):
+                now = datetime.now(ZoneInfo("Europe/London"))
+                for role, hours in REMINDER_SLOTS.items():
+                    if now.hour in hours and now.minute < 30:
+                        await run_reminders(role, now.strftime("%Y-%m-%dT%H"))
+        except Exception:
+            log.exception("reminders failed")
+        await asyncio.sleep(60)
+
+
+@api.get("/admin/reminders")
+async def reminders_status(u: User = Depends(admin)):
+    s = await db.settings.find_one({"_id": "global"}, {"reminders_enabled": 1}) or {}
+    runs = clean(await db.reminder_runs.find({}).sort("started_at", -1).to_list(10))
+    return {"enabled": bool(s.get("reminders_enabled")), "schedule": "Installers 09:00 and 17:00, employees 09:00 (Europe/London)", "recent_runs": runs}
+
+
+class RemindersIn(BaseModel):
+    enabled: bool
+
+
+@api.put("/admin/reminders")
+async def set_reminders(body: RemindersIn, u: User = Depends(admin)):
+    await db.settings.update_one({"_id": "global"}, {"$set": {"reminders_enabled": body.enabled}}, upsert=True)
+    await audit("settings.reminders", u.id, "settings", {"enabled": body.enabled})
+    return {"enabled": body.enabled}
+
+
 async def retry_pending_packs():
     """Startup safety net: packs interrupted by a restart or a Dropbox outage get one more attempt."""
     for d in await db.auto_packs.find({"status": {"$in": ["pending", "failed", "running"]}}, {"_id": 1}).to_list(500):
@@ -2205,6 +2286,7 @@ async def startup():
     asyncio.create_task(backfill_playback())
     asyncio.create_task(retry_pending_packs())
     asyncio.create_task(deadline_reminders())
+    asyncio.create_task(reminder_loop())
 
 
 async def _seed_safe():
@@ -2245,6 +2327,8 @@ from push import router as push_router  # noqa: E402
 from dropbox_link import router as dropbox_router, load_dropbox  # noqa: E402
 app.include_router(dropbox_router)
 app.include_router(push_router)
+from bulk_import import router as bulk_import_router  # noqa: E402
+app.include_router(bulk_import_router)
 app.add_middleware(CORSMiddleware, allow_credentials=True,
                    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()],
                    allow_methods=["*"], allow_headers=["*"])

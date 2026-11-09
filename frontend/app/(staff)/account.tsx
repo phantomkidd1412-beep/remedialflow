@@ -15,6 +15,7 @@ export default function StaffAccount() {
   if (user?.role === "admin") {
     menu.push(
       { label: "Users & access", icon: "users", onPress: () => router.push("/admin/users"), testID: "menu-users" },
+      { label: "Bulk import TrustMark PDFs", icon: "upload", onPress: () => router.push("/admin/bulk-import"), testID: "menu-bulk-import" },
       { label: "Evidence rules & payments", icon: "sliders", onPress: () => router.push("/admin/settings"), testID: "menu-settings" },
       { label: "AI Evidence Guidance", icon: "book-open", onPress: () => router.push("/admin/guidance"), testID: "menu-guidance" },
       { label: "Deleted projects", icon: "trash-2", onPress: () => router.push("/admin/deleted"), testID: "menu-deleted" },
