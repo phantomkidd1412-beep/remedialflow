@@ -55,6 +55,37 @@ async def unregister_push(u: User = Depends(current_user)):
     return {"ok": True}
 
 
+PUSH_TEST_EMAILS = ["demo@networksurveyltd.uk"]
+
+
+async def push_lock_state() -> dict:
+    """Push Test Lock: ON unless an admin explicitly turned it off. While on, remote pushes reach only the test account.
+    In-app notifications are never affected."""
+    s = await db.settings.find_one({"_id": "global"}, {"push_test_lock": 1}) or {}
+    return {"enabled": s.get("push_test_lock") is not False, "allowed": PUSH_TEST_EMAILS}
+
+
+class PushLockIn(BaseModel):
+    enabled: bool
+
+
+@router.get("/admin/push-lock")
+async def get_push_lock(u: User = Depends(current_user)):
+    if u.role != "admin":
+        raise HTTPException(403, "Admins only")
+    return await push_lock_state()
+
+
+@router.put("/admin/push-lock")
+async def set_push_lock(body: PushLockIn, u: User = Depends(current_user)):
+    if u.role != "admin":
+        raise HTTPException(403, "Admins only")
+    from core import audit
+    await db.settings.update_one({"_id": "global"}, {"$set": {"push_test_lock": body.enabled}}, upsert=True)
+    await audit("settings.push_test_lock", u.id, "settings", {"enabled": body.enabled})
+    return await push_lock_state()
+
+
 async def send_push(recipients: list, data: dict, idempotency_key: Optional[str] = None, _attempt: int = 0) -> None:
     if not recipients:
         return
@@ -90,9 +121,12 @@ async def push_for(user_id: str, kind: str, key: str, title: Optional[str] = Non
     if not text and not title:
         return
     try:
-        u = await db.users.find_one({"_id": oid(user_id), "active": True}, {"role": 1, "push_active": 1})
+        u = await db.users.find_one({"_id": oid(user_id), "active": True}, {"role": 1, "push_active": 1, "email": 1})
         if not u or not u.get("push_active"):
             return await _log(user_id, kind, key, "skipped", reason="no registered device")
+        lock = await push_lock_state()
+        if lock["enabled"] and (u.get("email") or "").lower() not in lock["allowed"]:
+            return await _log(user_id, kind, key, "skipped", reason="push test lock")
         if not url:  # deep link: key is "{category}:{project_id}:..." -> open that project (installer: job view)
             parts = key.split(":")
             pid = parts[1] if len(parts) > 2 and len(parts[1]) == 24 else None

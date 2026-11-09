@@ -18,8 +18,14 @@ def go(c):
 
 
 @pytest.fixture
-def env():
+def env(monkeypatch):
     import server
+    import push
+
+    async def unlocked():  # these tests cover delivery rules for all users; the lock has its own test
+        return {"enabled": False, "allowed": push.PUSH_TEST_EMAILS}
+
+    monkeypatch.setattr(push, "push_lock_state", unlocked)
     ids = {}
     for role in ("installer", "employee"):
         for i in (1, 2):
@@ -104,3 +110,31 @@ def test_unassigned_creation_sends_nothing(env):
     server, ids, pid, ncs = env
     go(server.notify(None, "assigned", pid))
     assert go(db.push_log.count_documents({"key": {"$regex": pid}})) == 0
+
+
+def test_push_test_lock_blocks_all_but_test_account(monkeypatch):
+    """Lock is ON by default: only the test account gets remote pushes; other users are logged as skipped."""
+    import asyncio
+    import push
+    from core import db
+    loop = asyncio.get_event_loop()
+    s = loop.run_until_complete(db.settings.find_one({"_id": "global"}, {"push_test_lock": 1})) or {}
+    loop.run_until_complete(db.settings.update_one({"_id": "global"}, {"$unset": {"push_test_lock": 1}}))
+    monkeypatch.setattr(push, "_mocked", lambda: True)
+    ids = []
+    try:
+        for email in ("qa-lock-other@example.com", "demo@networksurveyltd.uk"):
+            r = loop.run_until_complete(db.users.insert_one({"email": email + ".qa-lock", "role": "installer", "active": True, "push_active": True}))
+            ids.append(str(r.inserted_id))
+        loop.run_until_complete(db.users.update_one({"_id": __import__("bson").ObjectId(ids[1])}, {"$set": {"email": "DEMO@networksurveyltd.uk"}}))
+        assert loop.run_until_complete(push.push_lock_state())["enabled"] is True
+        for i, uid in enumerate(ids):
+            loop.run_until_complete(push.push_for(uid, "assigned", f"qa-lock:{i}"))
+        logs = {x["user_id"]: x for x in loop.run_until_complete(db.push_log.find({"user_id": {"$in": ids}}).to_list(10))}
+        assert logs[ids[0]]["status"] == "skipped" and logs[ids[0]]["reason"] == "push test lock"
+        assert logs[ids[1]]["status"] == "mocked"
+    finally:
+        loop.run_until_complete(db.users.delete_many({"_id": {"$in": [__import__("bson").ObjectId(i) for i in ids]}}))
+        loop.run_until_complete(db.push_log.delete_many({"user_id": {"$in": ids}}))
+        if "push_test_lock" in s:
+            loop.run_until_complete(db.settings.update_one({"_id": "global"}, {"$set": {"push_test_lock": s["push_test_lock"]}}))

@@ -13,6 +13,29 @@ import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme"
 type PayGroup = { installer_id: string; installer_name: string; week: string; unpaid: number; paid: number; jobs: { ref: string; amount: number; status: string; overridden?: boolean }[] };
 type S = { auto_approve_low_risk: boolean; auto_approve_risks: string[]; human_signoff_required: boolean; auto_verify: boolean; confidence_threshold: number; location_policy: string; gallery_policy: string; default_job_rate: number; currency: string; payment_terms: string };
 
+function PushLockSwitch() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["push-lock"], queryFn: () => api<{ enabled: boolean; allowed: string[] }>("/admin/push-lock") });
+  const on = q.data?.enabled !== false;
+  const flip = async (v: boolean) => {
+    try {
+      await api("/admin/push-lock", { method: "PUT", body: { enabled: v } });
+      qc.invalidateQueries({ queryKey: ["push-lock"] });
+      toast(v ? "Push test lock on" : "Push alerts now go to all users");
+    } catch (e: any) { toast(e.message); }
+  };
+  return (
+    <View style={{ gap: space.xs }}>
+      <Label>Push test lock</Label>
+      <Text style={{ fontFamily: fonts.text, fontSize: 12 }}>
+        {on ? `Phone alerts go only to ${(q.data?.allowed ?? []).join(", ")}. In-app notifications are unaffected.` : "Phone alerts go to all users."}
+      </Text>
+      <Choice value={on ? "on" : "off"} options={[["on", "Locked (test only)"], ["off", "All users"]]} onChange={(v) => { if ((v === "on") !== on) void flip(v === "on"); }} testID="setting-push-lock" />
+    </View>
+  );
+}
+
 function RemindersSwitch() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -224,6 +247,7 @@ export default function SettingsScreen() {
 
         <Text style={s.section}>EVIDENCE ACCEPTANCE</Text>
         <LocationEvidenceSwitch />
+        <PushLockSwitch />
         <RemindersSwitch />
         <Label>Photos with Location Not Verified</Label>
         <Choice value={f.location_policy} options={[["accept_flag", "Accept + flag"], ["reject", "Reject"], ["accept", "Accept"]]} onChange={(v) => set({ location_policy: v })} testID="setting-location-policy" />
