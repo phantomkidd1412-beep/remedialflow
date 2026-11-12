@@ -203,7 +203,7 @@ export default function Jobs() {
           ListHeaderComponent={summary}
           renderSectionHeader={({ section }) => (
             <View style={[s.sHead, section.key === "action" && { backgroundColor: colors.error }]} testID={`jobs-section-${section.key}`}>
-              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title} · {section.data.length}</Text>
+              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title}{section.key.startsWith("town:") ? "" : ` · ${section.data.length}`}</Text>
             </View>
           )}
           renderItem={({ item }) => <JobCard p={item} section={keyOf[item.id]} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}

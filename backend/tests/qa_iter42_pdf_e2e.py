@@ -205,7 +205,7 @@ async def main():
     g = a.get(f"{BASE}/api/projects/{pid}").json()
     n3 = next(n for n in g["ncs"] if n["number"] == "NC-03")
     ok("legacy NC-03 has no evidence_selection key (or null)", not n3.get("evidence_selection"), str(n3.get("evidence_selection")))
-    ok("admin GET project shape (ncs/photos keys)", {"id", "ref", "ncs"} <= set(g) and all("photos" in n for n in g["ncs"]), sorted(g)[:12])
+    ok("admin GET project shape (project/ncs/photos keys)", {"project", "ncs"} <= set(g) and all("photos" in n for n in g["ncs"]), sorted(g)[:12])
     ri = inst.get(f"{BASE}/api/projects/{pid}")
     ok("installer GET project 200 without evidence_selection", ri.status_code == 200 and "evidence_selection" not in ri.text, ri.status_code)
     r = inst.put(f"{BASE}/api/ncs/{nids['NC-01']}/evidence-selection", json={"ids": [], "seq": 999})
@@ -259,14 +259,18 @@ async def main():
     adm = User.from_mongo(await db.users.find_one({"email": EMAILS["admin"]}))
     AI_CALLS.clear()
     res = await auto_select(nids["NC-05"], AutoIn(mode="add"), adm)
+    # since iteration 43 a drafted checklist must be confirmed by staff before any photo is picked
+    ok("Auto: stops for checklist confirmation first", res.get("needs_checklist_confirmation") is True and res["checklist_status"] == "draft", res.get("checklist_status"))
+    await db.ncs.update_one({"_id": ObjectId(nids["NC-05"])}, {"$set": {"checklist.status": "confirmed"}})
+    res = await auto_select(nids["NC-05"], AutoIn(mode="add"), adm)
     ids = [rev[i] for i in res["selection"]["ids"]]
     ok("Auto add: keeps T + adds P,Q,R(staff) in item order", ids == ["T", "P", "Q", "R"], ids)
     ok("Auto: missing lists 'Sleeve being fitted' (not filled)", res["missing"] == ["Sleeve being fitted"], res["missing"])
     ok("Auto: staff-marked a-after keeps R (not S)", "S" not in ids and "R" in ids)
-    ok("Auto: ai_used false", res["ai_used"] is False, AI_CALLS)
+    ok("Auto: only stubbed AI (no credits)", all(c.endswith("(stub)") for c in AI_CALLS), AI_CALLS)
     ok("Auto: ai_ids = rule picks P,Q only", sorted(rev[i] for i in res["selection"]["ai_ids"]) == ["P", "Q"], res["selection"]["ai_ids"])
     ok("Auto: review_notes safety-critical", any("Safety" in x for x in res["review_notes"]), res["review_notes"])
-    ok("Auto: checklist_status draft", res["checklist_status"] == "draft")
+    ok("Auto: checklist_status confirmed", res["checklist_status"] == "confirmed")
     import recommend
     v = await recommend.view(nids["NC-05"])
     ok("Auto uses recommend.view items", [i["file_id"] and rev[i["file_id"]] for i in v["items"]] == ["P", "Q", None, "R"], [(i["item_id"], i["file_id"] and rev[i["file_id"]], i["source"]) for i in v["items"]])
@@ -337,7 +341,8 @@ async def pdf_now():
             raise RuntimeError(f"non-QA path requested: {path}")
         return BLOB[path], "image/jpeg"
     server.storage.aget = fake_aget
-    data, fp = await server.cached_pack(pid, p)
+    path, fp = await server.cached_pack(pid, p)
+    data = path.read_bytes()
     print("pack fp", fp, "cached file exists:", (server.PACK_DIR / f"{pid}-{fp}.zip").exists())
     z = zipfile.ZipFile(io.BytesIO(data))
     letters = list(PHOTOS)

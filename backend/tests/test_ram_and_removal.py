@@ -130,3 +130,25 @@ def test_video_upload_streams_and_pack_from_disk(env):
     z = zipfile.ZipFile(path)
     vids = [n for n in z.namelist() if n.startswith("Videos/")]
     assert len(vids) == 1 and z.read(vids[0]) == data
+
+
+def test_temp_cleanup_only_stale_temp_files(monkeypatch, tmp_path):
+    import time
+    import server
+    monkeypatch.setattr(server, "MEDIA_CACHE", tmp_path)
+    monkeypatch.setattr(server, "PACK_DIR", tmp_path / "packs")
+    (tmp_path / "uploads").mkdir()
+    (tmp_path / "packs").mkdir()
+    old, new = time.time() - 7200, time.time()
+    files = {"uploads/a.part": old, "uploads/b.part": new, "packs/p-1.zip": time.time() - 8 * 86400, "packs/p-2.zip": new,
+             "packs/x.tmp": old, "fid_original": old}
+    for name, t in files.items():
+        p = tmp_path / name
+        p.write_bytes(b"x")
+        os.utime(p, (t, t))
+    stale_dir = tmp_path / "packs" / "tmpabc"
+    stale_dir.mkdir()
+    os.utime(stale_dir, (old, old))
+    assert server.cleanup_temp_files() == 4
+    left = sorted(str(p.relative_to(tmp_path)) for p in tmp_path.rglob("*") if p.is_file())
+    assert left == ["fid_original", "packs/p-2.zip", "uploads/b.part"]  # cached media + fresh files untouched

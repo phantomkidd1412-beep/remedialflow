@@ -1663,7 +1663,7 @@ async def _local_copy(fid: str, variant: str, spath: str) -> Path:
         tmp = MEDIA_CACHE / f"{fid}_{variant}.{secrets.token_hex(4)}.part"
         await storage.aget_file(spath, str(tmp))  # streamed to disk, never fully in RAM
         tmp.replace(p)
-        files = sorted((x for x in MEDIA_CACHE.iterdir() if not x.name.endswith(".part")), key=lambda x: x.stat().st_mtime)
+        files = sorted((x for x in MEDIA_CACHE.iterdir() if x.is_file() and not x.name.endswith(".part")), key=lambda x: x.stat().st_mtime)
         total = sum(x.stat().st_size for x in files)
         while files and total > 3 * 1024 ** 3:  # keep the cache under ~3 GB
             old = files.pop(0)
@@ -1830,6 +1830,27 @@ async def pack_fingerprint(pid: str, p: dict) -> str:
 PACK_DIR = Path(os.environ.get("MEDIA_CACHE_DIR", "/tmp/rf_media")) / "packs"
 
 
+def cleanup_temp_files(max_age_s: int = 3600, pack_days: int = 7) -> int:
+    """Disk hygiene for the RAM-saving temp files: interrupted upload spools / pack builds older than an hour, and cached
+    evidence packs not used for a week (they are rebuilt on demand from storage). Never touches stored evidence."""
+    import shutil
+    import time
+    now, n = time.time(), 0
+    for d, pats, age in ((MEDIA_CACHE / "uploads", ("*.part",), max_age_s), (PACK_DIR, ("*.tmp", "tmp*"), max_age_s),
+                         (PACK_DIR, ("*.zip",), pack_days * 86400), (MEDIA_CACHE, ("*.part",), max_age_s)):
+        if not d.exists():
+            continue
+        for pat in pats:
+            for x in d.glob(pat):
+                try:
+                    if now - x.stat().st_mtime > age:
+                        shutil.rmtree(x) if x.is_dir() else x.unlink()
+                        n += 1
+                except OSError:
+                    pass
+    return n
+
+
 async def cached_pack(pid: str, p: dict) -> tuple:
     """(zip path on disk, fingerprint): reuses the last generated pack while its content is unchanged.
     Packs are built and served from disk (never held whole in RAM); one build at a time."""
@@ -1957,6 +1978,10 @@ async def deadline_reminders():
     """Hourly: installers get one reminder the day before a scheduled visit (deduplicated by notify)."""
     from datetime import datetime, timedelta, timezone
     while True:
+        try:
+            await run_in_threadpool(cleanup_temp_files)  # hourly disk hygiene for temp spools / cached packs
+        except Exception:
+            log.exception("temp cleanup failed")
         try:
             tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date().isoformat()
             async for p in db.projects.find({"deleted": {"$ne": True}, "schedules": {"$exists": True}}, {"schedules": 1, "status": 1}):
