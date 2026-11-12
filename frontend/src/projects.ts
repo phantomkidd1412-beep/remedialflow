@@ -2,6 +2,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { cached } from "@/src/offlineCache";
 import { Linking, Platform } from "react-native";
 import { absUrl, api } from "@/src/api";
+import { flushSelections } from "@/src/selectionSync";
 
 /**
  * Opens a signed file URL. Web: fetch it and save via a same-origin blob link, because the
@@ -27,10 +28,12 @@ async function openSigned(path: string, filename: string, inline = false) {
 /** Downloads a short-lived signed export (ZIP per project, or JSON metadata for everything). */
 /** Saves the current pack to the project's Dropbox folder; the server reuses an identical earlier export. */
 export async function exportToDropbox(projectId: string) {
+  await flushSelections();
   return api<{ status: "exported" | "already_exported"; location: string | null; saved_at: string }>(`/projects/${projectId}/export-dropbox`, { method: "POST" });
 }
 
 export async function openExport(projectId?: string) {
+  if (projectId) await flushSelections(); // the pack is built from the employee's final, saved selection
   const r = await api<{ url: string }>(`/export/link${projectId ? `?project_id=${projectId}` : ""}`);
   await openSigned(r.url, projectId ? "project-evidence.zip" : "remedialflow-metadata.json");
 }

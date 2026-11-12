@@ -71,7 +71,7 @@ export default function Camera() {
     try {
       const captured = new Date();
       const pos = freshFix(geo.pos);
-      const photo = await cam.current.takePictureAsync({ quality: 0.95, skipProcessing: false });
+      const photo = await cam.current.takePictureAsync({ quality: 1, skipProcessing: false }); // full quality: the backup is this exact file; uploads are compressed separately
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
       const id = await enqueueUpload(p.projectId, p.ncId, photo.uri, "image/jpeg", {
         kind: "photo", source: "in_app_camera", stage: p.stage as EvidenceMeta["stage"], captured_at: captured.toISOString(), ...tzInfo(),

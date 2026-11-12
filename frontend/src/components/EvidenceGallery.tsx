@@ -10,12 +10,12 @@ import { Btn, Label, Sheet, useToast } from "@/src/ui";
 import { Thumb } from "@/src/components/Media";
 import { PhotoViewer } from "@/src/components/PhotoViewer";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
+import { flushers, pending } from "@/src/selectionSync";
 
 type Sel = { ids: string[]; ai_ids?: string[]; seq?: number } | null;
 type AutoRes = { selection: Sel; missing: string[]; suggested: string[]; review_notes: string[]; ai_calls: number; ai_limit: number; checklist_status: string; needs_checklist_confirmation: boolean };
 type Rec = { item_id: string; title: string; file_id: string | null; state: string; source: string; flags: string[] };
 type CL = { checklist: { status: string; items: { id: string; title: string }[] } | null };
-const pending: Record<string, string[]> = {}; // unsaved local selections survive switching NCs
 let seqCounter = Date.now();
 
 /** Single evidence gallery: Select Evidence (instant local taps, debounced background save), Auto Select (switch ON),
@@ -127,6 +127,12 @@ export function EvidenceGallery({ nc, projectId, onUpload, onDetails, uploads = 
   useEffect(() => () => { // leaving the NC: send any unsaved change immediately
     if (timer.current) { clearTimeout(timer.current); if (latest.current && pending[nc.id]) save(latest.current); }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // before any PDF/export: send the unsaved selection now instead of waiting for the debounce
+  flushers[nc.id] = async () => {
+    if (timer.current) clearTimeout(timer.current);
+    if (latest.current && pending[nc.id]) await save(latest.current);
+  };
+  useEffect(() => () => { delete flushers[nc.id]; }, [nc.id]);
 
   const photos = pickedOrder(nc.photos);
   const tiles = withPlaceholders(photos, uploads);

@@ -133,9 +133,11 @@ async def auto_select(nc_id: str, body: AutoIn, u: User = Depends(staff)):
 
 
 def selected_photos(n: dict, photos: List[dict]) -> Optional[List[dict]]:
-    """None = no explicit selection (legacy behaviour). [] = deliberately empty. Otherwise photos in the staff order."""
+    """None = no explicit selection (legacy behaviour). [] = deliberately empty. Otherwise photos in the staff order.
+    An explicit staff selection is authoritative: every selected photo is returned (also one later marked superseded by a
+    resubmission), never filtered by AI flags, rejections or pdf_include; duplicates in the list are shown once."""
     sel = n.get("evidence_selection")
     if not isinstance(sel, dict) or "ids" not in sel:
         return None
-    by = {str(f["_id"]): f for f in photos if f.get("kind") == "photo" and f.get("status") != "superseded"}
-    return [by[i] for i in sel["ids"] if i in by]
+    by = {str(f["_id"]): f for f in photos if f.get("kind") == "photo" and f.get("status") != "discarded"}
+    return [by[i] for i in dict.fromkeys(sel["ids"]) if i in by]

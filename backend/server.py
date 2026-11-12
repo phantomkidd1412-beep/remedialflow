@@ -1775,7 +1775,9 @@ async def media_config(u: User = Depends(current_user)):
 @api.get("/export/link")
 async def export_link(project_id: Optional[str] = None, u: User = Depends(staff)):
     if project_id:
+        p = await db.projects.find_one({"_id": oid(project_id)})
         await live_project(project_id)
+        await cached_pack(project_id, p)  # build first: a missing selected photo is reported here (422), not as a broken download
         return {"url": f"/api/export/project/{project_id}.zip?{signed_query(f'export:{project_id}', 10, stable=False)}"}
     if u.role != "admin":
         raise HTTPException(403, "Admin only")
@@ -1866,6 +1868,9 @@ async def cached_pack(pid: str, p: dict) -> tuple:
         try:
             await build_evidence_pack(pid, p, str(tmp))
             tmp.replace(path)
+        except PackError as e:  # incomplete report is never cached, downloaded or saved to Dropbox
+            log.warning("evidence pack refused for %s: %s", pid, e)
+            raise HTTPException(422, str(e))
         finally:
             tmp.unlink(missing_ok=True)
     return path, fp
@@ -1908,8 +1913,11 @@ async def export_to_dropbox(pid: str, u: User = Depends(staff)):
         if not path.startswith("dbx:"):
             raise RuntimeError("Pack was not stored in Dropbox")
     except Exception as e:
-        await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(e)[:200]}})
-        await audit("export.dropbox_failed", u.id, f"project:{pid}", {"error": str(e)[:200]})
+        err = e.detail if isinstance(e, HTTPException) else str(e)
+        await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(err)[:200]}})
+        await audit("export.dropbox_failed", u.id, f"project:{pid}", {"error": str(err)[:200]})
+        if isinstance(e, HTTPException) and e.status_code == 422:
+            raise  # a selected photo could not be loaded: show which one
         raise HTTPException(502, "Dropbox export failed. Please try again.")
     await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": size, "created_at": ts}})
     await audit("export.saved_to_dropbox", u.id, f"project:{pid}", {"path": path, "size": size, "fingerprint": fp})
@@ -2086,6 +2094,10 @@ async def retry_pending_packs():
         await run_auto_pack(d["_id"])
 
 
+class PackError(Exception):
+    """A selected photo could not be retrieved/rendered: the evidence pack must not be produced."""
+
+
 async def pdf_photo_groups(n: dict, files: list, get) -> list:
     """[(heading, [jpeg])] for one NC. Order of authority: staff include/exclude + staff stage labels, then Gemini's
     arrangement of the photos (cached per photo set), then a plain fallback. A stage is only labelled when known;
@@ -2111,8 +2123,10 @@ async def pdf_photo_groups(n: dict, files: list, get) -> list:
                 st = legacy.get(str(f["_id"]))
             head = HEAD[st] if st else "REMEDIATION PHOTOGRAPHS"
             img = await get(f, "stamped", "display", "original")  # stamped copy keeps the original timestamp
-            if not img:
-                continue
+            if not img or not await run_in_threadpool(readable, [img]):
+                # never build a report that silently drops employee-selected evidence
+                raise PackError(f"{n.get('number', 'NC')}: selected photo {f.get('original_name') or ''} (id {f['_id']}) could not be loaded. "
+                                "The report was not generated; retry, or deselect that photo.")
             if out and out[-1][0] == head:
                 out[-1][1].append((img, it["title"] if it else ""))
             else:
