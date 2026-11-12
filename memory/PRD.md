@@ -385,3 +385,10 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Reminders (09:00 + 17:00 installers, 09:00 employees, Europe/London, idempotent): locked off until Admin marks "iPhone alert verified" (`PUT /api/admin/reminders {push_verified}`); clearing verification turns them off.
 - Push Test Lock (push.py `push_lock_state`, `GET/PUT /api/admin/push-lock`, Admin Settings): ON by default (missing setting = on). While on, every remote push (assignments, review, approvals, visit-tomorrow, daily reminders — all go through `push_for`) reaches only demo@networksurveyltd.uk; others logged in push_log as skipped "push test lock". In-app notifications unaffected.
 - Rollback/backup: Emergent support must confirm production rollback steps and MongoDB snapshot/restore (no self-service option documented).
+
+## RAM optimisation + installer simplification (June 2026, preview only)
+- Uploads: videos spooled to disk (chunked sha256) + chunked Dropbox/Emergent upload from file; photo decode bounded by `_img_slots` (IMAGE_PROCESS_SLOTS=2); stamp composited on band strip only (pixel-identical); unstamped photos JPEG-draft decoded; playback/frames/backfill/_local_copy stream via `storage.aget_file/aput_file`.
+- Packs: built to disk (`build_evidence_pack(pid, p, dest)`, `cached_pack` returns Path, FileResponse), one NC's photos in RAM at a time, videos file->zip, `_pack_slots`=1. `_IMG_CACHE` 48 MB (IMG_CACHE_MB).
+- Measured (tests/bench_ram.py, fake storage): 4 photos 453->108 MB; 4 camera-stamped 805->275 MB; 120 MB video 117->8 MB; 300 MB video 289->8 MB; pack 419->162 MB.
+- Installer can remove own draft photos/videos before submission (✕ + confirm sheet) via existing `DELETE /api/evidence/{id}` (soft-remove, audit, now also pulled from evidence_selection; original kept in storage).
+- Installer UI: simple statuses (projects.ts `simpleStatus`/`SIMPLE`), job page stats + outstanding-first order + leave warning (once, never blocks), NC card 3 steps with evidence count/missing and one "Submit NC" button that collapses the card.

@@ -84,6 +84,27 @@ export type ProjectDetail = { project: ProjectRow; ncs: NCItem[] };
 
 export const DONE = ["approved"];
 
+/** Plain installer statuses mapped from the existing workflow states (approval rules unchanged). */
+export type Simple = "not_started" | "action" | "submitted" | "in_review" | "revisit" | "approved";
+export const SIMPLE: Record<Simple, { label: string; badge: string; icon: string; rank: number }> = {
+  revisit: { label: "Revisit Required", badge: "rejected", icon: "alert-triangle", rank: 0 },
+  action: { label: "Action Required", badge: "more_evidence", icon: "alert-circle", rank: 1 },
+  not_started: { label: "Not Started", badge: "pending", icon: "circle", rank: 2 },
+  submitted: { label: "Submitted", badge: "in_progress", icon: "send", rank: 3 },
+  in_review: { label: "In Review", badge: "employee_review", icon: "clock", rank: 4 },
+  approved: { label: "Approved", badge: "approved", icon: "check-circle", rank: 5 },
+};
+/** `pending` = photos/videos added (on the server or still on the phone) but the NC has not been submitted. */
+export function simpleStatus(nc: { status: string; photos?: { status: string }[]; videos?: { status: string }[] }, pending = 0): Simple {
+  if (DONE.includes(nc.status)) return "approved";
+  if (nc.status === "more_evidence" || nc.status === "rejected") return "revisit";
+  if (nc.status === "assessing") return "submitted";
+  if (REVIEW.includes(nc.status)) return "in_review";
+  const files = [...(nc.photos ?? []), ...(nc.videos ?? [])];
+  if (pending || files.some((f) => f.status === "draft")) return "action"; // added but not submitted: never "Submitted"
+  return files.some((f) => f.status === "submitted" || f.status === "superseded") ? "submitted" : "not_started";
+}
+
 export const STAGES = [["pre", "Pre"], ["mid", "Mid"], ["final", "Final"]] as const;
 /** Clear AI decision labels (no fake 0% when AI did not run). */
 export const AI_STATUS: Record<string, string> = {

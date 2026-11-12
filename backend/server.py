@@ -15,7 +15,7 @@ from typing import Optional, List
 from bson import ObjectId
 from pymongo.errors import DuplicateKeyError
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks, Query, Request
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.cors import CORSMiddleware
@@ -57,6 +57,8 @@ MAX_UPLOAD = 300 * 1024 * 1024  # photos / reference images
 MAX_VIDEO_MB = int(os.environ.get("MAX_VIDEO_MB", "500"))  # configurable per-video size limit (no duration limit)
 MEDIA_CACHE = Path(os.environ.get("MEDIA_CACHE_DIR", "/tmp/rf_media"))
 _transcode_lock = asyncio.Semaphore(1)  # one video conversion at a time keeps the API responsive
+_img_slots = asyncio.Semaphore(int(os.environ.get("IMAGE_PROCESS_SLOTS", "2")))  # full-res photo decodes at once (RAM bound)
+_pack_slots = asyncio.Semaphore(1)  # one evidence-pack/PDF build at a time
 
 
 @app.get("/health", include_in_schema=False)
@@ -929,42 +931,47 @@ async def project_audit(pid: str, u: User = Depends(staff)):
 
 
 # ---------------- evidence ----------------
-async def _process_file(fid: str, data: bytes, meta: Optional[dict]):
-    f = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(fid)}))
+async def _process_file(fid: str, data: Optional[bytes], meta: Optional[dict], spool: Optional[Path] = None):
+    """Derived copies (thumb/display/stamped, video poster + playback). Image decoding is bounded by _img_slots so
+    four simultaneous uploads never decode four full-resolution photos at once. `spool` = video temp file (deleted here)."""
     try:
-        if f.kind in ("photo", "trustmark"):
-            outs = await run_in_threadpool(process_photo, data, meta)
-        else:
-            frames = await run_in_threadpool(video_frames, data, f.duration_s, 1)
-            outs = await run_in_threadpool(process_photo, frames[0], None) if frames else {}
-            outs.pop("display", None)
-        paths = dict(f.paths)
-        names = list(outs)
-        # thumbnail/display/stamped copies upload in parallel instead of one Dropbox round-trip after another
-        stored = await asyncio.gather(*[storage.aput(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, v, "jpg"),
-                                                     outs[v], "image/jpeg") for v in names])
-        paths.update(dict(zip(names, stored)))
-        await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {f"paths.{k}": v for k, v in paths.items()} | {"processing": "ready"}})
-    except Exception as e:
-        log.exception("processing failed %s", fid)
-        await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"processing": "failed", "processing_error": str(e)[:200]}})
-    if f.kind == "video":
-        await _make_playback(fid, data)
+        f = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(fid)}))
+        try:
+            async with _img_slots:
+                if f.kind in ("photo", "trustmark"):
+                    outs = await run_in_threadpool(process_photo, data, meta)
+                else:
+                    frames = await run_in_threadpool(video_frames, spool or data, f.duration_s, 1)
+                    outs = await run_in_threadpool(process_photo, frames[0], None) if frames else {}
+                    outs.pop("display", None)
+            data = None  # release the upload bytes before the storage round-trips
+            paths = dict(f.paths)
+            names = list(outs)
+            # thumbnail/display/stamped copies upload in parallel instead of one Dropbox round-trip after another
+            stored = await asyncio.gather(*[storage.aput(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, v, "jpg"),
+                                                         outs[v], "image/jpeg") for v in names])
+            del outs
+            paths.update(dict(zip(names, stored)))
+            await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {f"paths.{k}": v for k, v in paths.items()} | {"processing": "ready"}})
+        except Exception as e:
+            log.exception("processing failed %s", fid)
+            await db.files.update_one({"_id": ObjectId(fid)}, {"$set": {"processing": "failed", "processing_error": str(e)[:200]}})
+        if f.kind == "video" and spool:
+            await _make_playback(fid, spool)
+    finally:
+        if spool:
+            spool.unlink(missing_ok=True)
 
 
-async def _make_playback(fid: str, data: bytes):
-    """Builds the universal H.264 playback copy. Original stays untouched (export + audit use the original)."""
+async def _make_playback(fid: str, src: Path):
+    """Builds the universal H.264 playback copy from the video on disk. Original stays untouched (export + audit use the original)."""
     f = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(fid)}))
     async with _transcode_lock:
         try:
             with tempfile.TemporaryDirectory() as td:
-                src, dst = os.path.join(td, "src"), os.path.join(td, "play.mp4")
-                with open(src, "wb") as fh:
-                    fh.write(data)
-                info = await run_in_threadpool(make_playback, src, dst)
-                with open(dst, "rb") as fh:
-                    out = fh.read()
-            path = await storage.aput(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, "playback", "mp4"), out, "video/mp4")
+                dst = os.path.join(td, "play.mp4")
+                info = await run_in_threadpool(make_playback, str(src), dst)
+                path = await storage.aput_file(evidence_path(f.project_id, f.nc_id, f.submission_id or "reference", fid, "playback", "mp4"), dst, "video/mp4")
             upd = {"paths.playback": path, "playback": "ready", "video_codec": info["video"], "playback_mode": info["mode"]}
             if not f.duration_s and info.get("duration"):
                 upd["duration_s"] = round(info["duration"], 1)
@@ -979,8 +986,10 @@ async def backfill_playback():
     async for d in db.files.find({"kind": "video", "playback": None, "status": {"$ne": "discarded"}}, {"paths": 1}):
         try:
             await db.files.update_one({"_id": d["_id"]}, {"$set": {"playback": "pending"}})
-            data, _ = await storage.aget(d["paths"]["original"])
-            await _make_playback(str(d["_id"]), data)
+            with tempfile.TemporaryDirectory() as td:
+                src = Path(td) / "src"
+                await storage.aget_file(d["paths"]["original"], str(src))
+                await _make_playback(str(d["_id"]), src)
         except Exception:
             log.exception("playback backfill failed %s", d["_id"])
 
@@ -1013,34 +1022,81 @@ async def property_folder(pid: str) -> str:
 
 async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict, kind: str, source: str,
                        submission_id: Optional[str], bg: BackgroundTasks) -> EvidenceFile:
-    data = await file.read()
-    if not data:
+    spool = None  # videos are streamed to a temp file (hashed on the way) instead of being held in RAM
+    if kind == "video":
+        spool, size, sha, head = await run_in_threadpool(_spool_upload, file.file)
+        data = None
+    else:
+        data = await file.read()
+        size, head = len(data), data[:16]
+    try:
+        f, new = await _store_checked(nc, p, u, file, meta, kind, source, submission_id, data, spool, size, head, sha if spool else None)
+    except BaseException:
+        if spool:
+            spool.unlink(missing_ok=True)
+        raise
+    if not new:  # duplicate retry returned the stored record: nothing to process
+        if spool:
+            spool.unlink(missing_ok=True)
+        return f
+    stamp_meta = None
+    # Only photos taken with the in-app camera get the visible stamp; gallery/library uploads keep their pixels as-is
+    # (no overlay, nothing fabricated). Historical files are untouched.
+    if kind == "photo" and source == "in_app_camera":
+        stamp_meta = {**meta, "location_verified": f.location_verified, "project_ref": p.ref, "postcode": p.postcode,
+                      "nc_number": nc.number, "source": source}
+    bg.add_task(_process_file, f.id, data, stamp_meta, spool)
+    await audit("evidence.uploaded", u.id, f"nc:{nc.id}",
+                {"file_id": f.id, "kind": kind, "source": source, "sha256": f.sha256, "size": size,
+                 "location_verified": f.location_verified, "captured_at": f.captured_at, "server_received_at": f.server_received_at})
+    return f
+
+
+def _spool_upload(fobj) -> tuple:
+    """Copies an uploaded file to MEDIA_CACHE/uploads in 1 MB chunks; returns (path, size, sha256, first bytes)."""
+    d = MEDIA_CACHE / "uploads"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{secrets.token_hex(8)}.part"
+    h, size, head = hashlib.sha256(), 0, b""
+    fobj.seek(0)
+    with open(path, "wb") as out:
+        while chunk := fobj.read(1024 * 1024):
+            if not head:
+                head = chunk[:16]
+            h.update(chunk)
+            size += len(chunk)
+            out.write(chunk)
+    return path, size, h.hexdigest(), head
+
+
+async def _store_checked(nc, p, u, file, meta, kind, source, submission_id, data, spool, size, head, sha) -> EvidenceFile:
+    if not size:
         raise HTTPException(400, "Empty file")
     limit = MAX_VIDEO_MB * 1024 * 1024 if kind == "video" else MAX_UPLOAD
-    if len(data) > limit:
+    if size > limit:
         raise HTTPException(413, f"File too large (maximum {MAX_VIDEO_MB} MB per video)" if kind == "video" else "File too large")
     expected = meta.get("size_bytes")
-    if isinstance(expected, (int, float)) and expected > 0 and int(expected) != len(data):
+    if isinstance(expected, (int, float)) and expected > 0 and int(expected) != size:
         # interrupted transfer: never store/mark a partial file as uploaded; the device keeps it and retries
         raise HTTPException(422, "Upload incomplete - will retry")
     # validate the real file type from its bytes (client content-type/filename are not trusted)
-    sniff = _sniff(data)
+    sniff = _sniff(head)
     allowed = {"video": {"mp4", "mov"}, "photo": {"jpg", "png", "heic", "webp"}, "trustmark": {"jpg", "png", "heic", "webp"}}.get(kind, {"jpg", "png"})
     if sniff not in allowed:
         raise HTTPException(415, "Unsupported file type")
     fid = ObjectId()
     mime = {"jpg": "image/jpeg", "png": "image/png", "heic": "image/heic", "webp": "image/webp", "mp4": "video/mp4", "mov": "video/quicktime"}[sniff]
     ext = sniff  # server-chosen extension: no user-controlled path parts
-    sha = hashlib.sha256(data).hexdigest()
+    sha = sha or hashlib.sha256(data).hexdigest()
     if kind in ("photo", "video"):  # originals: the property's Media folder (shared by projects at the same address)
         dest = media_path(await property_folder(p.id), p.ref, nc.number, kind, str(fid), ext, now_iso())
     else:  # TrustMark reference images are app-generated copies of the report
         dest = evidence_path(p.id, nc.id, submission_id or "reference", str(fid), "original", ext)
-    path = await storage.aput(dest, data, mime)
+    path = await (storage.aput_file(dest, str(spool), mime) if spool else storage.aput(dest, data, mime))
     lat, lng, acc = meta.get("lat"), meta.get("lng"), meta.get("accuracy_m")
     loc_ok = source == "in_app_camera" and lat is not None and lng is not None and acc is not None and float(acc) <= 50
     f = EvidenceFile(id=str(fid), project_id=p.id, nc_id=nc.id, submission_id=submission_id, kind=kind, source=source,
-                     paths={"original": path}, sha256=sha, size=len(data), mime=mime, original_name=file.filename or "",
+                     paths={"original": path}, sha256=sha, size=size, mime=mime, original_name=file.filename or "",
                      captured_at=meta.get("captured_at"), tz=meta.get("tz"), tz_offset_min=meta.get("tz_offset_min"),
                      lat=lat, lng=lng, accuracy_m=acc, location_verified=loc_ok, duration_s=meta.get("duration_s"),
                      uploaded_by=u.id, client_id=meta.get("client_id"), playback="pending" if kind == "video" else None,
@@ -1050,19 +1106,9 @@ async def store_upload(nc: NC, p: Project, u: User, file: UploadFile, meta: dict
     except DuplicateKeyError:  # the same upload (client_id) was stored by a simultaneous retry: return that record
         dup = await db.files.find_one({"client_id": f.client_id, "nc_id": nc.id})
         if dup:
-            return EvidenceFile.from_mongo(dup)
+            return EvidenceFile.from_mongo(dup), False
         raise
-    stamp_meta = None
-    # Only photos taken with the in-app camera get the visible stamp; gallery/library uploads keep their pixels as-is
-    # (no overlay, nothing fabricated). Historical files are untouched.
-    if kind == "photo" and source == "in_app_camera":
-        stamp_meta = {**meta, "location_verified": loc_ok, "project_ref": p.ref, "postcode": p.postcode,
-                      "nc_number": nc.number, "source": source}
-    bg.add_task(_process_file, str(fid), data, stamp_meta)
-    await audit("evidence.uploaded", u.id, f"nc:{nc.id}",
-                {"file_id": str(fid), "kind": kind, "source": source, "sha256": sha, "size": len(data),
-                 "location_verified": loc_ok, "captured_at": f.captured_at, "server_received_at": f.server_received_at})
-    return f
+    return f, True
 
 
 @api.post("/ncs/{nc_id}/evidence")
@@ -1167,7 +1213,9 @@ async def discard_evidence(fid: str, u: User = Depends(current_user)):
     if u.role == "installer" and f.uploaded_by != u.id:
         raise HTTPException(403, "You can only remove your own drafts")
     # Soft-remove from the submission; the original object and audit record are retained.
-    await db.files.update_one({"_id": oid(fid)}, {"$set": {"status": "discarded"}})
+    await db.files.update_one({"_id": oid(fid)}, {"$set": {"status": "discarded", "discarded_by": u.id, "discarded_at": now_iso()}})
+    # never left in the PDF selection; the remaining photos keep their order
+    await db.ncs.update_one({"_id": oid(f.nc_id)}, {"$pull": {"evidence_selection.ids": fid, "evidence_selection.ai_ids": fid}})
     if f.kind == "video":
         latest = await db.files.find_one({"nc_id": f.nc_id, "kind": "video", "status": {"$in": ["draft", "submitted", "superseded"]}},
                                          {"_id": 1}, sort=[("server_received_at", -1)])
@@ -1201,8 +1249,10 @@ async def run_assessment(nc_id: str, sub_id: str):
         video = None
         if sub.video_id:
             video = EvidenceFile.from_mongo(await db.files.find_one({"_id": ObjectId(sub.video_id)}))
-            vbytes = (await storage.aget(video.paths["original"]))[0]
-            frames = await run_in_threadpool(video_frames, vbytes, video.duration_s, 4)
+            with tempfile.TemporaryDirectory() as td:  # frames are taken from a disk copy, not a full in-RAM video
+                vpath = Path(td) / "v"
+                await storage.aget_file(video.paths["original"], str(vpath))
+                frames = await run_in_threadpool(video_frames, vpath, video.duration_s, 4)
             for i, fr in enumerate(frames):
                 p = await storage.aput(evidence_path(nc.project_id, nc_id, sub_id, video.id, f"frame{i}", "jpg"), fr, "image/jpeg")
                 await db.files.update_one({"_id": ObjectId(video.id)}, {"$set": {f"paths.frame{i}": p}})
@@ -1610,9 +1660,8 @@ async def _local_copy(fid: str, variant: str, spath: str) -> Path:
     MEDIA_CACHE.mkdir(parents=True, exist_ok=True)
     p = MEDIA_CACHE / f"{fid}_{variant}"
     if not p.exists():
-        data, _ = await storage.aget(spath)
         tmp = MEDIA_CACHE / f"{fid}_{variant}.{secrets.token_hex(4)}.part"
-        tmp.write_bytes(data)
+        await storage.aget_file(spath, str(tmp))  # streamed to disk, never fully in RAM
         tmp.replace(p)
         files = sorted((x for x in MEDIA_CACHE.iterdir() if not x.name.endswith(".part")), key=lambda x: x.stat().st_mtime)
         total = sum(x.stat().st_size for x in files)
@@ -1660,7 +1709,7 @@ def _range_response(path: Path, ct: str, range_header: Optional[str]):
 
 
 _IMG_CACHE: "collections.OrderedDict[str, tuple]" = collections.OrderedDict()
-_IMG_CACHE_MAX = 96 * 1024 * 1024  # bounded memory for small derived images (thumb/display never change once written)
+_IMG_CACHE_MAX = int(os.environ.get("IMG_CACHE_MB", "48")) * 1024 * 1024  # bounded memory for small derived images
 _img_cache_bytes = 0
 
 
@@ -1752,9 +1801,9 @@ async def export_project(pid: str, exp: int, sig: str):
     if not p or p.get("deleted"):
         raise HTTPException(404, "Project not found")
     data, _ = await cached_pack(pid, p)
-    await audit("export.evidence_pack_downloaded", None, f"project:{pid}", {"size": len(data)})
-    return Response(data, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
+    await audit("export.evidence_pack_downloaded", None, f"project:{pid}", {"size": data.stat().st_size})
+    return FileResponse(data, media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{p["ref"]}_Evidence_Pack.zip"'})
 
 
 async def pack_fingerprint(pid: str, p: dict) -> str:
@@ -1782,17 +1831,23 @@ PACK_DIR = Path(os.environ.get("MEDIA_CACHE_DIR", "/tmp/rf_media")) / "packs"
 
 
 async def cached_pack(pid: str, p: dict) -> tuple:
-    """(zip bytes, fingerprint): reuses the last generated pack while its content is unchanged."""
+    """(zip path on disk, fingerprint): reuses the last generated pack while its content is unchanged.
+    Packs are built and served from disk (never held whole in RAM); one build at a time."""
     fp = await pack_fingerprint(pid, p)
     path = PACK_DIR / f"{pid}-{fp}.zip"
     if path.exists():
-        return path.read_bytes(), fp
-    data, _ = await build_evidence_pack(pid, p)
-    PACK_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_bytes(data)
-    tmp.replace(path)
-    return data, fp
+        return path, fp
+    async with _pack_slots:
+        if path.exists():  # built by a concurrent request while waiting
+            return path, fp
+        PACK_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{secrets.token_hex(4)}.tmp")
+        try:
+            await build_evidence_pack(pid, p, str(tmp))
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return path, fp
 
 
 def _dbx_location(path: str) -> Optional[str]:
@@ -1827,15 +1882,16 @@ async def export_to_dropbox(pid: str, u: User = Depends(staff)):
     try:
         data, _ = await cached_pack(pid, p)
         ts = now_iso()
-        path = await storage.aput(export_path(await property_folder(pid), p["ref"], ts, fp[:6]), data, "application/zip")
+        path = await storage.aput_file(export_path(await property_folder(pid), p["ref"], ts, fp[:6]), str(data), "application/zip")
+        size = data.stat().st_size
         if not path.startswith("dbx:"):
             raise RuntimeError("Pack was not stored in Dropbox")
     except Exception as e:
         await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(e)[:200]}})
         await audit("export.dropbox_failed", u.id, f"project:{pid}", {"error": str(e)[:200]})
         raise HTTPException(502, "Dropbox export failed. Please try again.")
-    await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "created_at": ts}})
-    await audit("export.saved_to_dropbox", u.id, f"project:{pid}", {"path": path, "size": len(data), "fingerprint": fp})
+    await db.dropbox_exports.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": size, "created_at": ts}})
+    await audit("export.saved_to_dropbox", u.id, f"project:{pid}", {"path": path, "size": size, "fingerprint": fp})
     return {"status": "exported", "location": await run_in_threadpool(_dbx_location, path), "saved_at": ts}
 
 
@@ -1869,13 +1925,14 @@ async def run_auto_pack(key: str):
         data, fp = await cached_pack(pid, p)
         n = None
         ts = now_iso()
-        path = await storage.aput(export_path(await property_folder(pid), p["ref"], ts, f"v{job['cycle']}-{secrets.token_hex(3)}"),
-                                  data, "application/zip")
+        path = await storage.aput_file(export_path(await property_folder(pid), p["ref"], ts, f"v{job['cycle']}-{secrets.token_hex(3)}"),
+                                       str(data), "application/zip")
         if not path.startswith("dbx:"):
             raise RuntimeError("Pack was not stored in Dropbox")
-        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": len(data), "fingerprint": fp,
+        size = data.stat().st_size
+        await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "saved", "path": path, "size": size, "fingerprint": fp,
                                                               "saved_at": ts, "error": None}})
-        await audit("export.auto_pack_saved", None, f"project:{pid}", {"cycle": job["cycle"], "path": path, "size": len(data)})
+        await audit("export.auto_pack_saved", None, f"project:{pid}", {"cycle": job["cycle"], "path": path, "size": size})
     except Exception as e:
         log.exception("auto evidence pack failed %s", key)
         await db.auto_packs.update_one({"_id": key}, {"$set": {"status": "failed", "error": str(e)[:200], "failed_at": now_iso()}})
@@ -2131,8 +2188,10 @@ async def set_pdf_include(fid: str, body: PdfIncludeIn, u: User = Depends(staff)
     return {"ok": True, **upd}
 
 
-async def build_evidence_pack(pid: str, p: dict):
-    from evidence_pack import slug, select_photos, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable, distinct
+async def build_evidence_pack(pid: str, p: dict, dest: str):
+    """Writes the pack zip to `dest`. Memory: only one NC's photos are loaded at a time (TrustMark copies are kept
+    across NCs for the repeated-photo check), and videos are streamed storage -> temp file -> zip."""
+    from evidence_pack import slug, nc_pdf, build_zip, repeated_hashes, drop_repeated, readable, distinct
     ncs = await db.ncs.find({"project_id": pid}).sort("number", 1).to_list(500)
     entries, vcount, prepared = [], {}, []
 
@@ -2150,28 +2209,38 @@ async def build_evidence_pack(pid: str, p: dict):
         files = await db.files.find({"nc_id": nid, "status": {"$in": ["submitted", "draft", "superseded"]}}).sort("server_received_at", 1).to_list(5000)
         trust = [b for f in files if f["kind"] == "trustmark" and not f.get("excluded") for b in [await get(f, "display", "original")] if b]
         trust = await run_in_threadpool(readable, trust)
-        prepared.append((n, files, trust, await pdf_photo_groups(n, files, get)))
-    rep = await run_in_threadpool(repeated_hashes, [t for _, _, t, _ in prepared]) if len(prepared) > 1 else set()
-    for n, files, trust, rem in prepared:
-        trust = await run_in_threadpool(drop_repeated, trust, rep)
-        trust = await run_in_threadpool(distinct, trust, [], 4)  # near-identical copies of the same TrustMark photo shown once
-        name = f"{n['number']}_{slug(n.get('description', ''))}"
-        nvid = sum(1 for f in files if f["kind"] == "video" and f["status"] != "superseded")
-        if not (n.get("export_note") or "").strip():  # draft the works description instead of printing an empty section
-            desc = ((n.get("pdf_ai") or {}).get("description") or (n.get("ai") or {}).get("works_description") or "").strip()
-            if desc:
-                await db.ncs.update_one({"_id": n["_id"], "export_note_source": {"$ne": "staff"}}, {"$set": {"export_note": desc, "export_note_source": "ai"}})
-            n["export_note"] = desc or (n.get("installer_note") or "").strip()
-        pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, nvid)
-        entries.append((f"{name}.pdf", pdf))
-        for f in files:
-            if f["kind"] == "video":
-                data = await get(f, "original")
-                if data:
+        prepared.append((n, files, trust))
+    rep = await run_in_threadpool(repeated_hashes, [t for _, _, t in prepared]) if len(prepared) > 1 else set()
+    PACK_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=str(PACK_DIR)) as td:
+        for i, (n, files, trust) in enumerate(prepared):
+            trust = await run_in_threadpool(drop_repeated, trust, rep)
+            trust = await run_in_threadpool(distinct, trust, [], 4)  # near-identical copies of the same TrustMark photo shown once
+            rem = await pdf_photo_groups(n, files, get)
+            name = f"{n['number']}_{slug(n.get('description', ''))}"
+            nvid = sum(1 for f in files if f["kind"] == "video" and f["status"] != "superseded")
+            if not (n.get("export_note") or "").strip():  # draft the works description instead of printing an empty section
+                desc = ((n.get("pdf_ai") or {}).get("description") or (n.get("ai") or {}).get("works_description") or "").strip()
+                if desc:
+                    await db.ncs.update_one({"_id": n["_id"], "export_note_source": {"$ne": "staff"}}, {"$set": {"export_note": desc, "export_note_source": "ai"}})
+                n["export_note"] = desc or (n.get("installer_note") or "").strip()
+            pdf = await run_in_threadpool(nc_pdf, clean(p), clean(n), trust[:6], rem, nvid)
+            del rem
+            prepared[i] = (n, files, None)  # this NC's TrustMark images are no longer needed
+            entries.append((f"{name}.pdf", pdf))
+            for f in files:
+                if f["kind"] == "video" and f.get("paths", {}).get("original"):
+                    vpath = Path(td) / f"{f['_id']}.mp4"
+                    try:
+                        await storage.aget_file(f["paths"]["original"], str(vpath))
+                    except Exception:
+                        log.warning("pack skip %s", f["_id"])
+                        continue
                     vcount[name] = vcount.get(name, 0) + 1
                     suffix = "" if vcount[name] == 1 else f"_{vcount[name]}"
-                    entries.append((f"Videos/{name}{suffix}.mp4", data))
-    return await run_in_threadpool(build_zip, entries), len(entries)
+                    entries.append((f"Videos/{name}{suffix}.mp4", vpath))
+        await run_in_threadpool(build_zip, entries, dest)
+    return len(entries)
 
 
 @api.get("/export/all.json")

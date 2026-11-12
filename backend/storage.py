@@ -27,6 +27,22 @@ class StorageProvider(ABC):
     async def aget(self, path: str) -> Tuple[bytes, str]:
         return await run_in_threadpool(self.get, path)
 
+    # File-based variants keep large objects (videos, evidence packs) on disk instead of in RAM.
+    def put_file(self, path: str, src: str, content_type: str) -> str:
+        with open(src, "rb") as fh:
+            return self.put(path, fh.read(), content_type)
+
+    def get_file(self, path: str, dst: str) -> None:
+        data, _ = self.get(path)
+        with open(dst, "wb") as fh:
+            fh.write(data)
+
+    async def aput_file(self, path: str, src: str, content_type: str) -> str:
+        return await run_in_threadpool(self.put_file, path, src, content_type)
+
+    async def aget_file(self, path: str, dst: str) -> None:
+        await run_in_threadpool(self.get_file, path, dst)
+
 
 class EmergentStorage(StorageProvider):
     name = "emergent"
@@ -61,6 +77,20 @@ class EmergentStorage(StorageProvider):
     def get(self, path):
         r = self._req("GET", path, timeout=120)
         return r.content, r.headers.get("Content-Type", "application/octet-stream")
+
+    def put_file(self, path, src, content_type):
+        with open(src, "rb") as fh:  # streamed from disk by requests
+            r = self._req("PUT", path, headers={"Content-Type": content_type, "Content-Length": str(os.path.getsize(src))}, data=fh, timeout=1800)
+        return r.json()["path"]
+
+    def get_file(self, path, dst):
+        r = self._req("GET", path, timeout=600, stream=True)
+        try:
+            with open(dst, "wb") as fh:
+                for chunk in r.iter_content(1024 * 1024):
+                    fh.write(chunk)
+        finally:
+            r.close()
 
 
 class HybridStorage(StorageProvider):
@@ -128,6 +158,45 @@ class HybridStorage(StorageProvider):
         finally:
             resp.close()
         return data, mimetypes.guess_type(md.name)[0] or "application/octet-stream"
+
+    def _upload_file(self, d, dpath, src):
+        """Chunked Dropbox upload read from disk: at most one CHUNK in memory, whatever the file size."""
+        from dropbox.files import CommitInfo, UploadSessionCursor, WriteMode
+        size = os.path.getsize(src)
+        with open(src, "rb") as fh:
+            if size <= self.CHUNK:
+                return d.files_upload(fh.read(), dpath, mode=WriteMode.add, autorename=False, mute=True)
+            start = d.files_upload_session_start(fh.read(self.CHUNK))
+            cur = UploadSessionCursor(start.session_id, self.CHUNK)
+            while size - cur.offset > self.CHUNK:
+                d.files_upload_session_append_v2(fh.read(self.CHUNK), cur)
+                cur.offset += self.CHUNK
+            return d.files_upload_session_finish(fh.read(), cur, CommitInfo(path=dpath, mode=WriteMode.add, autorename=False, mute=True))
+
+    def put_file(self, path, src, content_type):
+        if not self.dropbox_ready:
+            return self.emergent.put_file(path, src, content_type)
+        import time
+        import dropbox
+        d, dpath = self.client(), "/" + path
+        for attempt in range(4):
+            try:
+                return "dbx:" + self._upload_file(d, dpath, src).id
+            except dropbox.exceptions.ApiError as e:
+                if "conflict" in str(e.error).lower():
+                    return "dbx:" + d.files_get_metadata(dpath).id
+                raise
+            except dropbox.exceptions.BadInputError as e:
+                raise RuntimeError(f"Dropbox refused the upload (check app permissions, then reconnect): {str(e)[:160]}")
+            except (dropbox.exceptions.InternalServerError, dropbox.exceptions.RateLimitError, requests.RequestException):
+                if attempt == 3:
+                    raise
+                time.sleep(2 ** attempt)
+
+    def get_file(self, path, dst):
+        if not path.startswith("dbx:"):
+            return self.emergent.get_file(path, dst)
+        self.client().files_download_to_file(dst, path[4:])  # streamed to disk by the SDK
 
 
 def get_storage() -> StorageProvider:

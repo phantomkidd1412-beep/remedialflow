@@ -3,7 +3,9 @@ import { Image } from "expo-image";
 import { FlatList, Pressable, ScrollView, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
-import { NCItem, ProjectRow, DONE, EvidenceFile, installerState, useMediaConfig } from "@/src/projects";
+import { useQueryClient } from "@tanstack/react-query";
+import { api } from "@/src/api";
+import { NCItem, ProjectRow, DONE, EvidenceFile, SIMPLE, simpleStatus, useMediaConfig } from "@/src/projects";
 import { SafetyToggle } from "@/src/components/SafetyToggle";
 import { evidenceState, QueueItem, STATUS_LABEL, tzInfo, useQueue } from "@/src/queue";
 import { Badge, Btn, Feather, Label, Sheet, useToast } from "@/src/ui";
@@ -28,9 +30,27 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const [pv, setPv] = useState<{ files: EvidenceFile[]; i: number } | null>(null);
   const [confirm, setConfirm] = useState<QueueItem | null>(null);
   const [armed, setArmed] = useState(false);
+  const [removing, setRemoving] = useState<EvidenceFile | null>(null);
+  const [busy, setBusy] = useState(false);
+  const qc = useQueryClient();
   const openConfirm = (q: QueueItem) => {
     setArmed(false);
     setConfirm(q);
+  };
+  // Unsubmitted evidence only (server refuses anything else): soft-removed from the NC and its PDF selection.
+  const remove = async () => {
+    if (!removing) return;
+    setBusy(true);
+    try {
+      await api(`/evidence/${removing.id}`, { method: "DELETE" });
+      await qc.invalidateQueries({ queryKey: ["project", project.id] });
+      toast(removing.kind === "video" ? "Video removed" : "Photo removed");
+      setRemoving(null);
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const done = DONE.includes(nc.status);
@@ -44,10 +64,13 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const submittedVideos = (nc.videos ?? []).filter((v) => v.status !== "draft");
   const { maxVideoMb } = useMediaConfig();
   const canSubmit = !done && nc.status !== "assessing" && !submitQueued && (nc.draft_count > 0 || uploads.length > 0);
-  const ist = installerState(nc);
+  const simple = simpleStatus(nc, uploads.length);
+  const st = SIMPLE[simple];
   const badge = ev
     ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", compressing: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
-    : { status: ist.badge, label: ist.label };
+    : { status: st.badge, label: st.label };
+  const addedPhotos = drafts.length + uploads.filter((q) => q.meta?.kind !== "video").length;
+  const addedVideos = draftVideos.length + uploads.filter((q) => q.meta?.kind === "video").length;
   // Mandatory evidence for new NCs: pre, mid and final photos plus a video for this NC (queued items count too)
   const allPhotos = [...nc.photos.filter((p) => p.status !== "superseded"), ...uploads.filter((q) => q.meta?.kind === "photo").map((q) => ({ stage: q.meta?.stage }))];
   const has = {
@@ -95,15 +118,16 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const submit = async () => {
     if (missing.length) return toast(`Before submitting, add: ${missing.join(", ")}`);
     await enqueueSubmit(project.id, nc.id, undefined); // work comment box removed: never send a value, stored comments untouched
-    toast(uploads.some((q) => q.status !== "uploaded") ? "Submit queued · sends after uploads finish" : "Submitting…");
+    toast(uploads.some((q) => q.status !== "uploaded") ? `${nc.number} submitted · sends after uploads finish` : `${nc.number} submitted for review`);
+    onToggle(nc.id); // back to the NC list, where the new status shows on the card
   };
 
   return (
-    <View style={[s.card, expanded && { borderColor: colors.brandPrimary }]} testID={`nc-card-${nc.number}`}>
+    <View style={[s.card, expanded && { borderColor: colors.brandPrimary }, !expanded && (simple === "revisit" || simple === "action") && { borderColor: colors.brandPrimary, borderWidth: 2 }]} testID={`nc-card-${nc.number}`}>
       <Pressable onPress={() => onToggle(nc.id)} style={s.head} testID={`nc-toggle-${nc.number}`}>
         <View style={{ flex: 1, gap: 4 }}>
           <View style={s.headRow}>
-            <Feather name={ist.icon as any} size={20} color={ist.key === "approved" ? colors.success : ist.key === "more_evidence" ? colors.error : ist.key === "not_started" ? colors.muted : colors.brandPrimary} testID={`nc-state-icon-${nc.number}-${ist.key}`} />
+            <Feather name={st.icon as any} size={20} color={simple === "approved" ? colors.success : simple === "revisit" ? colors.error : simple === "not_started" ? colors.muted : colors.brandPrimary} testID={`nc-state-icon-${nc.number}-${simple}`} />
             <Text style={s.num}>{nc.number}</Text>
             <Badge status={badge.status} label={badge.label} testID={`nc-status-${nc.number}`} />
           </View>
@@ -139,26 +163,19 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
             </View>
           ) : null}
 
-          <Label>Original TrustMark photos</Label>
+          <Text style={s.step} testID={`step1-${nc.number}`}>1  What needs fixing</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
-            {nc.trustmark.length ? nc.trustmark.map((f, i) => <Thumb key={f.id} f={f} size={96} onPress={() => setPv({ files: nc.trustmark, i })} testID={`trustmark-thumb-${f.id}`} />) : <Text style={s.muted}>None provided</Text>}
+            {nc.trustmark.length ? nc.trustmark.map((f, i) => <Thumb key={f.id} f={f} size={96} onPress={() => setPv({ files: nc.trustmark, i })} testID={`trustmark-thumb-${f.id}`} />) : <Text style={s.muted}>No TrustMark photos provided</Text>}
           </ScrollView>
 
-          {nc.original_text && nc.original_text !== nc.description ? (
-            <>
-              <Label>Original TrustMark wording</Label>
-              <Text style={s.work} selectable>{nc.original_text}</Text>
-            </>
-          ) : null}
+          {nc.original_text && nc.original_text !== nc.description ? <Text style={s.work} selectable>{nc.original_text}</Text> : null}
           {!done ? (
             <>
-              <Pressable onPress={() => setOrig((o) => !o)} style={s.origRow} testID={`original-quality-${nc.number}`}>
-                <Feather name={orig ? "check-square" : "square"} size={18} color={colors.onSurface} />
-                <Text style={s.stageText}>Original quality (larger, slower upload)</Text>
-              </Pressable>
-              {nc.requires_stages && nc.video_required && !has.video ? (
-                <Text style={[s.muted, { color: colors.onWarning }]} testID={`mandatory-${nc.number}`}>A remediation video is required for this NC</Text>
-              ) : null}
+              <Text style={s.step} testID={`step2-${nc.number}`}>2  Add evidence photos</Text>
+              <Text style={[s.count, missing.length ? { color: colors.onWarning } : null]} testID={`evidence-count-${nc.number}`}>
+                {addedPhotos} photo{addedPhotos === 1 ? "" : "s"}{addedVideos ? ` + ${addedVideos} video${addedVideos === 1 ? "" : "s"}` : ""} added{addedPhotos || addedVideos ? " · not submitted yet" : ""}
+                {missing.length ? `\nStill needed: ${missing.join(", ")}` : ""}
+              </Text>
             </>
           ) : null}
           {!done ? (
@@ -167,11 +184,21 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
               <Btn title="Video" icon="video" variant="outline" onPress={() => router.push({ pathname: "/video", params })} style={{ flex: 1 }} testID={`record-video-${nc.number}`} disabled={nc.status === "assessing"} />
             </View>
           ) : null}
-          {!done ? <Text style={s.muted} testID={`video-limit-${nc.number}`}>Videos: any length, up to {maxVideoMb} MB each. Add as many as needed.</Text> : null}
+          {!done ? (
+            <View style={s.actions}>
+              <Btn title="Upload from gallery" icon="image" variant="outline" onPress={pickGallery} style={{ flex: 1 }} testID={`gallery-upload-${nc.number}`} disabled={nc.status === "assessing"} />
+            </View>
+          ) : null}
+          {!done ? (
+            <Pressable onPress={() => setOrig((o) => !o)} style={s.origRow} testID={`original-quality-${nc.number}`}>
+              <Feather name={orig ? "check-square" : "square"} size={18} color={colors.onSurface} />
+              <Text style={s.stageText}>Original quality (larger, slower upload)</Text>
+            </Pressable>
+          ) : null}
 
           {drafts.length || uploads.length || draftVideos.length ? (
             <>
-              <Label>New evidence {nc.status === "assessing" ? "" : "(not yet submitted)"}</Label>
+              <Label>Added, not yet submitted · tap ✕ to remove a mistake</Label>
               <FlatList
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -181,10 +208,15 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
                 initialNumToRender={8}
                 windowSize={5}
                 renderItem={({ item: x }) =>
-                  x.k === "v" ? (
-                    <Thumb f={x.f} onPress={() => setView(x.f)} testID={`video-thumb-${x.f.id}`} />
-                  ) : x.k === "p" ? (
-                    <Thumb f={x.f} onPress={() => setPv({ files: drafts, i: x.i })} testID={`draft-thumb-${x.f.id}`} />
+                  x.k === "v" || x.k === "p" ? (
+                    <View>
+                      <Thumb f={x.f} onPress={() => (x.k === "v" ? setView(x.f) : setPv({ files: drafts, i: x.i }))} testID={`${x.k === "v" ? "video" : "draft"}-thumb-${x.f.id}`} />
+                      {nc.status !== "assessing" ? (
+                        <Pressable onPress={() => setRemoving(x.f)} style={s.remove} hitSlop={8} accessibilityLabel="Remove" testID={`remove-draft-${x.f.id}`}>
+                          <Feather name="x" size={16} color={colors.onError} />
+                        </Pressable>
+                      ) : null}
+                    </View>
                   ) : (
                     <Pressable style={s.local} onPress={() => (x.q.status === "failed" ? openConfirm(x.q) : undefined)} onLongPress={() => x.q.status !== "uploaded" && x.q.status !== "uploading" && openConfirm(x.q)} testID={`queued-item-${x.q.id}`}>
                       {x.q.mime?.includes("video") ? <Feather name="film" size={22} color={colors.onSurface} /> : <Image source={{ uri: x.q.uri }} style={{ width: "100%", height: "100%" }} contentFit="cover" />}
@@ -221,16 +253,22 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           ) : null}
 
           {!done ? (
-            <View style={s.actions}>
-              <Btn title="Gallery" icon="image" variant="outline" small onPress={pickGallery} testID={`gallery-upload-${nc.number}`} disabled={nc.status === "assessing"} />
-              <Btn title={nc.status === "assessing" ? "AI checking…" : "Submit evidence"} icon="send" variant="dark" onPress={submit} disabled={!canSubmit} style={{ flex: 1 }} testID={`submit-evidence-${nc.number}`} />
-            </View>
+            <>
+              <Text style={s.step} testID={`step3-${nc.number}`}>3  Submit NC</Text>
+              <Btn title={nc.status === "assessing" ? "Checking evidence…" : submitQueued ? "Submitted" : "Submit NC"} icon="send" variant="dark" onPress={submit} disabled={!canSubmit} style={s.submit} testID={`submit-evidence-${nc.number}`} />
+              {!canSubmit && !submitQueued && nc.status !== "assessing" ? <Text style={s.muted}>Add evidence above, then submit.</Text> : null}
+            </>
           ) : null}
         </View>
       ) : null}
 
       <MediaViewer f={view} onClose={() => setView(null)} />
       {pv ? <PhotoViewer files={pv.files} index={pv.i} onClose={() => setPv(null)} /> : null}
+      <Sheet visible={!!removing} onClose={() => setRemoving(null)} title={removing?.kind === "video" ? "Remove this video?" : "Remove this photo?"} testID="remove-draft-sheet">
+        <Text style={s.work}>It will be taken off {nc.number} and won&apos;t appear in the report. You can add a replacement afterwards.</Text>
+        <Btn title="Remove" icon="trash-2" variant="danger" onPress={remove} loading={busy} testID="remove-draft-confirm" />
+        <Btn title="Keep it" variant="outline" onPress={() => setRemoving(null)} testID="remove-draft-cancel" />
+      </Sheet>
       <Sheet visible={!!confirm} onClose={() => setConfirm(null)} title={confirm ? STATUS_LABEL[confirm.status] : "Unsynced item"} testID="queued-item-sheet">
         <Text style={s.work} testID="queued-item-error">{confirm?.error ? confirm.error : "This file is stored on this phone and has not reached the server yet."}</Text>
         <Btn title="Retry upload" icon="refresh-cw" onPress={() => { if (confirm) retry(confirm.id); setConfirm(null); }} testID="queued-item-retry" />
@@ -253,7 +291,7 @@ const useStyles = makeStyles((c) => ({
   body: { borderTopWidth: BORDER, borderColor: c.border, padding: space.lg, gap: space.sm },
   feedback: { backgroundColor: c.brandTertiary, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, padding: space.md, marginBottom: space.sm },
   fbText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
-  row: { gap: space.sm, paddingBottom: space.sm },
+  row: { gap: space.sm, paddingBottom: space.sm, paddingTop: space.sm, paddingRight: space.sm },
   work: { fontSize: 15, lineHeight: 21, color: c.onSurface, marginBottom: space.sm },
   muted: { fontFamily: fonts.text, fontSize: 12, color: c.muted },
   actions: { flexDirection: "row", gap: space.sm, marginTop: space.sm },
@@ -263,4 +301,8 @@ const useStyles = makeStyles((c) => ({
   local: { width: 72, height: 72, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, borderStyle: "dashed", alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: c.surfaceSecondary },
   localTag: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: c.warning, alignItems: "center" },
   localText: { fontFamily: fonts.text, fontSize: 9, color: c.onWarning },
+  step: { fontFamily: fonts.display, fontWeight: "800", fontSize: 17, color: c.onSurface, marginTop: space.sm },
+  count: { fontFamily: fonts.text, fontSize: 15, fontWeight: "600", color: c.onSurface },
+  submit: { minHeight: 56, marginTop: space.xs },
+  remove: { position: "absolute", top: -6, right: -6, width: 28, height: 28, borderRadius: 14, backgroundColor: c.error, alignItems: "center", justifyContent: "center", borderWidth: 2, borderColor: c.surface },
 }));

@@ -57,8 +57,14 @@ def _font(size: int):
 
 
 def process_photo(data: bytes, meta: Optional[dict]) -> dict:
-    """Returns jpeg bytes for stamped (full res), display (1280) and thumb (360). Original untouched."""
-    img = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    """Returns jpeg bytes for stamped (full res), display (1280) and thumb (360). Original untouched.
+    Memory: the stamp band is composited on its own strip (not a full-size RGBA copy); unstamped photos are
+    JPEG-decoded at reduced scale (still >= 1280px), since only the display/thumb copies are produced from them."""
+    src = Image.open(io.BytesIO(data))
+    if not meta and src.format == "JPEG":
+        src.draft("RGB", (1280, 1280))
+    ImageOps.exif_transpose(src, in_place=True)  # no extra full-size copy
+    img = src if src.mode == "RGB" else src.convert("RGB")
     out = {}
     if meta:
         w, hgt = img.size
@@ -66,22 +72,26 @@ def process_photo(data: bytes, meta: Optional[dict]) -> dict:
         font = _font(fs)
         lines = stamp_lines(meta)
         pad = int(fs * 0.5)
-        band = (fs + pad) * len(lines) + pad
-        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        band = min((fs + pad) * len(lines) + pad, hgt)
+        box = (0, hgt - band, w, hgt)
+        strip = img.crop(box).convert("RGBA")
+        overlay = Image.new("RGBA", strip.size, (0, 0, 0, 150))
         d = ImageDraw.Draw(overlay)
-        d.rectangle([0, hgt - band, w, hgt], fill=(0, 0, 0, 150))
         for i, line in enumerate(lines):
-            d.text((pad, hgt - band + pad + i * (fs + pad)), line, font=font, fill=(255, 255, 255, 255))
-        img = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+            d.text((pad, pad + i * (fs + pad)), line, font=font, fill=(255, 255, 255, 255))
+        img.paste(Image.alpha_composite(strip, overlay).convert("RGB"), box)
+        del strip, overlay
         buf = io.BytesIO()
         img.save(buf, "JPEG", quality=92)
         out["stamped"] = buf.getvalue()
     for name, size, q in (("display", 1280, 78), ("thumb", 360, 70)):
-        c = img.copy()
+        c = img.copy() if name == "display" else img
         c.thumbnail((size, size))
         buf = io.BytesIO()
         c.save(buf, "JPEG", quality=q, optimize=True)
         out[name] = buf.getvalue()
+        if name == "display":
+            img = c  # the thumb is made from the 1280 copy: the full-size image is released here
     return out
 
 
@@ -124,14 +134,18 @@ def make_playback(src: str, dst: str) -> dict:
     return {**info, "mode": "copy" if copy else "transcode"}
 
 
-def video_frames(data: bytes, duration: Optional[float], count: int = 4) -> List[bytes]:
+def video_frames(data, duration: Optional[float], count: int = 4) -> List[bytes]:
+    """`data` may be the video bytes or (preferred, no extra RAM copy) a path to the video on disk."""
     if not FFMPEG:
         return []
     frames = []
     with tempfile.TemporaryDirectory() as td:
-        src = os.path.join(td, "v.mp4")
-        with open(src, "wb") as f:
-            f.write(data)
+        if isinstance(data, (bytes, bytearray)):
+            src = os.path.join(td, "v.mp4")
+            with open(src, "wb") as f:
+                f.write(data)
+        else:
+            src = str(data)
         dur = duration or 8
         for i in range(count):
             t = dur * (i + 1) / (count + 1)

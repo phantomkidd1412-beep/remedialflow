@@ -18,7 +18,7 @@ const CARDS: Key[] = ["action", "this_week", "next_week", "unscheduled", "comple
 
 type ViewMode = "town" | "schedule";
 const PENDING = new Set(["open", "pending", "in_progress", "unassigned"]);
-const REVIEW = new Set(["assessing", "ai_verified", "manual_review", "employee_review", "admin_review"]);
+const REVIEW = new Set(["assessing", "employee_review", "admin_review", "potential_noncompliance", "ai_approved", "ai_verified_signoff"]);
 const REVISIT = new Set(["rejected", "more_evidence"]);
 const COUNTIES = /^(bedfordshire|berkshire|buckinghamshire|cambridgeshire|cheshire|cornwall|cumbria|derbyshire|devon|dorset|durham|essex|gloucestershire|hampshire|herefordshire|hertfordshire|kent|lancashire|leicestershire|lincolnshire|norfolk|northamptonshire|northumberland|nottinghamshire|oxfordshire|rutland|shropshire|somerset|staffordshire|suffolk|surrey|sussex|east sussex|west sussex|warwickshire|wiltshire|worcestershire|yorkshire|north yorkshire|south yorkshire|west yorkshire|east riding of yorkshire|greater london|greater manchester|merseyside|tyne and wear|west midlands|uk|united kingdom|england|wales|scotland)$/i;
 

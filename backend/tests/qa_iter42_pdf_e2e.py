@@ -129,9 +129,11 @@ async def build_pack(pid):
     server.storage.aget = fake_aget  # local synthetic bytes only; storage/Dropbox never touched
     st_mod  # noqa
     p = await db.projects.find_one({"_id": ObjectId(pid)})
-    data, n = await server.build_evidence_pack(pid, p)
-    z = zipfile.ZipFile(io.BytesIO(data))
-    return {name.split("_")[0]: pdf_images(z.read(name)) for name in z.namelist() if name.endswith(".pdf")}
+    import tempfile
+    with tempfile.NamedTemporaryFile(suffix=".zip") as tf:
+        await server.build_evidence_pack(pid, p, tf.name)
+        z = zipfile.ZipFile(tf.name)
+        return {name.split("_")[0]: pdf_images(z.read(name)) for name in z.namelist() if name.endswith(".pdf")}
 
 
 def install_ai_stubs():

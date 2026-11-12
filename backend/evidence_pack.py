@@ -19,7 +19,9 @@ def dhash(data: bytes) -> int:
 
 
 def sharpness(data: bytes) -> float:
-    img = Image.open(io.BytesIO(data)).convert("L")
+    img = Image.open(io.BytesIO(data))
+    img.draft("L", (640, 640))  # decode at >= 640px instead of full resolution; result is thumbnailed to 640 anyway
+    img = img.convert("L")
     img.thumbnail((640, 640))
     edges = ImageStat.Stat(img.filter(ImageFilter.FIND_EDGES)).var[0]
     bright = ImageStat.Stat(img).mean[0]
@@ -27,11 +29,14 @@ def sharpness(data: bytes) -> float:
 
 
 def readable(imgs: List[bytes]) -> List[bytes]:
-    """Drop corrupt/truncated images so one bad file can never break a whole evidence pack."""
+    """Drop corrupt/truncated images so one bad file can never break a whole evidence pack.
+    Decoded at reduced scale (the whole stream is still read, so truncation is still caught)."""
     ok = []
     for b in imgs:
         try:
-            Image.open(io.BytesIO(b)).convert("L")
+            im = Image.open(io.BytesIO(b))
+            im.draft("L", (256, 256))
+            im.convert("L")
             ok.append(b)
         except Exception:
             continue
@@ -216,9 +221,19 @@ def nc_pdf(project: dict, nc: dict, originals: List[bytes], remediation: List[Tu
     return out
 
 
-def build_zip(entries: List[Tuple[str, bytes]]) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for name, data in entries:
-            z.writestr(name, data)
-    return buf.getvalue()
+def build_zip(entries: List[Tuple[str, bytes]], dest: str = None):
+    """Entries: (name, bytes) or (name, Path-on-disk). With `dest`, the zip is written to disk (large videos are
+    copied file-to-file, never held in RAM) and None is returned; without it, zip bytes are returned."""
+    import os
+    buf = open(dest, "wb") if dest else io.BytesIO()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, data in entries:
+                if isinstance(data, (bytes, bytearray)):
+                    z.writestr(name, data)
+                else:
+                    z.write(os.fspath(data), name)
+        return None if dest else buf.getvalue()
+    finally:
+        if dest:
+            buf.close()
