@@ -9,6 +9,7 @@ import { compressPhoto } from "@/src/utils/compress";
 import { authed, BASE, readError } from "@/src/api";
 import { queryClient } from "@/src/query-client";
 import { useAuth } from "@/src/auth";
+import { registerBackgroundUploads, setBackgroundRunner } from "@/src/backgroundUpload";
 
 export type EvidenceMeta = {
   kind: "photo" | "video";
@@ -56,6 +57,8 @@ export function evidenceState(queued: QueueItem[]): EvidenceState | null {
   return null;
 }
 
+const PARALLEL = 4; // photos sent at once (server bounds its own processing)
+const BG_VIDEO_MAX = 80 * 1024 * 1024; // single background transfer stays under the ~100 MB gateway limit
 const SUBMIT_TIMEOUT = 45_000;
 const UPLOAD_TIMEOUT = 10 * 60_000;
 const VIDEO_UPLOAD_TIMEOUT = 90 * 60_000; // long videos on slow site connections
@@ -138,7 +141,7 @@ export function QueueProvider({ children }: PropsWithChildren) {
   const [syncing, setSyncing] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [pct, setPct] = useState<Record<string, number>>({});
-  const lastPct = useRef(0);
+  const lastPct = useRef<Record<string, number>>({});
   const ref = useRef<QueueItem[]>([]);
   const running = useRef(false);
 
@@ -150,6 +153,88 @@ export function QueueProvider({ children }: PropsWithChildren) {
 
   const patch = (id: string, p: Partial<QueueItem>) => save(ref.current.map((i) => (i.id === id ? { ...i, ...p } : i)));
 
+  /** One queue item. "stop" = connection/server problem: pause the queue and retry later (file stays on the phone). */
+  const runOne = async (next: QueueItem): Promise<"ok" | "stop"> => {
+    // photos are compressed fresh for each attempt into a temp file; the queued original is kept until synced
+    let sendUri = next.uri!;
+    let tmp: string | null = null;
+    if (next.type === "upload" && next.mime?.startsWith("image") && !next.meta?.original) {
+      await patch(next.id, { status: "compressing", error: undefined });
+      tmp = await compressPhoto(next.uri!);
+      if (tmp) sendUri = tmp;
+    }
+    await patch(next.id, { status: "uploading", error: undefined });
+    let r: Response;
+    try {
+      if (next.type === "upload") {
+        const onProgress = (f: number) => {
+          // throttle re-renders: only on >=2% change per file
+          if (Math.abs(f - (lastPct.current[next.id] ?? 0)) < 0.02 && f < 1) return;
+          lastPct.current[next.id] = f;
+          setPct((m) => ({ ...m, [next.id]: f }));
+        };
+        const size = sizeOf(sendUri);
+        const meta = JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: size, compressed: !!tmp });
+        // Photos and videos up to BG_VIDEO_MAX go as ONE native background-session transfer (iOS URLSession keeps
+        // sending while the app is minimised or the screen is locked). Larger videos use resumable 8 MB chunks, which
+        // need the app open but resume from the server's confirmed offset.
+        const chunked = !!next.mime?.includes("video") && (size === undefined || size > BG_VIDEO_MAX);
+        r = await withTimeout(authed((t) =>
+          chunked
+            ? uploadChunked(BASE, { ncId: next.ncId, clientId: next.id, uri: sendUri, mime: next.mime!, meta, token: t, onProgress })
+            : uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
+                headers: t ? { Authorization: `Bearer ${t}` } : {},
+                fields: { meta },
+                files: { file: { uri: sendUri, name: next.mime?.includes("video") ? "video.mp4" : "photo.jpg", mimeType: tmp ? "image/jpeg" : next.mime } },
+                onProgress,
+              }),
+        ), next.mime?.includes("video") ? VIDEO_UPLOAD_TIMEOUT : UPLOAD_TIMEOUT).finally(() => {
+          delete lastPct.current[next.id];
+          if (tmp) removeFile(tmp);
+          setPct((m) => {
+            const { [next.id]: _, ...rest } = m;
+            return rest;
+          });
+        });
+      } else {
+        // idempotent on client_id; server refuses (409) until every expected upload has arrived
+        r = await withTimeout(authed((t) =>
+          fetch(`${BASE}/api/ncs/${next.ncId}/submit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+            body: JSON.stringify({ client_id: next.id, expect: next.expect ?? [], note: next.note }),
+          }),
+        ), SUBMIT_TIMEOUT);
+      }
+    } catch (e: any) {
+      await patch(next.id, { status: "pending", error: e?.status === 401 ? "Sign in again to send" : "Waiting for connection" });
+      return "stop"; // offline: stop and retry later
+    }
+    if (r.ok) {
+      // server confirmed receipt (idempotent on client_id) - only now is the local copy released
+      await patch(next.id, { status: "uploaded", error: undefined });
+      setTimeout(() => {
+        removeFile(next.uri);
+        save(ref.current.filter((i) => i.id !== next.id));
+      }, 4000);
+      queryClient.invalidateQueries({ queryKey: ["project", next.projectId] });
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      return "ok";
+    }
+    if (r.status >= 500 || r.status === 429) {
+      await patch(next.id, { status: "pending", error: "Server busy, retrying" });
+      return "stop";
+    }
+    const msg = await readError(r);
+    if (r.status === 422 && /incomplete/i.test(msg)) {
+      // transfer was cut off: file is still on the phone, send it again automatically
+      await patch(next.id, { status: "pending", error: "Upload interrupted, retrying" });
+      return "stop";
+    }
+    await patch(next.id, { status: "failed", error: refusal(r.status, msg) });
+    return "ok";
+  };
+
   const process = useCallback(async () => {
     if (running.current || !user) return;
     running.current = true;
@@ -160,88 +245,17 @@ export function QueueProvider({ children }: PropsWithChildren) {
       for (;;) {
         const own = ref.current.filter(mine);
         const blockedNcs = new Set(own.filter((i) => i.type === "upload" && i.status !== "uploaded").map((i) => i.ncId));
-        const next = own.find(
-          (i) => i.status === "pending" && (i.type === "upload" || !blockedNcs.has(i.ncId)),
-        );
-        if (!next) break;
+        const ups = own.filter((i) => i.type === "upload" && i.status === "pending");
+        const photos = ups.filter((i) => !i.mime?.includes("video")).slice(0, PARALLEL); // up to 4 photos at once
+        const batch = photos.length ? photos : ups.slice(0, 1); // videos one at a time
+        // a submit is only sent once every upload of its NC has been confirmed by the server
+        const sub = batch.length ? undefined : own.find((i) => i.type === "submit" && i.status === "pending" && !blockedNcs.has(i.ncId));
+        const work = batch.length ? batch : sub ? [sub] : [];
+        if (!work.length) break;
         setProgress({ done, total: done + own.filter((i) => i.type === "upload" && (i.status === "pending" || i.status === "uploading")).length });
-        // photos are compressed fresh for each attempt into a temp file; the queued original is kept until synced
-        let sendUri = next.uri!;
-        let tmp: string | null = null;
-        if (next.type === "upload" && next.mime?.startsWith("image") && !next.meta?.original) {
-          await patch(next.id, { status: "compressing", error: undefined });
-          tmp = await compressPhoto(next.uri!);
-          if (tmp) sendUri = tmp;
-        }
-        await patch(next.id, { status: "uploading", error: undefined });
-        let r: Response;
-        try {
-          if (next.type === "upload") {
-            const onProgress = (f: number) => {
-              // throttle re-renders: only on >=2% change
-              if (Math.abs(f - lastPct.current) < 0.02 && f < 1) return;
-              lastPct.current = f;
-              setPct((m) => ({ ...m, [next.id]: f }));
-            };
-            const meta = JSON.stringify({ ...next.meta, client_id: next.id, size_bytes: sizeOf(sendUri), compressed: !!tmp });
-            r = await withTimeout(authed((t) =>
-              next.mime?.includes("video")
-                ? // videos: resumable 8 MB chunks, so no single request approaches the ~100 MB gateway limit
-                  uploadChunked(BASE, { ncId: next.ncId, clientId: next.id, uri: sendUri, mime: next.mime!, meta, token: t, onProgress })
-                : uploadForm(`${BASE}/api/ncs/${next.ncId}/evidence`, {
-                    headers: t ? { Authorization: `Bearer ${t}` } : {},
-                    fields: { meta },
-                    files: { file: { uri: sendUri, name: "photo.jpg", mimeType: tmp ? "image/jpeg" : next.mime } },
-                    onProgress,
-                  }),
-            ), next.mime?.includes("video") ? VIDEO_UPLOAD_TIMEOUT : UPLOAD_TIMEOUT).finally(() => {
-              lastPct.current = 0;
-              if (tmp) removeFile(tmp);
-              setPct((m) => {
-                const { [next.id]: _, ...rest } = m;
-                return rest;
-              });
-            });
-          } else {
-            // idempotent on client_id; server refuses (409) until every expected upload has arrived
-            r = await withTimeout(authed((t) =>
-              fetch(`${BASE}/api/ncs/${next.ncId}/submit`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-                body: JSON.stringify({ client_id: next.id, expect: next.expect ?? [], note: next.note }),
-              }),
-            ), SUBMIT_TIMEOUT);
-          }
-        } catch (e: any) {
-          if (e?.status === 401) {
-            await patch(next.id, { status: "pending", error: "Sign in again to send" });
-            break;
-          }
-          await patch(next.id, { status: "pending", error: "Waiting for connection" });
-          break; // offline: stop and retry later
-        }
-        if (r.ok) {
-          // server confirmed receipt (idempotent on client_id) - only now is the local copy released
-          if (next.type === "upload") done += 1;
-          await patch(next.id, { status: "uploaded", error: undefined });
-          setTimeout(() => {
-            removeFile(next.uri);
-            save(ref.current.filter((i) => i.id !== next.id));
-          }, 4000);
-          queryClient.invalidateQueries({ queryKey: ["project", next.projectId] });
-          queryClient.invalidateQueries({ queryKey: ["projects"] });
-        } else if (r.status >= 500 || r.status === 429) {
-          await patch(next.id, { status: "pending", error: "Server busy, retrying" });
-          break;
-        } else {
-          const msg = await readError(r);
-          if (r.status === 422 && /incomplete/i.test(msg)) {
-            // transfer was cut off: file is still on the phone, send it again automatically
-            await patch(next.id, { status: "pending", error: "Upload interrupted, retrying" });
-            break;
-          }
-          await patch(next.id, { status: "failed", error: refusal(r.status, msg) });
-        }
+        const res = await Promise.all(work.map(runOne));
+        done += work.filter((w, k) => w.type === "upload" && res[k] === "ok").length;
+        if (res.includes("stop")) break;
       }
     } finally {
       running.current = false;
@@ -260,7 +274,9 @@ export function QueueProvider({ children }: PropsWithChildren) {
       process();
     })();
     const t = setInterval(() => process(), 15000);
-    const sub = AppState.addEventListener("change", (s) => s === "active" && process());
+    // "active": resume. "background": hand pending files to the native background session before iOS suspends JS.
+    const sub = AppState.addEventListener("change", (s) => (s === "active" || s === "background") && process());
+    setBackgroundRunner(process); // OS-scheduled background runs (expo-background-task) resume the queue too
     // connectivity returned: send queued evidence straight away
     const net = NetInfo.addEventListener((s) => {
       if (s.isConnected && s.isInternetReachable !== false) process();
@@ -271,6 +287,10 @@ export function QueueProvider({ children }: PropsWithChildren) {
       net();
     };
   }, [process, save]);
+
+  useEffect(() => {
+    if (user) registerBackgroundUploads();
+  }, [user]);
 
   const enqueueUpload: Ctx["enqueueUpload"] = async (projectId, ncId, uri, mime, meta) => {
     const id = uid();

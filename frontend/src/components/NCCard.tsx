@@ -69,8 +69,8 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const badge = ev
     ? { status: { failed: "failed", submitting: "uploading", uploading: "uploading", compressing: "uploading", submitted: "approved", pending: "pending" }[ev.key], label: ev.label }
     : { status: st.badge, label: st.label };
-  const addedPhotos = drafts.length + uploads.filter((q) => q.meta?.kind !== "video").length;
-  const addedVideos = draftVideos.length + uploads.filter((q) => q.meta?.kind === "video").length;
+  const addedPhotos = drafts.length + uploads.filter((q) => q.meta?.kind !== "video" && q.status !== "uploaded").length; // confirmed uploads are already in drafts
+  const addedVideos = draftVideos.length + uploads.filter((q) => q.meta?.kind === "video" && q.status !== "uploaded").length;
   // Mandatory evidence for new NCs: pre, mid and final photos plus a video for this NC (queued items count too)
   const allPhotos = [...nc.photos.filter((p) => p.status !== "superseded"), ...uploads.filter((q) => q.meta?.kind === "photo").map((q) => ({ stage: q.meta?.stage }))];
   const has = {
@@ -118,7 +118,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
   const submit = async () => {
     if (missing.length) return toast(`Before submitting, add: ${missing.join(", ")}`);
     await enqueueSubmit(project.id, nc.id, undefined); // work comment box removed: never send a value, stored comments untouched
-    toast(uploads.some((q) => q.status !== "uploaded") ? `${nc.number} submitted · sends after uploads finish` : `${nc.number} submitted for review`);
+    toast(uploads.some((q) => q.status !== "uploaded") ? `${nc.number} will be submitted once all its uploads are confirmed` : `${nc.number} sending for review…`);
     onToggle(nc.id); // back to the NC list, where the new status shows on the card
   };
 
@@ -255,7 +255,7 @@ export const NCCard = memo(function NCCard({ nc, project, expanded, onToggle, qu
           {!done ? (
             <>
               <Text style={s.step} testID={`step3-${nc.number}`}>3  Submit NC</Text>
-              <Btn title={nc.status === "assessing" ? "Checking evidence…" : submitQueued ? "Submitted" : "Submit NC"} icon="send" variant="dark" onPress={submit} disabled={!canSubmit} style={s.submit} testID={`submit-evidence-${nc.number}`} />
+              <Btn title={nc.status === "assessing" ? "Checking evidence…" : submitQueued ? (ev?.key === "submitted" ? "Submitted" : "Submitting when uploads are confirmed…") : "Submit NC"} icon="send" variant="dark" onPress={submit} disabled={!canSubmit} style={s.submit} testID={`submit-evidence-${nc.number}`} />
               {!canSubmit && !submitQueued && nc.status !== "assessing" ? <Text style={s.muted}>Add evidence above, then submit.</Text> : null}
             </>
           ) : null}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -11,6 +11,15 @@ import { Feather } from "@/src/ui";
 import { freshFix, useGeo } from "@/src/components/useGeo";
 import { P, PermissionGate, StampBlock, useCameraStyles } from "@/src/components/CameraParts";
 import { space } from "@/src/theme";
+import { BackupPerm, backupPermission, backupPhoto, requestBackupPermission } from "@/src/utils/galleryBackup";
+
+// camera overlay is always dark (over the live preview), so fixed light-on-dark colours like the rest of this screen
+const bk = StyleSheet.create({
+  bar: { flexDirection: "row", alignItems: "center", gap: space.sm, backgroundColor: "rgba(0,0,0,0.7)", borderRadius: 12, padding: space.sm, marginBottom: space.sm },
+  text: { flex: 1, color: "#FFFFFF", fontSize: 13 },
+  btn: { minHeight: 36, paddingHorizontal: 12, borderRadius: 8, backgroundColor: "#FFFFFF", justifyContent: "center" },
+  btnText: { color: "#000000", fontWeight: "700", fontSize: 13 },
+});
 
 
 export default function Camera() {
@@ -48,6 +57,10 @@ export default function Camera() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+  const [backup, setBackup] = useState<BackupPerm | null>(null);
+  useEffect(() => {
+    backupPermission().then(setBackup);
+  }, []);
 
   if (!perm) return <View style={s.root} />;
   if (!perm.granted) return <PermissionGate kind="camera" perm={perm} request={requestPerm} />;
@@ -60,10 +73,12 @@ export default function Camera() {
       const pos = freshFix(geo.pos);
       const photo = await cam.current.takePictureAsync({ quality: 0.95, skipProcessing: false });
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-      await enqueueUpload(p.projectId, p.ncId, photo.uri, "image/jpeg", {
+      const id = await enqueueUpload(p.projectId, p.ncId, photo.uri, "image/jpeg", {
         kind: "photo", source: "in_app_camera", stage: p.stage as EvidenceMeta["stage"], captured_at: captured.toISOString(), ...tzInfo(),
         lat: pos?.coords.latitude ?? null, lng: pos?.coords.longitude ?? null, accuracy_m: pos?.coords.accuracy ?? null,
       });
+      // local backup of the unstamped original, once per capture (never on upload retries); works offline
+      backupPhoto(photo.uri, id).then((where) => where === "private" && setBackup((b) => (b === "granted" ? "denied" : b)));
       setShots((x) => [photo.uri, ...x]);
     } finally {
       setBusy(false);
@@ -94,6 +109,19 @@ export default function Camera() {
         <View style={s.countTag}><Text style={s.countText} testID="camera-shot-count">{shots.length} PHOTO{shots.length === 1 ? "" : "S"} QUEUED</Text></View>
       </View>
       <View style={[s.bottom, { paddingBottom: insets.bottom + space.md }]}>
+        {backup && backup !== "granted" ? (
+          <View style={bk.bar} testID="backup-banner">
+            <Text style={bk.text}>
+              {backup === "undetermined" ? "Keep a backup copy of each photo in your Photos app?" : "Photo backup to your Photos app is off. Photos are still kept safely inside RemedialFlow."}
+            </Text>
+            {backup === "blocked" ? (
+              <Pressable onPress={() => Linking.openSettings()} style={bk.btn} testID="backup-open-settings"><Text style={bk.btnText}>Open Settings</Text></Pressable>
+            ) : (
+              <Pressable onPress={() => requestBackupPermission().then(setBackup)} style={bk.btn} testID="backup-allow"><Text style={bk.btnText}>{backup === "undetermined" ? "Allow" : "Try again"}</Text></Pressable>
+            )}
+            <Pressable onPress={() => setBackup("granted")} hitSlop={8} testID="backup-dismiss"><Feather name="x" size={18} color="#FFFFFF" /></Pressable>
+          </View>
+        ) : null}
         <StampBlock geo={geo} p={p} now={now} />
         <View style={s.controls}>
           <ScrollView horizontal style={{ flex: 1 }} contentContainerStyle={{ gap: 4 }} showsHorizontalScrollIndicator={false}>

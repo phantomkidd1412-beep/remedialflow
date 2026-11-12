@@ -78,7 +78,9 @@ async function uploadWithProgress(url: string, opts: UploadOptions): Promise<Res
   const task = FS.createUploadTask(
     url,
     file.uri,
-    { httpMethod: opts.method ?? "POST", uploadType: FS.FileSystemUploadType.MULTIPART, fieldName: field, mimeType: file.mimeType, parameters: opts.fields, headers: opts.headers },
+    { httpMethod: opts.method ?? "POST", uploadType: FS.FileSystemUploadType.MULTIPART, fieldName: field, mimeType: file.mimeType, parameters: opts.fields, headers: opts.headers,
+      // iOS: URLSession background session - the transfer keeps going while the app is minimised or the phone is locked
+      sessionType: FS.FileSystemSessionType.BACKGROUND },
     (p: { totalBytesSent: number; totalBytesExpectedToSend: number }) => p.totalBytesExpectedToSend > 0 && opts.onProgress?.(p.totalBytesSent / p.totalBytesExpectedToSend),
   );
   opts.signal?.addEventListener("abort", () => task.cancelAsync());

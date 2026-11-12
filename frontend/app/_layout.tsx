@@ -13,6 +13,7 @@ import { ErrorBoundary } from "@/src/components/error-boundary";
 import { queryClient } from "@/src/query-client";
 import { AuthProvider } from "@/src/auth";
 import { QueueProvider } from "@/src/queue";
+import "@/src/backgroundUpload"; // defines the background upload task at module scope
 import { Btn, Sheet, ToastProvider } from "@/src/ui";
 import { loadThemePref, useTheme } from "@/src/theme";
 
