@@ -415,3 +415,4 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Cause: OTA update group 6ba737f7-40eb-4c08-8181-397e697da091 (runtime 1.0.0, branch production) uses native modules missing in Build 104. Backend healthy.
 - Plan: user escalates to support@emergent.sh to roll back OTA only (no backend/DB change). Support sends findings before acting.
 - app.json version bumped to 1.1.0 in preview only. Do NOT publish or build until user approves. After approval: Build 105+, test on real iPhone with demo@networksurveyltd.uk.
+- Step 1 of Support's fix done: expo pinned to exactly 58.0.25 (expo-modules-core 58.1.0, media-library 58.0.14, background-task 58.0.13, task-manager 58.0.14, RN 0.88.1). expo install --check OK, expo-doctor 20/20. yarn.lock tracked. On HOLD for Support's next step; no publish/build.
