@@ -405,3 +405,13 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Camera capture quality 1.0 (backup = exact full-quality file); installer Profile -> "Phone storage" shows pending/backup usage and deletes ONLY Documents/backup.
 - tests/test_pdf_selection_integrity.py (10 photos, AI recs 4, staff 7 incl. AI-unsuitable, 2 NCs, regenerate, superseded, unloadable/corrupt -> 422). 24 targeted tests + qa_iter42 41/41 pass.
 - Pre-publish check (June 2026): iteration_51 all pass (24 pytest + qa_iter42 41/41 + new tests/test_prepublish_safety.py 22). Conditional GO: owner must confirm live Secrets (APP_ENV=production, DEMO_SEED=false, CORS_ORIGINS incl. https://app.remedialflow.uk, APP_PUBLIC_URL https) and rollback-vs-database with Emergent support.
+
+## Production incident (Nov 2026): Build 104 crash after re-publish
+- RCA (deployer, read-only): re-publish pushed OTA JS to branch production runtimeVersion 1.0.0 (policy appVersion); Build 104 (version 1.0.0) applied it; new JS references native modules not in Build 104 (expo-media-library, expo-background-task, expo-task-manager). Backend healthy (pods Running, 0 restarts, 100% 200s).
+- Prepared (not published): app.json version 1.0.0 -> 1.1.0 so future OTAs only reach a new native build. Restoring Build 104 requires reverting the 1.0.0 OTA (Emergent support `eas update:rollback`, or a hotfix JS republished at 1.0.0).
+- DO NOT re-publish with version 1.0.0 using current source.
+
+## iOS Build 104 crash (Nov 2026)
+- Cause: OTA update group 6ba737f7-40eb-4c08-8181-397e697da091 (runtime 1.0.0, branch production) uses native modules missing in Build 104. Backend healthy.
+- Plan: user escalates to support@emergent.sh to roll back OTA only (no backend/DB change). Support sends findings before acting.
+- app.json version bumped to 1.1.0 in preview only. Do NOT publish or build until user approves. After approval: Build 105+, test on real iPhone with demo@networksurveyltd.uk.
