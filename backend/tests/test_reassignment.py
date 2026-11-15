@@ -59,7 +59,7 @@ def test_reassign_demo_to_sam_and_back(env):
     import server
     users, project = env
     demo, sam, other, admin = users["Demo"], users["Sam"], users["Other"], users["Admin"]
-    pid, nids = project("A", demo.id, ["approved", "rejected", "open"])
+    pid, nids = project("A", demo.id, ["employee_review", "rejected", "open"])
     other_pid, _ = project("B", other.id, ["open"])
     assert pid in ids_for(demo) and pid not in ids_for(sam)
 
@@ -70,7 +70,7 @@ def test_reassign_demo_to_sam_and_back(env):
             go(call())
         assert e.value.status_code == 403
     d = go(server.project_detail(pid, u=sam))
-    assert [n["status"] for n in d["ncs"]] == ["approved", "rejected", "open"]  # statuses unchanged, outstanding visible
+    assert [n["status"] for n in d["ncs"]] == ["employee_review", "rejected", "open"]  # statuses unchanged, outstanding visible
     assert len(d["ncs"][0]["photos"]) == 1  # evidence intact
     ncs = go(db.ncs.find({"project_id": pid}).to_list(10))
     assert all(n["assigned_installer_id"] == sam.id and n["assignment_history"][-1]["from"] == demo.id and n["comments"] for n in ncs)

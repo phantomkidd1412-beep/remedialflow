@@ -19,6 +19,8 @@ PROJECTS = [  # ref, address, postcode, owner, NC statuses
     ("QA-BED-1", "8 High Street, Bedford", "MK40 1AA", "QA Demo", ["open"]),
     ("QA-STH-1", "21 King Street, Southall, Greater London", "UB2 4AA", "QA Demo", ["employee_review", "approved"]),
     ("QA-BED-2", "3 Mill Lane, Bedford", "MK40 2BB", "QA Sam", ["open", "open"]),
+    # shared project: NC-01 Demo, NC-02 Sam, NC-03 unassigned (lead installer Demo)
+    ("QA-LUT-3", "9 Church Street, Luton", "LU1 4EF", "QA Demo", [("open", "QA Demo"), ("more_evidence", "QA Sam"), ("open", None)]),
 ]
 
 
@@ -33,8 +35,12 @@ async def seed():
         pid = str((await db.projects.insert_one({"ref": ref, "address": addr, "postcode": pc, "installer_id": uid, "status": "in_progress", "rate": 150,
                                                  "created_at": now_iso(), "updated_at": now_iso(), "deleted": None, "qa": TAG})).inserted_id)
         for i, st in enumerate(sts, 1):
+            st, who = st if isinstance(st, tuple) else (st, owner)
             await db.ncs.insert_one({"project_id": pid, "number": f"NC-{i:02d}", "description": f"QA defect {i}", "required_work": "Fix and photograph",
-                                     "status": st, "assigned_installer_id": uid, "requires_stages": False, "created_at": now_iso(), "qa": TAG})
+                                     "status": st, "assigned_installer_id": ids[who] if who else None, "requires_stages": False, "created_at": now_iso(), "qa": TAG})
+        # cached counters (normally set by recompute_project; set directly here so no staff notifications fire)
+        await db.projects.update_one({"_id": __import__("bson").ObjectId(pid)}, {"$set": {"nc_total": len(sts), "nc_done": sum(
+            1 for x in sts if (x[0] if isinstance(x, tuple) else x) == "approved")}})
     print(json.dumps({"password": PW, "users": ids}))
 
 

@@ -1,7 +1,7 @@
 // Installer dashboard grouping helpers: town/city from the existing address, and the installer's own NC counts.
 import type { ProjectRow } from "@/src/projects";
 
-export type JobRow = ProjectRow & { my_statuses?: string[]; my_nc_numbers?: string[]; my_schedule?: string | null };
+export type JobRow = ProjectRow & { my_statuses?: string[]; my_nc_numbers?: string[]; my_schedule?: string | null; project_nc_total?: number; project_nc_done?: number };
 
 const PENDING = new Set(["open", "pending", "in_progress", "unassigned"]);
 const REVIEW = new Set(["assessing", "employee_review", "admin_review", "potential_noncompliance", "ai_approved", "ai_verified_signoff"]);

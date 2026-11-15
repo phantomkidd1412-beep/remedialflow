@@ -21,12 +21,15 @@ export const TownProjectCard = memo(function TownProjectCard({ p, queued, onOpen
       <Text style={s.addr}>{p.address}</Text>
       {p.postcode ? <Text style={s.pc}>{p.postcode}</Text> : null}
       <View style={s.row}>
-        <Text style={s.meta} testID={`town-project-progress-${p.ref}`}>{n.attempted} of {n.total} NCs addressed</Text>
+        <Text style={s.meta} testID={`town-project-progress-${p.ref}`}>Your NCs: {n.attempted} of {n.total} addressed</Text>
         <Text style={[s.meta, n.outstanding > 0 && { color: colors.onSurface, fontWeight: "700" }]} testID={`town-project-outstanding-${p.ref}`}>
           {n.outstanding} outstanding
         </Text>
       </View>
       <Progress value={n.total ? n.attempted / n.total : 0} />
+      {p.project_nc_total && p.project_nc_total > n.total ? (
+        <Text style={s.meta} testID={`town-project-overall-${p.ref}`}>Whole project: {p.project_nc_done ?? 0} of {p.project_nc_total} NCs approved (incl. other installers)</Text>
+      ) : null}
       <View style={s.row}>
         {queued > 0 ? <Badge status="pending" label={`${queued} unsynced`} /> : <Text style={s.meta}>{n.done} approved</Text>}
         <Feather name="chevron-right" size={20} color={colors.muted} />

@@ -96,6 +96,7 @@ export default function StaffProject() {
   const [delErr, setDelErr] = useState("");
   const [assignTo, setAssignTo] = useState<{ id: string; name: string } | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const [withUnassigned, setWithUnassigned] = useState(false);
   const doDelete = async () => {
     setDeleting(true);
     setDelErr("");
@@ -162,9 +163,9 @@ export default function StaffProject() {
     if (!assignTo) return;
     setAssigning(true);
     try {
-      await api(`/projects/${id}`, { method: "PATCH", body: { installer_id: assignTo.id } });
+      const r = await api<{ ncs_moved: number }>(`/projects/${id}`, { method: "PATCH", body: { installer_id: assignTo.id, from_installer: p.installer_id ?? "", include_unassigned: withUnassigned } });
       ["project", "projects", "dashboard", "tracker"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-      toast(`Project assigned to ${assignTo.name}`);
+      toast(`${r.ncs_moved} NC${r.ncs_moved === 1 ? "" : "s"} assigned to ${assignTo.name}`);
       setAssignTo(null);
     } catch (e: any) {
       toast(e?.message || "Could not reassign the project");
@@ -173,6 +174,15 @@ export default function StaffProject() {
     }
   };
   const current = (installers.data ?? []).find((i) => i.id === p.installer_id);
+  const fromCount = p.installer_id ? ncs.filter((n) => n.assigned_installer_id === p.installer_id && n.status !== "approved").length : 0;
+  const keptApproved = p.installer_id ? ncs.filter((n) => n.assigned_installer_id === p.installer_id && n.status === "approved").length : 0;
+  const unassignedCount = ncs.filter((n) => !n.assigned_installer_id && n.status !== "approved").length;
+  const othersCount = ncs.filter((n) => n.assigned_installer_id && n.assigned_installer_id !== p.installer_id).length;
+  const ncWord = (k: number) => `${k} NC${k === 1 ? "" : "s"}`;
+  const pickInstaller = (i: { id: string; name: string }) => {
+    setWithUnassigned(!p.installer_id); // first assignment of a fresh project: include unassigned NCs by default
+    setAssignTo(i);
+  };
   const toggleVideo = async () => {
     const next = p.require_video === false;
     try {
@@ -261,10 +271,10 @@ export default function StaffProject() {
                 <Text style={s.hint} testID="project-require-video-state">{p.require_video !== false ? "ON: a relevant video is needed before an NC can be submitted" : "OFF: NCs can be submitted without a video"}. Completed NCs are not affected.</Text>
               </View>
             </Pressable>
-            <Label>Assign project (all NCs move to this installer)</Label>
+            <Label>Assign project (moves the lead installer's NCs; other installers keep theirs)</Label>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
               {(installers.data ?? []).map((i) => (
-                <Pressable key={i.id} onPress={() => p.installer_id !== i.id && setAssignTo(i)} style={[s.chip, p.installer_id === i.id && { backgroundColor: colors.brandSecondary }]} testID={`assign-installer-${i.id}`}>
+                <Pressable key={i.id} onPress={() => p.installer_id !== i.id && pickInstaller(i)} style={[s.chip, p.installer_id === i.id && { backgroundColor: colors.brandSecondary }]} testID={`assign-installer-${i.id}`}>
                   <Text style={[s.chipText, p.installer_id === i.id && { color: colors.onBrandSecondary }]}>{i.name}</Text>
                 </Pressable>
               ))}
@@ -296,9 +306,17 @@ export default function StaffProject() {
 
       <Sheet visible={!!assignTo} onClose={() => !assigning && setAssignTo(null)} title={current ? "Reassign this project?" : "Assign this project?"} testID="assign-sheet" dismissOnBackdrop={false}>
         <Text style={s.rateName} testID="assign-summary">{current ? `${current.name} → ${assignTo?.name}` : `Assign to ${assignTo?.name}`}</Text>
-        <Text style={s.hint}>
-          All NCs on {p.ref} will move to {assignTo?.name}.{current || (p.installer_names ?? []).length ? " The previous installer will lose access straight away and the job leaves their dashboard." : ""} Photos, videos, NC statuses, comments and history are kept, and the change is recorded in the audit log.
+        <Text style={s.hint} testID="assign-detail">
+          {current ? `${ncWord(fromCount)} assigned to ${current.name} will move to ${assignTo?.name}. ${current.name} loses access to ${fromCount === 1 ? "it" : "them"} straight away.` : `${assignTo?.name} becomes the lead installer for ${p.ref}.`}
+          {keptApproved ? ` ${ncWord(keptApproved)} already approved stay${keptApproved === 1 ? "s" : ""} with ${current?.name} as completed work.` : ""}
+          {othersCount ? ` ${ncWord(othersCount)} assigned to other installers stay${othersCount === 1 ? "s" : ""} unchanged.` : ""} Photos, videos, statuses, comments and history are kept, reassignment doesn't create or move any payment, and the change is recorded in the audit log. Individual NCs can still be reassigned from each NC below.
         </Text>
+        {unassignedCount ? (
+          <Pressable onPress={() => setWithUnassigned(!withUnassigned)} style={s.check} accessibilityRole="checkbox" accessibilityState={{ checked: withUnassigned }} testID="assign-include-unassigned">
+            <Feather name={withUnassigned ? "check-square" : "square"} size={20} color={colors.onSurface} />
+            <Text style={[s.mono, { flex: 1 }]}>Also assign {ncWord(unassignedCount)} that {unassignedCount === 1 ? "is" : "are"} unassigned to {assignTo?.name}</Text>
+          </Pressable>
+        ) : null}
         <Btn title={current ? "Reassign project" : "Assign project"} icon="user-check" onPress={assign} loading={assigning} testID="assign-confirm" />
         <Btn title="Cancel" variant="outline" onPress={() => setAssignTo(null)} disabled={assigning} testID="assign-cancel" />
       </Sheet>

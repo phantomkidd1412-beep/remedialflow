@@ -92,7 +92,7 @@ def file_public(f: EvidenceFile) -> dict:
     return d
 
 
-async def recompute_project(pid: str):
+async def recompute_project(pid: str, settle: bool = True):
     """Lifecycle: unassigned | in_progress | completed | trustmark_resolved, plus needs_review flag."""
     ncs = await db.ncs.find({"project_id": pid}, {"status": 1, "assigned_installer_id": 1}).to_list(500)
     proj = await db.projects.find_one({"_id": oid(pid)}, {"completed_at": 1, "completion_history": 1, "resolved": 1,
@@ -130,7 +130,8 @@ async def recompute_project(pid: str):
     if "completion_history" in upd:
         async for st in db.users.find({"role": {"$in": ["employee", "admin"]}, "active": True}, {"_id": 1}):
             await notify(str(st["_id"]), "completed", pid)
-    await settle_earnings(pid)
+    if settle:  # reassignment alone never pays anyone; earnings are settled on review decisions as before
+        await settle_earnings(pid)
 
 
 async def notify_project_ready(pid: str):
@@ -470,6 +471,7 @@ async def list_projects(search: str = "", status: str = "", page: int = 1, limit
         mine = await db.ncs.find({"project_id": {"$in": pids}, "assigned_installer_id": u.id}, {"project_id": 1, "status": 1, "number": 1}).to_list(5000)
         for i in items:
             sts = [n["status"] for n in mine if n["project_id"] == i["id"]]
+            i["project_nc_total"], i["project_nc_done"] = i.get("nc_total", 0), i.get("nc_done", 0)  # whole project (all installers)
             i["nc_total"], i["nc_done"] = len(sts), sum(1 for x in sts if x in DONE)
             i["my_statuses"] = sts
             i["my_nc_numbers"] = sorted(n.get("number", "") for n in mine if n["project_id"] == i["id"])
@@ -594,6 +596,8 @@ class ProjectPatch(BaseModel):
     installer_id: Optional[str] = None
     rate: Optional[float] = None
     require_video: Optional[bool] = None
+    from_installer: Optional[str] = None  # reassignment: whose NCs move (default: the current project installer)
+    include_unassigned: Optional[bool] = None  # reassignment: also assign unassigned NCs (default only on first assignment)
 
 
 async def add_nc(pid: str, body: NCIn, idx: int, installer_id: Optional[str] = None) -> str:
@@ -647,20 +651,31 @@ async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
         to = upd["installer_id"]
         if to and not await db.users.find_one({"_id": oid(to), "role": "installer", "active": True}, {"_id": 1}):
             raise HTTPException(400, "Installer not found")
-        moving = await db.ncs.find({"project_id": pid, "assigned_installer_id": {"$ne": to}}, {"assigned_installer_id": 1}).to_list(500)
-        if moving and proj.get("status") in ("completed", "trustmark_resolved"):
+        prev = proj.get("installer_id")
+        src = body.from_installer if body.from_installer is not None else prev  # whose NCs transfer (default: current project installer)
+        src = src or None
+        if src and not await db.users.find_one({"_id": oid(src), "role": "installer"}, {"_id": 1}):
+            raise HTTPException(400, "Previous installer not found")
+        if proj.get("status") in ("completed", "trustmark_resolved"):
             raise HTTPException(409, "Completed projects cannot be reassigned")
+        # unassigned NCs move only when the admin asks; first assignment of a fresh project assigns them by default
+        take_unassigned = body.include_unassigned if body.include_unassigned is not None else not prev
+        q_or = ([{"assigned_installer_id": src}] if src and src != to else []) + ([{"assigned_installer_id": None}] if take_unassigned and to else [])
+        # approved NCs stay credited to whoever did them (no double payment); only open/in-review work moves
+        moving = await db.ncs.find({"project_id": pid, "$or": q_or, "status": {"$nin": list(DONE)}}, {"assigned_installer_id": 1}).to_list(500) if q_or else []
+    for k in ("from_installer", "include_unassigned"):
+        upd.pop(k, None)
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
     if "installer_id" in upd:
-        await reassign_project_ncs(pid, proj.get("installer_id"), upd["installer_id"], moving, u)
+        await reassign_project_ncs(pid, src, upd["installer_id"], moving, u)
     await audit("project.updated", u.id, f"project:{pid}", upd)
-    return {"ok": True}
+    return {"ok": True, **({"ncs_moved": len(moving)} if "installer_id" in upd else {})}
 
 
 async def reassign_project_ncs(pid: str, prev: Optional[str], to: Optional[str], moving: list, actor: User):
-    """Project-level (re)assignment moves EVERY NC on the project to the new installer, so the previous installer
-    loses list/detail/API access at once. Evidence, statuses, submissions and history stay untouched; each NC keeps
-    its assignment_history and the transfer is audited."""
+    """Moves only the given NCs (the previous installer's, plus unassigned ones if chosen) to the new installer.
+    Other installers' NCs on the project are untouched. Evidence, statuses, submissions and history stay as they are;
+    each NC keeps its assignment_history and the transfer is audited. Reassignment never creates earnings by itself."""
     ts = now_iso()
     if moving:  # one bulk write; each NC keeps its own "from" in assignment_history
         from pymongo import UpdateOne
@@ -669,11 +684,10 @@ async def reassign_project_ncs(pid: str, prev: Optional[str], to: Optional[str],
                                  for n in moving])
     if to and moving:
         await agreed_rate(pid, to)
-    if moving or prev != to:
-        prev_ids = sorted({n.get("assigned_installer_id") for n in moving if n.get("assigned_installer_id")} | ({prev} if prev and prev != to else set()))
-        await audit("project.reassigned", actor.id, f"project:{pid}",
-                    {"from": prev, "previous_installers": prev_ids, "to": to, "ncs_moved": len(moving), "by": actor.id, "at": ts})
-    await recompute_project(pid)  # also hides the previous installer's notifications for this project
+    await audit("project.reassigned", actor.id, f"project:{pid}",
+                {"from": prev, "to": to, "ncs_moved": len(moving), "nc_ids": [str(n["_id"]) for n in moving],
+                 "unassigned_moved": sum(1 for n in moving if not n.get("assigned_installer_id")), "by": actor.id, "at": ts})
+    await recompute_project(pid, settle=False)  # also hides notifications of installers no longer on the project
     if to and moving:
         await notify(to, "assigned", pid)
 
@@ -1513,12 +1527,14 @@ async def assign_nc(nc_id: str, body: AssignIn, u: User = Depends(staff)):
         raise HTTPException(400, "Installer not found")
     if to == nc.assigned_installer_id:
         return {"ok": True}
+    if nc.status in DONE:  # approved work stays credited to whoever did it (payment logic unchanged)
+        raise HTTPException(409, "Approved NCs cannot be reassigned")
     await db.ncs.update_one({"_id": oid(nc_id)}, {"$set": {"assigned_installer_id": to, "updated_at": now_iso()},
                             "$push": {"assignment_history": {"from": nc.assigned_installer_id, "to": to, "by": u.id, "at": now_iso()}}})
     if to:
         await agreed_rate(p.id, to)
         await nc_notify(await db.ncs.find_one({"_id": oid(nc_id)}), to, "assigned")
-    await recompute_project(p.id)
+    await recompute_project(p.id, settle=False)
     await audit("nc.reassigned", u.id, f"nc:{nc_id}", {"from": nc.assigned_installer_id, "to": to})
     return {"ok": True}
 
