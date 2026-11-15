@@ -416,3 +416,9 @@ Minimal, high-performance fieldwork app for TrustMark NC remediation. Roles: Adm
 - Plan: user escalates to support@emergent.sh to roll back OTA only (no backend/DB change). Support sends findings before acting.
 - app.json version bumped to 1.1.0 in preview only. Do NOT publish or build until user approves. After approval: Build 105+, test on real iPhone with demo@networksurveyltd.uk.
 - Step 1 of Support's fix done: expo pinned to exactly 58.0.25 (expo-modules-core 58.1.0, media-library 58.0.14, background-task 58.0.13, task-manager 58.0.14, RN 0.88.1). expo install --check OK, expo-doctor 20/20. yarn.lock tracked. On HOLD for Support's next step; no publish/build.
+
+## Installer reassignment fix + town dashboard (preview only, Nov 2026)
+- Root cause: PATCH /api/projects/{pid} only changed project.installer_id and assigned UNASSIGNED NCs; previous installer's NC assignments stayed, so access + listing (NC-based) continued.
+- Fix: reassign_project_ncs moves every NC (bulk write, assignment_history per NC), audit project.reassigned, 400 non-installer, 409 completed project, recompute hides old notifications. Admin confirm sheet.
+- Installer "By town": one card per town -> /town/[name] project cards; all pages loaded; refresh on focus + 60s. By schedule unchanged.
+- Tests: test_reassignment.py, test_reassign_edge.py, test_reassign_http.py (12 pass). Seed: tests/qa_reassign_seed.py. NOT deployed.

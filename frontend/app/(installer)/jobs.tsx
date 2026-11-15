@@ -1,15 +1,15 @@
 import { memo, useCallback, useMemo, useState } from "react";
-import { RefreshControl, SectionList, Pressable, Text, View } from "react-native";
+import { FlatList, RefreshControl, SectionList, Pressable, Text, View } from "react-native";
 import { useRouter } from "expo-router";
 import { useQueue } from "@/src/queue";
-import { ProjectRow, useProjects } from "@/src/projects";
-import { Badge, Btn, Empty, ErrorBlock, Loading, Progress } from "@/src/ui";
+import { useJobs } from "@/src/useJobs";
+import { JobRow as Row, Town, groupTowns, ncCounts } from "@/src/towns";
+import { Badge, Btn, Empty, ErrorBlock, Feather, Loading, Progress } from "@/src/ui";
 import { ScreenHeader } from "@/src/components/ScreenHeader";
 import { Bell } from "@/src/components/Bell";
 import { SyncBar } from "@/src/components/SyncBar";
 import { BORDER, radius, fonts, makeStyles, space, useTheme } from "@/src/theme";
 
-type Row = ProjectRow & { my_statuses?: string[]; my_nc_numbers?: string[]; my_schedule?: string | null };
 type Key = "action" | "this_week" | "next_week" | "upcoming" | "unscheduled" | "completed";
 type Filter = "all" | "action" | "this_week" | "next_week" | "unscheduled" | "completed";
 const TITLES: Record<Key, string> = { action: "Revisit required", this_week: "This week", next_week: "Next week", upcoming: "Upcoming", unscheduled: "Unscheduled", completed: "Completed" };
@@ -17,27 +17,6 @@ const ORDER: Key[] = ["action", "this_week", "next_week", "upcoming", "unschedul
 const CARDS: Key[] = ["action", "this_week", "next_week", "unscheduled", "completed"];
 
 type ViewMode = "town" | "schedule";
-const PENDING = new Set(["open", "pending", "in_progress", "unassigned"]);
-const REVIEW = new Set(["assessing", "employee_review", "admin_review", "potential_noncompliance", "ai_approved", "ai_verified_signoff"]);
-const REVISIT = new Set(["rejected", "more_evidence"]);
-const COUNTIES = /^(bedfordshire|berkshire|buckinghamshire|cambridgeshire|cheshire|cornwall|cumbria|derbyshire|devon|dorset|durham|essex|gloucestershire|hampshire|herefordshire|hertfordshire|kent|lancashire|leicestershire|lincolnshire|norfolk|northamptonshire|northumberland|nottinghamshire|oxfordshire|rutland|shropshire|somerset|staffordshire|suffolk|surrey|sussex|east sussex|west sussex|warwickshire|wiltshire|worcestershire|yorkshire|north yorkshire|south yorkshire|west yorkshire|east riding of yorkshire|greater london|greater manchester|merseyside|tyne and wear|west midlands|uk|united kingdom|england|wales|scotland)$/i;
-
-/** Town/city from a UK address: the last comma part after the street that is not a county or postcode. */
-function townOf(address: string): string {
-  const parts = address.split(",").map((x) => x.trim()).filter(Boolean).slice(1)
-    .filter((x) => !COUNTIES.test(x) && !/^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i.test(x));
-  const t = parts[parts.length - 1];
-  return t ? t.replace(/\b\w/g, (c) => c.toUpperCase()) : "Other";
-}
-
-/** Installer's own NC counts. Attempted = evidence submitted at least once. */
-function ncCounts(st: string[]) {
-  const pending = st.filter((x) => PENDING.has(x)).length;
-  return {
-    total: st.length, pending, attempted: st.length - pending,
-    review: st.filter((x) => REVIEW.has(x)).length, revisit: st.filter((x) => REVISIT.has(x)).length, done: st.filter((x) => x === "approved").length,
-  };
-}
 
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 function weekBounds() {
@@ -110,37 +89,49 @@ function NcBreakdown({ st, testID }: { st: string[]; testID?: string }) {
   );
 }
 
+function TownCard({ t, onOpen }: { t: Town; onOpen: (name: string) => void }) {
+  const s = useStyles();
+  const { colors } = useTheme();
+  return (
+    <Pressable style={({ pressed }) => [s.town, pressed && { opacity: 0.85 }]} onPress={() => onOpen(t.name)} accessibilityRole="button" testID={`town-card-${t.name}`}>
+      <View style={s.townIcon}><Feather name="map-pin" size={20} color={colors.onBrandSecondary} /></View>
+      <View style={{ flex: 1, gap: 6 }}>
+        <View style={s.cardTop}>
+          <Text style={s.townName} numberOfLines={1}>{t.name}</Text>
+          <Text style={s.townCount} testID={`town-count-${t.name}`}>{t.jobs.length} Job{t.jobs.length === 1 ? "" : "s"}</Text>
+        </View>
+        <Progress value={t.total ? t.attempted / t.total : 0} />
+        <View style={s.cardTop}>
+          <Text style={s.meta}>{t.outstanding} NC{t.outstanding === 1 ? "" : "s"} outstanding</Text>
+          {t.revisit ? <Badge status="rejected" label={`${t.revisit} revisit`} testID={`town-revisit-${t.name}`} /> : null}
+        </View>
+      </View>
+      <Feather name="chevron-right" size={22} color={colors.muted} />
+    </Pressable>
+  );
+}
+
 export default function Jobs() {
   const s = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
-  const q = useProjects();
+  const { q, rows } = useJobs();
   const { items } = useQueue();
   const open = useCallback((id: string) => router.push(`/job/${id}`), [router]);
+  const openTown = useCallback((name: string) => router.push({ pathname: "/town/[name]", params: { name } }), [router]);
   const [filter, setFilter] = useState<Filter>("all");
   const [view, setView] = useState<ViewMode>("town");
+  const towns = useMemo(() => groupTowns(rows), [rows]);
   const { by, sections, totals, keyOf } = useMemo(() => {
-    const rows = (q.data?.pages.flatMap((p) => p.items) ?? []) as Row[];
     const w = weekBounds();
     const by = Object.fromEntries(ORDER.map((k) => [k, [] as Row[]])) as Record<Key, Row[]>;
     const keyOf: Record<string, Key> = {};
     rows.forEach((r) => { const k = sectionOf(r, w); keyOf[r.id] = k; by[k].push(r); }); // one project = one card, in exactly one group
     (["this_week", "next_week", "upcoming"] as Key[]).forEach((k) => by[k].sort((a, b) => (a.my_schedule ?? "").localeCompare(b.my_schedule ?? "")));
     const totals = { ...ncCounts(rows.flatMap((r) => r.my_statuses ?? [])), projects: rows.length };
-    if (view === "town") {
-      const towns: Record<string, Row[]> = {};
-      rows.forEach((r) => (towns[townOf(r.address)] ??= []).push(r));
-      const rank = (r: Row) => ORDER.indexOf(keyOf[r.id]); // revisit first, completed last
-      const sections = Object.keys(towns).sort((a, b) => (a === "Other" ? 1 : b === "Other" ? -1 : a.localeCompare(b))).map((t) => {
-        const data = towns[t].sort((a, b) => rank(a) - rank(b));
-        const n = ncCounts(data.flatMap((r) => r.my_statuses ?? []));
-        return { key: `town:${t}`, title: `${t} · ${data.length} project${data.length === 1 ? "" : "s"} · ${n.done}/${n.total} NCs done`, data };
-      });
-      return { by, sections, totals, keyOf };
-    }
     const keys = filter === "all" ? ORDER : [filter as Key];
     return { by, sections: keys.filter((k) => by[k].length).map((k) => ({ key: k, title: TITLES[k], data: by[k] })), totals, keyOf };
-  }, [q.data, filter, view]);
+  }, [rows, filter]);
 
   const townSummary = (
     <View style={s.cards} testID="jobs-town-summary">
@@ -194,6 +185,17 @@ export default function Jobs() {
         <Loading />
       ) : q.isError ? (
         <View style={{ padding: space.lg }}><ErrorBlock message={(q.error as Error).message} onRetry={() => q.refetch()} /></View>
+      ) : view === "town" ? (
+        <FlatList
+          testID="jobs-town-list"
+          data={towns}
+          keyExtractor={(t) => t.name}
+          ListHeaderComponent={summary}
+          renderItem={({ item }) => <TownCard t={item} onOpen={openTown} />}
+          contentContainerStyle={s.list}
+          refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
+          ListEmptyComponent={<Empty icon="clipboard" text="No jobs assigned" />}
+        />
       ) : (
         <SectionList
           testID="jobs-list"
@@ -203,14 +205,13 @@ export default function Jobs() {
           ListHeaderComponent={summary}
           renderSectionHeader={({ section }) => (
             <View style={[s.sHead, section.key === "action" && { backgroundColor: colors.error }]} testID={`jobs-section-${section.key}`}>
-              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title}{section.key.startsWith("town:") ? "" : ` · ${section.data.length}`}</Text>
+              <Text style={[s.sTitle, section.key === "action" && { color: colors.onError }]}>{section.title} · {section.data.length}</Text>
             </View>
           )}
           renderItem={({ item }) => <JobCard p={item} section={keyOf[item.id]} queued={items.filter((i) => i.projectId === item.id && i.status !== "uploaded").length} onOpen={open} />}
           contentContainerStyle={s.list}
           refreshControl={<RefreshControl refreshing={q.isRefetching} onRefresh={() => { q.refetch(); }} />}
-          onEndReached={() => q.hasNextPage && q.fetchNextPage()}
-          ListEmptyComponent={<Empty icon="clipboard" text={filter === "all" || view === "town" ? "No jobs assigned" : `No ${TITLES[filter as Key].toLowerCase()} jobs`} />}
+          ListEmptyComponent={<Empty icon="clipboard" text={filter === "all" ? "No jobs assigned" : `No ${TITLES[filter as Key].toLowerCase()} jobs`} />}
           initialNumToRender={8}
           windowSize={7}
         />
@@ -243,4 +244,8 @@ const useStyles = makeStyles((c) => ({
   chipText: { fontFamily: fonts.text, fontSize: 12, fontWeight: "700" },
   clear: { minHeight: 36, justifyContent: "center" },
   clearText: { fontFamily: fonts.text, fontSize: 13, color: c.onBrandSecondary, fontWeight: "600" },
+  town: { flexDirection: "row", alignItems: "center", gap: space.md, borderWidth: BORDER, borderRadius: radius.lg, borderColor: c.border, backgroundColor: c.surface, padding: space.lg, minHeight: 88 },
+  townIcon: { width: 44, height: 44, borderRadius: radius.pill, backgroundColor: c.brandSecondary, alignItems: "center", justifyContent: "center" },
+  townName: { flex: 1, fontFamily: fonts.display, fontWeight: "800", fontSize: 20, color: c.onSurface },
+  townCount: { fontFamily: fonts.text, fontSize: 15, fontWeight: "700", color: c.onSurfaceSecondary },
 }));

@@ -604,21 +604,6 @@ async def add_nc(pid: str, body: NCIn, idx: int, installer_id: Optional[str] = N
     return str(r.inserted_id)
 
 
-async def assign_unassigned_ncs(pid: str, installer_id: Optional[str], actor: User):
-    """Project-level assignment defaults every unassigned NC to that installer."""
-    if not installer_id:
-        return
-    ncs = await db.ncs.find({"project_id": pid, "assigned_installer_id": None}, {"_id": 1}).to_list(500)
-    if ncs:
-        await agreed_rate(pid, installer_id)
-        p = await db.projects.find_one({"_id": oid(pid)}, {"ref": 1, "address": 1})
-        await notify(installer_id, "assigned", pid)
-    for n in ncs:
-        await db.ncs.update_one({"_id": n["_id"]}, {"$set": {"assigned_installer_id": installer_id},
-                                "$push": {"assignment_history": {"to": installer_id, "from": None, "by": actor.id, "at": now_iso()}}})
-        await audit("nc.assigned", actor.id, f"nc:{n['_id']}", {"to": installer_id})
-
-
 @api.post("/projects")
 async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends(staff)):
     if await db.projects.find_one({"ref": body.ref}):
@@ -654,16 +639,43 @@ async def create_project(body: ProjectIn, bg: BackgroundTasks, u: User = Depends
 
 @api.patch("/projects/{pid}")
 async def patch_project(pid: str, body: ProjectPatch, u: User = Depends(staff)):
-    await live_project(pid)
+    proj = await live_project(pid)
     upd = {k: v for k, v in body.model_dump().items() if v is not None}
     if "installer_id" in upd and upd["installer_id"] == "":
         upd["installer_id"] = None
+    if "installer_id" in upd:
+        to = upd["installer_id"]
+        if to and not await db.users.find_one({"_id": oid(to), "role": "installer", "active": True}, {"_id": 1}):
+            raise HTTPException(400, "Installer not found")
+        moving = await db.ncs.find({"project_id": pid, "assigned_installer_id": {"$ne": to}}, {"assigned_installer_id": 1}).to_list(500)
+        if moving and proj.get("status") in ("completed", "trustmark_resolved"):
+            raise HTTPException(409, "Completed projects cannot be reassigned")
     await db.projects.update_one({"_id": oid(pid)}, {"$set": upd})
-    if upd.get("installer_id"):
-        await assign_unassigned_ncs(pid, upd["installer_id"], u)
-        await recompute_project(pid)
+    if "installer_id" in upd:
+        await reassign_project_ncs(pid, proj.get("installer_id"), upd["installer_id"], moving, u)
     await audit("project.updated", u.id, f"project:{pid}", upd)
     return {"ok": True}
+
+
+async def reassign_project_ncs(pid: str, prev: Optional[str], to: Optional[str], moving: list, actor: User):
+    """Project-level (re)assignment moves EVERY NC on the project to the new installer, so the previous installer
+    loses list/detail/API access at once. Evidence, statuses, submissions and history stay untouched; each NC keeps
+    its assignment_history and the transfer is audited."""
+    ts = now_iso()
+    if moving:  # one bulk write; each NC keeps its own "from" in assignment_history
+        from pymongo import UpdateOne
+        await db.ncs.bulk_write([UpdateOne({"_id": n["_id"]}, {"$set": {"assigned_installer_id": to, "updated_at": ts},
+                                           "$push": {"assignment_history": {"from": n.get("assigned_installer_id"), "to": to, "by": actor.id, "at": ts}}})
+                                 for n in moving])
+    if to and moving:
+        await agreed_rate(pid, to)
+    if moving or prev != to:
+        prev_ids = sorted({n.get("assigned_installer_id") for n in moving if n.get("assigned_installer_id")} | ({prev} if prev and prev != to else set()))
+        await audit("project.reassigned", actor.id, f"project:{pid}",
+                    {"from": prev, "previous_installers": prev_ids, "to": to, "ncs_moved": len(moving), "by": actor.id, "at": ts})
+    await recompute_project(pid)  # also hides the previous installer's notifications for this project
+    if to and moving:
+        await notify(to, "assigned", pid)
 
 
 # ---------------- re-imported reports: merge into an existing project ----------------

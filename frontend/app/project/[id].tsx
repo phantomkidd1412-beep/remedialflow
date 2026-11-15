@@ -94,6 +94,8 @@ export default function StaffProject() {
   const [delOpen, setDelOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [delErr, setDelErr] = useState("");
+  const [assignTo, setAssignTo] = useState<{ id: string; name: string } | null>(null);
+  const [assigning, setAssigning] = useState(false);
   const doDelete = async () => {
     setDeleting(true);
     setDelErr("");
@@ -156,11 +158,21 @@ export default function StaffProject() {
     );
   const { project: p, ncs } = q.data;
 
-  const assign = async (iid: string) => {
-    await api(`/projects/${id}`, { method: "PATCH", body: { installer_id: iid } });
-    qc.invalidateQueries({ queryKey: ["project", id] });
-    qc.invalidateQueries({ queryKey: ["projects"] });
+  const assign = async () => {
+    if (!assignTo) return;
+    setAssigning(true);
+    try {
+      await api(`/projects/${id}`, { method: "PATCH", body: { installer_id: assignTo.id } });
+      ["project", "projects", "dashboard", "tracker"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      toast(`Project assigned to ${assignTo.name}`);
+      setAssignTo(null);
+    } catch (e: any) {
+      toast(e?.message || "Could not reassign the project");
+    } finally {
+      setAssigning(false);
+    }
   };
+  const current = (installers.data ?? []).find((i) => i.id === p.installer_id);
   const toggleVideo = async () => {
     const next = p.require_video === false;
     try {
@@ -249,10 +261,10 @@ export default function StaffProject() {
                 <Text style={s.hint} testID="project-require-video-state">{p.require_video !== false ? "ON: a relevant video is needed before an NC can be submitted" : "OFF: NCs can be submitted without a video"}. Completed NCs are not affected.</Text>
               </View>
             </Pressable>
-            <Label>Assign project (unassigned NCs default to this installer)</Label>
+            <Label>Assign project (all NCs move to this installer)</Label>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chips}>
               {(installers.data ?? []).map((i) => (
-                <Pressable key={i.id} onPress={() => assign(i.id)} style={[s.chip, p.installer_id === i.id && { backgroundColor: colors.brandSecondary }]} testID={`assign-installer-${i.id}`}>
+                <Pressable key={i.id} onPress={() => p.installer_id !== i.id && setAssignTo(i)} style={[s.chip, p.installer_id === i.id && { backgroundColor: colors.brandSecondary }]} testID={`assign-installer-${i.id}`}>
                   <Text style={[s.chipText, p.installer_id === i.id && { color: colors.onBrandSecondary }]}>{i.name}</Text>
                 </Pressable>
               ))}
@@ -280,6 +292,15 @@ export default function StaffProject() {
         {delErr ? <Text style={s.err} testID="delete-error">{delErr}</Text> : null}
         <Btn title="Delete project" icon="trash-2" variant="danger" onPress={doDelete} loading={deleting} testID="delete-confirm" />
         <Btn title="Cancel" variant="outline" onPress={() => setDelOpen(false)} disabled={deleting} testID="delete-cancel" />
+      </Sheet>
+
+      <Sheet visible={!!assignTo} onClose={() => !assigning && setAssignTo(null)} title={current ? "Reassign this project?" : "Assign this project?"} testID="assign-sheet" dismissOnBackdrop={false}>
+        <Text style={s.rateName} testID="assign-summary">{current ? `${current.name} → ${assignTo?.name}` : `Assign to ${assignTo?.name}`}</Text>
+        <Text style={s.hint}>
+          All NCs on {p.ref} will move to {assignTo?.name}.{current || (p.installer_names ?? []).length ? " The previous installer will lose access straight away and the job leaves their dashboard." : ""} Photos, videos, NC statuses, comments and history are kept, and the change is recorded in the audit log.
+        </Text>
+        <Btn title={current ? "Reassign project" : "Assign project"} icon="user-check" onPress={assign} loading={assigning} testID="assign-confirm" />
+        <Btn title="Cancel" variant="outline" onPress={() => setAssignTo(null)} disabled={assigning} testID="assign-cancel" />
       </Sheet>
 
       <Sheet visible={!!rateFor} onClose={closeRate} title={`Agreed rate · ${rateFor?.name ?? ""}`} testID="rate-sheet" dismissOnBackdrop={false}>
@@ -325,7 +346,7 @@ const useStyles = makeStyles((c) => ({
   muted: { fontSize: 12, color: c.muted, alignSelf: "center" },
   list: { padding: space.lg, gap: space.md },
   chips: { gap: space.sm },
-  chip: { height: 36, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
+  chip: { minHeight: 44, flexShrink: 0, paddingHorizontal: space.md, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border, justifyContent: "center" },
   chipText: { fontFamily: fonts.text, fontSize: 12, color: c.onSurface },
   check: { flexDirection: "row", gap: space.sm, alignItems: "center", minHeight: 44 },
   box: { width: 22, height: 22, borderWidth: BORDER, borderRadius: radius.md, borderColor: c.border },
